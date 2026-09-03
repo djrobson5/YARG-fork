@@ -74,3 +74,19 @@ Mockup: https://claude.ai/code/artifact/9fccb142-6aed-4378-96c6-98f07ea4da85 (va
 | Tag trigger | Only the run that closes the set shows the tag and the violet card (`ClosedSetThisRun`). The cumulative `IsSectionFullCombo` stays available for non-tag displays, so a completed song does not re-tag on every later run. |
 | `+N` suffix | Omitted entirely when nothing was newly perfected; the row is just `9 / 12`. |
 | Truthfulness | The card only shows section progress that was actually persisted. `RecordScores` reports whether it wrote, and `EndSong` clears `PlayerScoreCard.Sections` when it did not. |
+
+## Slice 3 decisions (locked 2026-09-02)
+
+Mockup: https://claude.ai/code/artifact/8a15aac4-f3d8-41fe-90a1-946c909e8755 (variant 1 chosen).
+
+| Question | Decision |
+|---|---|
+| Placement | Fraction inside the existing instrument/difficulty pill, after the percent: `97% · 9/12`. Widen the pill as needed; no new prefab. |
+| Visibility | Same rule as the percent: shown whenever the pill shows, in all `HighScoreInfo` modes. No extra gate. |
+| No-rows state | Show `0/12` from the first valid run. Requires a per-(SongChecksum, PlayerId, Instrument, Difficulty, HarmonyIndex) summary row storing the applicable section count and the cumulative completed count, upserted on every valid run alongside the score. |
+| Completion color | Violet matching the score card accent (colored text 0.678, 0.478, 1.0). A plain FC percent stays gold. |
+| Difficulty shown | The fraction follows the difficulty of the high-score record the pill already displays, so the two figures always describe the same chart. |
+| Loading | One bulk query per (player, instrument) cached in `ScoreContainer`, invalidated with the existing score cache, mirroring `FetchHighScores`. Never per-row DB reads. |
+| Multiplayer rows | With two or more human players the row shows the band score and no pill; no fraction is shown there. |
+| Missing summary row | The fraction disappears (no `·` segment at all) when the difficulty of the player's best score, or their current harmony part, has no summary row — a consequence of following the high-score difficulty rather than the profile's. The pill still shows the percent. |
+| Pre-existing scores | Scores recorded before this feature shipped have no summary row, so they show no fraction until the player finishes another valid run on that chart. |

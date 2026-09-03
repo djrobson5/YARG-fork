@@ -372,6 +372,8 @@ namespace YARG.Scores
             _currentPlayerId = Guid.Empty;
             _currentInstrument = Instrument.Band;
             _scoresWereFetched = false;
+
+            InvalidateSectionProgressCache();
         }
 
         public static List<SongEntry> GetMostPlayedSongs(int maxCount)

@@ -34,6 +34,7 @@ namespace YARG.Menu.MusicLibrary
         private bool _fetchedScores;
         private PlayerScoreRecord _playerScoreRecord;
         private GameRecord _bandScoreRecord;
+        private SectionProgress? _sectionProgress;
 
         public SongViewType(MusicLibraryMenu musicLibrary, SongEntry songEntry, string context = "library")
         {
@@ -101,7 +102,8 @@ namespace YARG.Menu.MusicLibrary
                 Difficulty = _playerScoreRecord.Difficulty,
                 Percent = _playerScoreRecord.GetPercent(),
                 Instrument = _playerScoreRecord.Instrument,
-                IsFc = _playerScoreRecord.IsFc
+                IsFc = _playerScoreRecord.IsFc,
+                Sections = _sectionProgress
             };
         }
 
@@ -215,7 +217,35 @@ namespace YARG.Menu.MusicLibrary
             }
 
             FetchHighScores(SongEntry, out _playerScoreRecord, out _bandScoreRecord);
+            _sectionProgress = FetchSectionProgress(SongEntry, _playerScoreRecord);
             _fetchedScores = true;
+        }
+
+        /// <summary>
+        /// Gets the cumulative section progress that goes with the high score being displayed.
+        /// </summary>
+        /// <remarks>
+        /// The difficulty comes from the high score record rather than from the profile, so that
+        /// the percent and the fraction always describe the same chart. There is no player score
+        /// record with two or more humans, which is also when the row shows no pill, so the band
+        /// case falls out as <c>null</c> on its own.
+        /// </remarks>
+        private static SectionProgress? FetchSectionProgress(SongEntry songEntry,
+            PlayerScoreRecord playerScoreRecord)
+        {
+            if (playerScoreRecord is null)
+            {
+                return null;
+            }
+
+            var player = PlayerContainer.Players.FirstOrDefault(p => !p.Profile.IsBot);
+            if (player is null)
+            {
+                return null;
+            }
+
+            return ScoreContainer.GetSectionProgress(songEntry.Hash, player.Profile.Id,
+                playerScoreRecord.Instrument, playerScoreRecord.Difficulty, player.Profile.HarmonyIndex);
         }
 
         private static void FetchHighScores(SongEntry songEntry, out PlayerScoreRecord playerScoreRecord, out GameRecord bandScoreRecord)

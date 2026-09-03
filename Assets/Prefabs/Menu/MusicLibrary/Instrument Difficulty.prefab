@@ -538,3 +538,5 @@ MonoBehaviour:
   _instrumentIcon: {fileID: 8738765378136697063}
   _difficultyIcon: {fileID: 4230519954311980479}
   _percentText: {fileID: 4824570177518276672}
+  _fullComboColor: {r: 1, g: 0.8156863, b: 0.16078432, a: 1}
+  _sectionFullComboColor: {r: 0.678, g: 0.478, b: 1, a: 1}
