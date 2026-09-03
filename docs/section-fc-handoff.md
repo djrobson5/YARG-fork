@@ -54,6 +54,7 @@ c. `SetReload(Partial)` can downgrade a pending Full reload if flipped right aft
 - Unity may rewrite hand-authored prefab YAML on save (trailing spaces, `m_EditorClassIdentifier`). Expect diff noise, not breakage.
 - Section rows and summary rows only exist for runs made after their slice landed. Songs played earlier show no fraction until the next valid run.
 - Scratchpad artifacts from this session (research reports and the three mockups) live under the session's temp directory and may be gone; the mockup artifacts are linked from the design doc.
+- Make sure no song or library preview is playing before focusing the editor to trigger a recompile after a large pull, since a BASS audio callback firing during the domain unload can deadlock the editor (recovery: kill Unity and relaunch, nothing on disk is affected).
 
 ## Nightly tracking
 
