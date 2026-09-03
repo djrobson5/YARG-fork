@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Cysharp.Threading.Tasks;
@@ -648,6 +648,7 @@ namespace YARG.Gameplay
             // Get all of the individual player score entries
             var playerEntries = new List<PlayerScoreRecord>();
             var starScoreCutoffsList = new List<int[]>();
+            var sectionCompletions = new List<PendingSectionCompletion>();
             foreach (var player in _players)
             {
                 var profile = player.Player.Profile;
@@ -679,6 +680,14 @@ namespace YARG.Gameplay
                 });
 
                 starScoreCutoffsList.Add(player.BaseEngine.StarScoreThresholds);
+
+                // Only collected here; nothing is written until the score itself is written,
+                // since this method has several early returns past this point
+                var pendingSections = ScanSectionCompletions(player);
+                if (pendingSections != null)
+                {
+                    sectionCompletions.Add(pendingSections);
+                }
             }
 
             var validScoreCount = _players.Count(p => ScoreContainer.IsSoloScoreValid(SongSpeed, p.Player));
@@ -732,6 +741,10 @@ namespace YARG.Gameplay
                 ? StarAmountHelper.GetStarsFromInt(Mathf.FloorToInt(humanBandStars))
                 : StarAmount.None;
 
+            // Section completions are written alongside the score, so that the two are either
+            // both recorded or both skipped
+            RecordSectionCompletions(sectionCompletions);
+
             ScoreContainer.RecordScore(new GameRecord
             {
                 Date = DateTime.Now,
@@ -751,6 +764,111 @@ namespace YARG.Gameplay
                 PlayedWithReplay = GlobalVariables.State.PlayingWithReplay,
                 HasBots = HasBots,
             }, playerEntries);
+        }
+
+        /// <summary>
+        /// The section completions of a single player, waiting to be written to the database.
+        /// </summary>
+        private class PendingSectionCompletion
+        {
+            public YargProfile Profile;
+
+            /// <summary>
+            /// The amount of sections that contained at least one note for this player's
+            /// instrument. Empty sections can never be perfected, so they are not counted.
+            /// </summary>
+            public int ApplicableSectionCount;
+
+            public int PerfectedThisRun;
+
+            public IReadOnlyList<SectionCompletionResult> Results;
+        }
+
+        /// <summary>
+        /// Determines which chart sections this player perfected, or <c>null</c> if this run
+        /// cannot earn section completion credit.
+        /// </summary>
+        /// <remarks>
+        /// This is only reached for full-song runs; <see cref="EndSong"/> returns early in
+        /// practice mode, so practice never earns section completion credit.
+        /// </remarks>
+        private PendingSectionCompletion ScanSectionCompletions(BasePlayer player)
+        {
+            // Replays never earn credit, neither playback nor playing alongside one
+            if (player.Player.IsReplay || GlobalVariables.State.PlayingWithReplay)
+            {
+                return null;
+            }
+
+            var sections = Chart.Sections;
+            if (sections.Count == 0)
+            {
+                return null;
+            }
+
+            var results = player.ScanSectionCompletion(sections);
+            if (results is null)
+            {
+                return null;
+            }
+
+            int perfectedThisRun = 0;
+            int applicableCount = 0;
+            foreach (var result in results)
+            {
+                if (result.NotesTotal <= 0)
+                {
+                    // A section with no notes for this instrument is not part of the total
+                    continue;
+                }
+
+                applicableCount++;
+                if (result.IsPerfected)
+                {
+                    perfectedThisRun++;
+                }
+            }
+
+            if (applicableCount == 0)
+            {
+                // Nothing on this instrument lines up with the chart's sections
+                return null;
+            }
+
+            return new PendingSectionCompletion
+            {
+                Profile = player.Player.Profile,
+                ApplicableSectionCount = applicableCount,
+                PerfectedThisRun = perfectedThisRun,
+                Results = results,
+            };
+        }
+
+        /// <summary>
+        /// Writes the collected section completions to the database and logs the cumulative progress.
+        /// </summary>
+        private void RecordSectionCompletions(List<PendingSectionCompletion> completions)
+        {
+            foreach (var completion in completions)
+            {
+                var profile = completion.Profile;
+                int sectionCount = completion.ApplicableSectionCount;
+
+                bool success = ScoreContainer.RecordSectionCompletions(Song.Hash, profile.Id,
+                    profile.CurrentInstrument, profile.CurrentDifficulty, profile.HarmonyIndex,
+                    sectionCount, completion.Results, out int completedTotal);
+
+                if (!success)
+                {
+                    // The failure itself is already logged; don't follow it with a bogus total
+                    continue;
+                }
+
+                YargLogger.LogFormatInfo(
+                    "Section FC ({0}, {1}): {2}/{3} sections perfected this run, {4}/{5} cumulative.",
+                    profile.Name, profile.CurrentInstrument, completion.PerfectedThisRun, sectionCount,
+                    completedTotal, sectionCount);
+            }
         }
 
         public void ForceQuitSong()

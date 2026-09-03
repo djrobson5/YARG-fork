@@ -14,6 +14,7 @@ using YARG.Gameplay.Visuals;
 using YARG.Helpers;
 using YARG.Playback;
 using YARG.Player;
+using YARG.Scores;
 using YARG.Settings;
 using YARG.Themes;
 
@@ -995,6 +996,19 @@ namespace YARG.Gameplay.Player
         protected virtual void ModifyLaneFromNote(LaneElement lane, TNote note) {}
 
         protected abstract void RescaleLanesForBRE();
+
+        public override IReadOnlyList<SectionCompletionResult> ScanSectionCompletion(
+            IReadOnlyList<Section> sections)
+        {
+            // The engine's note count is used so that the totals line up with EngineStats.TotalNotes,
+            // which counts chords as either one note or one note per lane depending on the instrument.
+            //
+            // The lambda must stay a lambda: Engine.GetNumberOfNotes is itself generic over the note
+            // type, so passing it as a method group gives the compiler nothing to infer ScanNotes'
+            // TNote from and the call fails to resolve. Calling it inside the lambda fixes TNote to
+            // this player's note type first.
+            return SectionCompletionScanner.ScanNotes(sections, Notes, note => Engine.GetNumberOfNotes(note));
+        }
 
         protected virtual void OnNoteHit(int index, TNote note)
         {

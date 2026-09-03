@@ -14,6 +14,7 @@ using YARG.Gameplay.HUD;
 using YARG.Helpers;
 using YARG.Input;
 using YARG.Player;
+using YARG.Scores;
 using YARG.Settings;
 
 namespace YARG.Gameplay.Player
@@ -609,6 +610,13 @@ namespace YARG.Gameplay.Player
 
             return note.ChildNotes.Count > 0 &&
                 note.ChildNotes.All(child => child.Tick >= start && child.TotalTickEnd <= end);
+        }
+
+        public override IReadOnlyList<SectionCompletionResult> ScanSectionCompletion(
+            IReadOnlyList<Section> sections)
+        {
+            // Vocals are graded per phrase, not per note
+            return SectionCompletionScanner.ScanVocalPhrases(sections, NoteTrack.Notes);
         }
 
         public override void SetStemMuteState(bool muted)

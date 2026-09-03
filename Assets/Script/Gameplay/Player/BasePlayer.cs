@@ -14,6 +14,7 @@ using YARG.Helpers.UI;
 using YARG.Input;
 using YARG.Playback;
 using YARG.Player;
+using YARG.Scores;
 using YARG.Settings;
 
 namespace YARG.Gameplay.Player
@@ -214,6 +215,19 @@ namespace YARG.Gameplay.Player
 
         // TODO Make this more generic
         public abstract void SetStemMuteState(bool muted);
+
+        /// <summary>
+        /// Determines which of the chart's sections had every one of their notes hit this run.
+        /// </summary>
+        /// <returns>
+        /// One result per section, in section order, or <c>null</c> if this player
+        /// does not support section completion tracking.
+        /// </returns>
+        public virtual IReadOnlyList<SectionCompletionResult> ScanSectionCompletion(
+            IReadOnlyList<Section> sections)
+        {
+            return null;
+        }
 
         public virtual void SetStarPowerFX(bool active)
         {

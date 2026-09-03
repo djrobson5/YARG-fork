@@ -75,6 +75,7 @@ namespace YARG.Scores
             _db.CreateTable<GameRecord>();
             _db.CreateTable<PlayerScoreRecord>();
             _db.CreateTable<PlayerInfoRecord>();
+            _db.CreateTable<SectionCompletionRecord>();
 
             // Fill in missing percentage values
             int amountFilled = _db.Execute(
@@ -202,6 +203,11 @@ namespace YARG.Scores
             InsertAll(records);
         }
 
+        public void InsertSectionCompletions(IEnumerable<SectionCompletionRecord> records)
+        {
+            InsertAll(records);
+        }
+
         #endregion
 
         #region Query helper methods
@@ -260,6 +266,30 @@ namespace YARG.Scores
                 ORDER BY BandScore DESC
                 LIMIT 1",
                 songChecksum.HashBytes
+            );
+        }
+
+        public List<SectionCompletionRecord> QuerySectionCompletions(
+            HashWrapper songChecksum,
+            Guid playerId,
+            Instrument instrument,
+            Difficulty difficulty,
+            int harmonyIndex
+        )
+        {
+            return Query<SectionCompletionRecord>(
+                @"SELECT * FROM SectionCompletions
+                WHERE SongChecksum = ?
+                    AND PlayerId = ?
+                    AND Instrument = ?
+                    AND Difficulty = ?
+                    AND HarmonyIndex = ?
+                ORDER BY SectionIndex",
+                songChecksum.HashBytes,
+                playerId,
+                (int) instrument,
+                (int) difficulty,
+                harmonyIndex
             );
         }
 
