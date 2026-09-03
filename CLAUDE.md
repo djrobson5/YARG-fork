@@ -37,7 +37,9 @@ dotnet restore Assembly-CSharp.csproj -nologo -v q
 dotnet build Assembly-CSharp.csproj --no-restore -nologo -v q -p:UseSharedCompilation=false
 ```
 
-Green means `Build succeeded` with no `error CS` lines. The restore is required once per clone because the csproj is SDK-style; it fetches nothing. Output lands in the gitignored `Temp/`. This only checks the main runtime assembly (`Assembly-CSharp`), so editor-only assemblies, prefab/scene serialization, and shaders still need a real Unity compile before merging. The `.csproj` files are Unity-generated; if they are missing, regenerate them from Unity Preferences > External Tools.
+Green means `Build succeeded` with no `error CS` lines. The restore is required once per clone because the csproj is SDK-style; it fetches nothing. Output lands in the gitignored `Temp/`.
+
+**After pulling upstream, the generated csprojs are stale** (they carry explicit `<Compile Include>` lists) until Unity next compiles, so `dotnet build` reports `CS2001 could not be found` for deleted files and misses added ones. Don't hand-edit them: copy `Assembly-CSharp`, `Assembly-CSharp-firstpass` and `YARG.Core.Package` to `*.Check.csproj`, replace each one's `Assets\Script\...` / `YARG.Core\YARG.Core\...` compile entries with a `**\*.cs` glob (excluding `Editor`), repoint their `ProjectReference`s at the `.Check` copies, add `<Reference>`s for any new `Assets\Packages\*` DLLs, build the check project, then delete the copies and `Temp/obj/*Check*`. This only checks the main runtime assembly (`Assembly-CSharp`), so editor-only assemblies, prefab/scene serialization, and shaders still need a real Unity compile before merging. The `.csproj` files are Unity-generated; if they are missing, regenerate them from Unity Preferences > External Tools.
 
 Exit code 0 and no `error CS` lines means green. Gotchas:
 
