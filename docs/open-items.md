@@ -2,6 +2,8 @@
 
 Running list of known issues and possible follow-ups for the Section FC fork. Last updated 2026-09-03. Remove items when done; note the commit.
 
+Planned features live in `docs/roadmap.md`.
+
 ## Known low-severity issues
 
 - Hidden strip still registered with the HUD editor: with `ShowSectionStrip` off, the strip's empty root GameObject stays in `DraggableHudManager`'s element list, so HUD edit mode can select an invisible outline above the track. Fix needs an unregister call whose timing against the manager's `Start()` must be verified in the editor.
