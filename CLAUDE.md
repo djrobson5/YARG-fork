@@ -27,7 +27,20 @@ Unity 6000.3.5f2 is at `C:\Program Files\Unity\Hub\Editor\6000.3.5f2\Editor\Unit
 Unity.exe -batchmode -nographics -quit -projectPath <repo> -logFile <log>
 ```
 
+### Fast compile check (editor may stay open)
+
+Agents should use this after every C# edit; it takes ~8 seconds and does not touch the Unity editor:
+
+```
+cd <repo>
+dotnet restore Assembly-CSharp.csproj -nologo -v q
+dotnet build Assembly-CSharp.csproj --no-restore -nologo -v q -p:UseSharedCompilation=false
+```
+
+Green means `Build succeeded` with no `error CS` lines. The restore is required once per clone because the csproj is SDK-style; it fetches nothing. Output lands in the gitignored `Temp/`. This only checks the main runtime assembly (`Assembly-CSharp`), so editor-only assemblies, prefab/scene serialization, and shaders still need a real Unity compile before merging. The `.csproj` files are Unity-generated; if they are missing, regenerate them from Unity Preferences > External Tools.
+
 Exit code 0 and no `error CS` lines means green. Gotchas:
 
 - NuGet packages (DryWetMidi, ZString, sqlite-net, etc.) restore into the gitignored `Assets/Packages/` via NuGetForUnity, which only runs after a successful compile. On a fresh clone, batchmode deadlocks with hundreds of missing-type errors; bootstrap by unpacking the `.nupkg` files from `Assets/packages.config` into `Assets/Packages/<Id>.<Version>/` once, after which the plugin maintains them.
 - Unity's VS Code integration rewrites `.vscode/settings.json` on open. Revert it before committing.
+- Unity also rewrites `dotnet.defaultSolution` in `.vscode/settings.json` (to `YARG-fork.slnx`) when VS Code is the external editor. Revert with `git checkout -- .vscode/settings.json`.

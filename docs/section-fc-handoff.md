@@ -40,7 +40,7 @@ Where: `SettingContainer` in `Assets/Script/Settings/SettingsManager.Settings.cs
 
 ## Environment gotchas
 
-- While the user has the Unity editor open, batchmode compiles cannot run. Agents validate by reading, and the user recompiles by clicking into Unity. When the editor is closed, the headless command in `CLAUDE.md` works and takes about a minute.
+- While the Unity editor is open, batchmode compiles cannot run. Use the `dotnet build` check in `CLAUDE.md` instead (~8 s, runtime assembly only). The user still recompiles in Unity for the final check. VS Code's C# language server diagnostics (via the IDE integration) do not refresh on disk-side edits, so don't rely on them.
 - Unity rewrites `.vscode/settings.json` on focus. Revert before committing; the commit agents already do this.
 - Unity may rewrite hand-authored prefab YAML on save (trailing spaces, `m_EditorClassIdentifier`). Expect diff noise, not breakage.
 - Section rows and summary rows only exist for runs made after their slice landed. Songs played earlier show no fraction until the next valid run.
