@@ -1566,6 +1566,7 @@ MonoBehaviour:
   _modifiersUsedTag: {fileID: 4000321133965365406}
   _modifiersUsedContainer: {fileID: 2650664787683591900}
   _modifiersUsedSeparator: {fileID: 2276495733993302584}
+  _sectionStripContainer: {fileID: 5501230000000000010}
   _overstrums: {fileID: 3470644138679231518}
   _hoposStrummed: {fileID: 5928491416955891486}
   _ghostInputs: {fileID: 4643294085260500127}
@@ -2220,3 +2221,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f4688fdb7df04437aeb418b961361dc5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+--- !u!224 &5501230000000000010 stripped
+RectTransform:
+  m_CorrespondingSourceObject: {fileID: 5501230000000000002, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
+  m_PrefabInstance: {fileID: 1866566241013056720}
+  m_PrefabAsset: {fileID: 0}

@@ -613,42 +613,67 @@ namespace YARG.Gameplay
                 YargLogger.LogException(e, "Failed to save replay!");
             }
 
+            // Scanned up front so that the score screen and the database both read the same
+            // results, rather than the scan being run twice
+            var sectionCompletions = ScanSectionCompletions();
+
+            // Built before the scores are recorded, but only published afterwards: whether the
+            // section rows actually made it to the database is not known until RecordScores has
+            // run, and the card must never show progress that was silently dropped
+            var playerScores = _players.Select(player => new PlayerScoreCard
+            {
+                IsHighScore = player.Score > player.LastHighScore,
+                Player = player.Player,
+                Stats = player.BaseStats,
+                AverageMultiplier = player.BaseEngine.BaseNoteScore == 0 ?
+                    0 :
+                    // PendingScore should be 0 at this point, so no reason to add it
+                    (float) player.BaseStats.CommittedScore / player.BaseEngine.BaseNoteScore,
+                Sections = sectionCompletions.TryGetValue(player, out var completion)
+                    ? completion.Summary
+                    : null,
+            }).ToArray();
+
+            bool sectionsRecorded = RecordScores(replayInfo, sectionCompletions);
+            if (!sectionsRecorded)
+            {
+                // RecordScores bailed before writing anything, so there is no persisted progress
+                // to report. PlayerScoreCard is a struct, so this has to go through the array.
+                for (int i = 0; i < playerScores.Length; i++)
+                {
+                    playerScores[i].Sections = null;
+                }
+            }
+
             // Pass the score info to the stats screen
             GlobalVariables.State.ScoreScreenStats = new ScoreScreenStats
             {
-                PlayerScores = _players.Select(player => new PlayerScoreCard
-                {
-                    IsHighScore = player.Score > player.LastHighScore,
-                    Player = player.Player,
-                    Stats = player.BaseStats,
-                    AverageMultiplier = player.BaseEngine.BaseNoteScore == 0 ?
-                        0 :
-                        // PendingScore should be 0 at this point, so no reason to add it
-                        (float) player.BaseStats.CommittedScore / player.BaseEngine.BaseNoteScore,
-                }).ToArray(),
+                PlayerScores = playerScores,
                 BandScore = BandScore,
                 BandStars = (int) BandStars,
                 ReplayInfo = replayInfo,
             };
-
-            RecordScores(replayInfo);
 
             // Go to the score screen
             GlobalVariables.Instance.LoadScene(SceneIndex.Score);
             return true;
         }
 
-        private void RecordScores(ReplayInfo replayInfo)
+        /// <returns>
+        /// Whether the section completions were written. False means this method returned early
+        /// and nothing at all was recorded, section rows included.
+        /// </returns>
+        private bool RecordScores(ReplayInfo replayInfo,
+            IReadOnlyDictionary<BasePlayer, PendingSectionCompletion> sectionCompletions)
         {
             if (!ScoreContainer.IsBandScoreValid(SongSpeed))
             {
-                return;
+                return false;
             }
 
             // Get all of the individual player score entries
             var playerEntries = new List<PlayerScoreRecord>();
             var starScoreCutoffsList = new List<int[]>();
-            var sectionCompletions = new List<PendingSectionCompletion>();
             foreach (var player in _players)
             {
                 var profile = player.Player.Profile;
@@ -680,20 +705,12 @@ namespace YARG.Gameplay
                 });
 
                 starScoreCutoffsList.Add(player.BaseEngine.StarScoreThresholds);
-
-                // Only collected here; nothing is written until the score itself is written,
-                // since this method has several early returns past this point
-                var pendingSections = ScanSectionCompletions(player);
-                if (pendingSections != null)
-                {
-                    sectionCompletions.Add(pendingSections);
-                }
             }
 
             var validScoreCount = _players.Count(p => ScoreContainer.IsSoloScoreValid(SongSpeed, p.Player));
             if (validScoreCount == 0)
             {
-                return;
+                return false;
             }
 
             int humanBandScore = 0;
@@ -705,7 +722,7 @@ namespace YARG.Gameplay
                 // This will remove band multiplier and Star Power contribution from bots
                 if (replayInfo == null || ReplayData == null)
                 {
-                    return;
+                    return false;
                 }
                 var results = ReplayAnalyzer.AnalyzeReplay(Chart, replayInfo, ReplayData);
                 foreach (var result in results)
@@ -743,7 +760,7 @@ namespace YARG.Gameplay
 
             // Section completions are written alongside the score, so that the two are either
             // both recorded or both skipped
-            RecordSectionCompletions(sectionCompletions);
+            RecordSectionCompletions(sectionCompletions.Values);
 
             ScoreContainer.RecordScore(new GameRecord
             {
@@ -764,6 +781,8 @@ namespace YARG.Gameplay
                 PlayedWithReplay = GlobalVariables.State.PlayingWithReplay,
                 HasBots = HasBots,
             }, playerEntries);
+
+            return true;
         }
 
         /// <summary>
@@ -782,6 +801,46 @@ namespace YARG.Gameplay
             public int PerfectedThisRun;
 
             public IReadOnlyList<SectionCompletionResult> Results;
+
+            /// <summary>
+            /// The same results, shaped for the score screen.
+            /// </summary>
+            public PlayerSectionSummary Summary;
+        }
+
+        /// <summary>
+        /// Scans the section completion of every player that is allowed to earn credit for it.
+        /// </summary>
+        /// <remarks>
+        /// Run once, before the score screen data is built, so that the card and the database
+        /// write share a single scan.
+        /// </remarks>
+        private Dictionary<BasePlayer, PendingSectionCompletion> ScanSectionCompletions()
+        {
+            var completions = new Dictionary<BasePlayer, PendingSectionCompletion>();
+
+            // Same gate as the band score; an invalid band score means nothing gets recorded
+            if (!ScoreContainer.IsBandScoreValid(SongSpeed))
+            {
+                return completions;
+            }
+
+            foreach (var player in _players)
+            {
+                // Skip bots and anyone that's obviously cheating.
+                if (!ScoreContainer.IsSoloScoreValid(SongSpeed, player.Player))
+                {
+                    continue;
+                }
+
+                var completion = ScanSectionCompletion(player);
+                if (completion != null)
+                {
+                    completions.Add(player, completion);
+                }
+            }
+
+            return completions;
         }
 
         /// <summary>
@@ -792,7 +851,7 @@ namespace YARG.Gameplay
         /// This is only reached for full-song runs; <see cref="EndSong"/> returns early in
         /// practice mode, so practice never earns section completion credit.
         /// </remarks>
-        private PendingSectionCompletion ScanSectionCompletions(BasePlayer player)
+        private PendingSectionCompletion ScanSectionCompletion(BasePlayer player)
         {
             // Replays never earn credit, neither playback nor playing alongside one
             if (player.Player.IsReplay || GlobalVariables.State.PlayingWithReplay)
@@ -835,19 +894,81 @@ namespace YARG.Gameplay
                 return null;
             }
 
+            var profile = player.Player.Profile;
+
+            // The pre-run set is needed either way to tell "perfected earlier" blocks apart from
+            // "perfected just now" ones, so the cumulative count is built from it rather than
+            // waiting on the database write, which happens after the score screen data is built
+            var completedBefore = ScoreContainer.GetCompletedSections(Song.Hash, profile.Id,
+                profile.CurrentInstrument, profile.CurrentDifficulty, profile.HarmonyIndex);
+
             return new PendingSectionCompletion
             {
-                Profile = player.Player.Profile,
+                Profile = profile,
                 ApplicableSectionCount = applicableCount,
                 PerfectedThisRun = perfectedThisRun,
                 Results = results,
+                Summary = BuildSectionSummary(results, applicableCount, completedBefore),
+            };
+        }
+
+        /// <summary>
+        /// Shapes a scan's results into the per-section states and counts the score card displays.
+        /// </summary>
+        private static PlayerSectionSummary BuildSectionSummary(IReadOnlyList<SectionCompletionResult> results,
+            int applicableCount, HashSet<int> completedBefore)
+        {
+            var states = new List<SectionCompletionState>(applicableCount);
+            var newlyCompleted = new List<int>();
+
+            foreach (var result in results)
+            {
+                if (result.NotesTotal <= 0)
+                {
+                    // Sections with no notes get no block, matching the denominator
+                    continue;
+                }
+
+                if (completedBefore.Contains(result.SectionIndex))
+                {
+                    states.Add(SectionCompletionState.CompletedEarlier);
+                }
+                else if (result.IsPerfected)
+                {
+                    states.Add(SectionCompletionState.CompletedThisRun);
+                    newlyCompleted.Add(result.SectionIndex);
+                }
+                else
+                {
+                    states.Add(SectionCompletionState.Missing);
+                }
+            }
+
+            // Derived from the states rather than from completedBefore.Count, so that rows left
+            // behind by sections that are no longer applicable can never push the fraction past
+            // what the strip actually shows
+            int completedCount = 0;
+            foreach (var state in states)
+            {
+                if (state != SectionCompletionState.Missing)
+                {
+                    completedCount++;
+                }
+            }
+
+            return new PlayerSectionSummary
+            {
+                ApplicableCount = applicableCount,
+                CompletedCount = completedCount,
+                NewlyCompletedIndices = newlyCompleted.ToArray(),
+                SectionStates = states.ToArray(),
             };
         }
 
         /// <summary>
         /// Writes the collected section completions to the database and logs the cumulative progress.
         /// </summary>
-        private void RecordSectionCompletions(List<PendingSectionCompletion> completions)
+        private void RecordSectionCompletions(IEnumerable<PendingSectionCompletion> completions)
         {
             foreach (var completion in completions)
             {

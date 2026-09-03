@@ -1635,6 +1635,7 @@ MonoBehaviour:
   _modifiersUsedTag: {fileID: 8126458331043436131}
   _modifiersUsedContainer: {fileID: 7173119022540619809}
   _modifiersUsedSeparator: {fileID: 6400381312589966533}
+  _sectionStripContainer: {fileID: 5501230000000000010}
   _overhits: {fileID: 3670342607099384801}
   _statInfoPrefab: {fileID: 1126423693335696835, guid: 7ceadb1ec3f67f64e8ca8ca3a866cd96, type: 3}
 --- !u!114 &8550096035807535358 stripped
@@ -1673,5 +1674,10 @@ MonoBehaviour:
 --- !u!1 &8550096036332697315 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 2885240812740932814, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
+  m_PrefabInstance: {fileID: 6819122947273523757}
+  m_PrefabAsset: {fileID: 0}
+--- !u!224 &5501230000000000010 stripped
+RectTransform:
+  m_CorrespondingSourceObject: {fileID: 5501230000000000002, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
   m_PrefabInstance: {fileID: 6819122947273523757}
   m_PrefabAsset: {fileID: 0}

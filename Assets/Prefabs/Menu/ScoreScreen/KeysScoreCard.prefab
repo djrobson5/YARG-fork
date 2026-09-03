@@ -1376,6 +1376,7 @@ MonoBehaviour:
   _modifiersUsedTag: {fileID: 4490226248249831456}
   _modifiersUsedContainer: {fileID: 3250067926952896098}
   _modifiersUsedSeparator: {fileID: 1604476451735882374}
+  _sectionStripContainer: {fileID: 5501230000000000010}
   _overhits: {fileID: 3397562841082415807}
 --- !u!1 &4052832000008949920 stripped
 GameObject:
@@ -1674,3 +1675,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f4688fdb7df04437aeb418b961361dc5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+--- !u!224 &5501230000000000010 stripped
+RectTransform:
+  m_CorrespondingSourceObject: {fileID: 5501230000000000002, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
+  m_PrefabInstance: {fileID: 1167806695846405230}
+  m_PrefabAsset: {fileID: 0}

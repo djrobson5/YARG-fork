@@ -499,7 +499,9 @@
             "RestartSong" : "Restart Song",
             "ShowAdvanced": "Show Advanced",
             "HideAdvanced": "Hide Advanced",
-            "EndSetlistEarly" : "End Setlist"
+            "EndSetlistEarly" : "End Setlist",
+            "SectionsPerfected" : "Sections perfected",
+            "SectionFullCombo" : "Section FC"
         },
         "Settings": {
             "ShowAdvanced": "Show Advanced",
