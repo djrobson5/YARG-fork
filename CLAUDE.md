@@ -15,5 +15,19 @@ When in doubt about which model fits, prefer the cheaper one and escalate on fai
 
 ## Repo notes
 
-- Upstream: `https://github.com/YARC-Official/YARG.git`, cloned recursively (submodules matter).
+- Upstream: `https://github.com/YARC-Official/YARG.git`, cloned recursively. The `YARG.Core` engine submodule lives at the repo root (`YARG.Core/`), not under `Assets/Plugins`.
 - Unity project. Check `ProjectSettings/ProjectVersion.txt` for the required editor version before building.
+- Feature spec and locked design decisions: `docs/section-fc-design.md`. Read it before touching section-completion code.
+
+## Building headlessly
+
+Unity 6000.3.5f2 is at `C:\Program Files\Unity\Hub\Editor\6000.3.5f2\Editor\Unity.exe`. Compile check:
+
+```
+Unity.exe -batchmode -nographics -quit -projectPath <repo> -logFile <log>
+```
+
+Exit code 0 and no `error CS` lines means green. Gotchas:
+
+- NuGet packages (DryWetMidi, ZString, sqlite-net, etc.) restore into the gitignored `Assets/Packages/` via NuGetForUnity, which only runs after a successful compile. On a fresh clone, batchmode deadlocks with hundreds of missing-type errors; bootstrap by unpacking the `.nupkg` files from `Assets/packages.config` into `Assets/Packages/<Id>.<Version>/` once, after which the plugin maintains them.
+- Unity's VS Code integration rewrites `.vscode/settings.json` on open. Revert it before committing.
