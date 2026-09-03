@@ -77,24 +77,6 @@ namespace YARG.Gameplay.HUD
         /// </summary>
         private int _sectionCursor;
 
-        /// <summary>
-        /// The tick cursor used to map hit and missed notes onto sections.
-        /// </summary>
-        /// <remarks>
-        /// Kept separate from <see cref="_sectionCursor"/> because a note is resolved at its own
-        /// tick, which can lag the song clock by up to the length of the hit window.
-        /// <para>
-        /// Hits and misses share this one cursor rather than having one each. The engine resolves
-        /// notes strictly in order - a note is only ever hit or missed once every note before it
-        /// has been - so the ticks arriving here are non-decreasing across both paths, and a
-        /// forward-only cursor never has to walk back. Sharing is what makes that guarantee
-        /// useful: with a cursor each, a hit and a miss either side of a section boundary could
-        /// land on different sections, and a section could keep gaining progress after the miss
-        /// that dropped it.
-        /// </para>
-        /// </remarks>
-        private int _noteCursor;
-
         public int BlockCount => _blockStates.Length;
 
         /// <summary>
@@ -235,6 +217,12 @@ namespace YARG.Gameplay.HUD
         /// forward in a full-song run means a rewind-and-resume, which is bounded and already
         /// invalidates scores once it goes too far.
         /// </para>
+        /// <para>
+        /// The cursor never regresses either, so a pause-rewind that crosses back over a section
+        /// boundary leaves the highlight on the later section until the song time catches up.
+        /// That is cosmetic only: the notes replayed over that stretch were already resolved and
+        /// are not dispatched a second time, so no block's state or progress rides on it.
+        /// </para>
         /// </remarks>
         public void UpdateSongTime(double songTime)
         {
@@ -257,12 +245,21 @@ namespace YARG.Gameplay.HUD
         /// <remarks>
         /// A section already perfected in an earlier run is left alone: a miss costs this run,
         /// not the banked completion.
+        /// <para>
+        /// The section is looked up from the tick rather than walked to with a cursor. Notes do
+        /// not reach here in tick order: <c>BaseEngine.SkipPreviousNotes</c> dispatches the misses
+        /// for notes it steps over in decreasing tick order, and a lane auto-hit can arrive after
+        /// a later note has already resolved. A forward-only cursor would blame the wrong section
+        /// in both cases, and could keep adding progress to a section after the miss that dropped
+        /// it. The lookup is a binary search over a list that is built once, so it costs nothing
+        /// worth a cursor.
+        /// </para>
         /// </remarks>
         public void OnNoteMissed(uint tick)
         {
-            _noteCursor = SectionCompletionScanner.AdvanceSectionIndex(_sections, _noteCursor, tick);
+            int section = SectionCompletionScanner.FindSectionIndex(_sections, tick);
 
-            int block = _sectionToBlock[_noteCursor];
+            int block = _sectionToBlock[section];
             if (block < 0)
             {
                 return;
@@ -285,6 +282,10 @@ namespace YARG.Gameplay.HUD
         /// A section perfected in an earlier run still counts its hits, so the progress is there
         /// for any later surface that wants it; the strip simply shows no percent for a section
         /// that has nothing left to earn.
+        /// <para>
+        /// The section is looked up from the tick for the same reason as in
+        /// <see cref="OnNoteMissed"/>: hits do not arrive in tick order either.
+        /// </para>
         /// </remarks>
         public void OnNoteHit(uint tick, int count)
         {
@@ -293,9 +294,9 @@ namespace YARG.Gameplay.HUD
                 return;
             }
 
-            _noteCursor = SectionCompletionScanner.AdvanceSectionIndex(_sections, _noteCursor, tick);
+            int section = SectionCompletionScanner.FindSectionIndex(_sections, tick);
 
-            int block = _sectionToBlock[_noteCursor];
+            int block = _sectionToBlock[section];
             if (block < 0)
             {
                 return;

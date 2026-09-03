@@ -1025,15 +1025,23 @@ namespace YARG.Gameplay.Player
             // Big rock ending notes aren't part of a section's note total, so hitting one can't
             // move its progress either.
             //
-            // The count is always one, for the same reason EngineStats.NotesHit only ever goes up
-            // by one: the engine dispatches exactly one hit per note it counts. Instruments that
-            // treat a chord as one note hit the whole chord at once, and the ones that don't hit
-            // each sub-note separately, so either way one hit is worth one of the scanner's
-            // NotesTotal. Engine.GetNumberOfNotes is deliberately not used here even though it is
-            // what builds those totals: it answers a different question - how many notes a note
-            // object stands for - and for a chord parent under separate-chord semantics (drums,
-            // keys) it returns the size of the whole chord, which the sub-notes' own hits would
-            // then count a second time and push the section past 100%.
+            // The count is always one, because every hit the engine dispatches is worth exactly
+            // one of the scanner's NotesTotal. Instruments that treat a chord as one note hit the
+            // whole chord at once, and the ones that don't hit each sub-note separately, so the
+            // unit matches either way. Engine.GetNumberOfNotes is deliberately not used here even
+            // though it is what builds those totals: it answers a different question - how many
+            // notes a note object stands for - and for a chord parent under separate-chord
+            // semantics (drums, keys) it returns the size of the whole chord, which the sub-notes'
+            // own hits would then count a second time and push the section past 100%.
+            //
+            // Known limitation: the dispatch is not quite one per counted note. On drums, a star
+            // power activation note the player skips is marked hit by the engine itself
+            // (DrumsEngine's activation handling) without an OnNoteHit dispatch, so the live
+            // percent for the section containing it can never reach 100 while that section is
+            // current. Only the percent is affected: the block still goes clean on entry and is
+            // only dropped by an actual miss, and the end-of-song scan reads WasHit off the notes
+            // rather than counting dispatches, so section credit is awarded correctly. Fixing it
+            // would mean a new dispatch in YARG.Core, which this fork does not modify.
             if (!note.IsBigRockEnding)
             {
                 NotifySectionNoteHit(note.Tick, 1);

@@ -180,14 +180,12 @@ namespace YARG.Gameplay.HUD
         /// </remarks>
         private void UpdateSectionStrip()
         {
-            bool hasCustomPosition = _sectionStripDraggable.HasCustomPosition;
-
-            // Even a strip the player has placed themselves is kept inside its own slot, so a
+            // Even a strip the player has placed themselves is sized to its own highway, so a
             // saved single player position can never spill across a neighbouring highway when
             // the same profile is later used in a band
-            UpdateSectionStripWidth(hasCustomPosition);
+            UpdateSectionStripWidth();
 
-            if (hasCustomPosition)
+            if (_sectionStripDraggable.HasCustomPosition)
             {
                 return;
             }
@@ -211,8 +209,15 @@ namespace YARG.Gameplay.HUD
         /// (the same track-position API the top HUD is placed with) and then capped to the slice
         /// of the screen this highway owns, so the strips can never touch however the highways
         /// end up scaled.
+        /// <para>
+        /// The same width whether or not the strip has been dragged somewhere. Deriving it from
+        /// the highway either way is what keeps it stable: the draggable only reports a custom
+        /// position once one has been saved or set, so a width that depended on that would jump
+        /// the moment the player moved the strip, or between the pre-song HUD layout and the
+        /// first frame of the song.
+        /// </para>
         /// </remarks>
-        private void UpdateSectionStripWidth(bool hasCustomPosition)
+        private void UpdateSectionStripWidth()
         {
             float canvasScale = _highwayEditCanvas.scaleFactor;
             float containerScale = _scaleContainer.localScale.x;
@@ -223,18 +228,17 @@ namespace YARG.Gameplay.HUD
 
             // The strip's slice of the screen, in canvas units
             float slotWidth = ((float) Screen.width / _highwayCount - SECTION_STRIP_SLOT_MARGIN) / canvasScale;
+            // Depth 1.0 is the far end of the highway, where the strip sits
+            var farLeft = _highwayRenderer.GetTrackPositionScreenSpace(_highwayIndex, 0f, 1f);
+            var farRight = _highwayRenderer.GetTrackPositionScreenSpace(_highwayIndex, 1f, 1f);
+
+            // With no track position to measure - the camera cannot see the far end - the slot is
+            // the best bound left. Falling through to it rather than leaving the width alone keeps
+            // a strip that is briefly unmeasurable from keeping the prefab's single player width
+            // in a band
             float width = slotWidth;
-
-            if (!hasCustomPosition)
+            if (farLeft != null && farRight != null)
             {
-                // Depth 1.0 is the far end of the highway, where the strip sits
-                var farLeft = _highwayRenderer.GetTrackPositionScreenSpace(_highwayIndex, 0f, 1f);
-                var farRight = _highwayRenderer.GetTrackPositionScreenSpace(_highwayIndex, 1f, 1f);
-                if (farLeft == null || farRight == null)
-                {
-                    return;
-                }
-
                 float farWidth = Math.Abs(farRight.Value.x - farLeft.Value.x) / canvasScale;
                 width = Math.Min(farWidth * SECTION_STRIP_WIDTH_FACTOR, slotWidth);
             }
@@ -253,6 +257,10 @@ namespace YARG.Gameplay.HUD
             // The label and the block container are both stretch-anchored to the strip, so they
             // follow this on their own
             _sectionStripRect.sizeDelta = new Vector2(width, _sectionStripRect.sizeDelta.y);
+
+            // The block spacing depends on how much width each block ends up with, which this
+            // just changed
+            _sectionStrip.OnStripResized();
         }
 
         private void UpdateCenterHud(int highwayIndex)

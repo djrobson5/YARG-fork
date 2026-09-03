@@ -161,8 +161,9 @@ namespace YARG.Scores
         /// Notes before the first section fall into index 0, matching practice mode's
         /// <c>FindSectionAtTime</c> fallback; notes past the last section stay in the last one.
         /// <para>
-        /// Public so that live consumers (the in-game section strip) map ticks onto sections the
-        /// exact same way the post-song scan does, rather than growing a second convention.
+        /// Only for callers whose ticks arrive in non-decreasing order, which is the scan's own
+        /// case. Anything reacting to the engine live wants <see cref="FindSectionIndex"/>, which
+        /// answers the same question for an arbitrary tick.
         /// </para>
         /// </remarks>
         public static int AdvanceSectionIndex(IReadOnlyList<Section> sections, int sectionIndex, uint tick)
@@ -173,6 +174,54 @@ namespace YARG.Scores
             }
 
             return sectionIndex;
+        }
+
+        /// <summary>
+        /// Finds the section containing the given tick, without a cursor.
+        /// </summary>
+        /// <remarks>
+        /// The random-access counterpart of <see cref="AdvanceSectionIndex"/>, for callers whose
+        /// ticks do not arrive in order. The engine's miss dispatch is one such caller:
+        /// <c>BaseEngine.SkipPreviousNotes</c> walks the notes it is stepping over in decreasing
+        /// tick order, and lane auto-hits can likewise arrive after a later note has resolved, so
+        /// a forward-only cursor would attribute an earlier note to a later section.
+        /// <para>
+        /// Same convention as the cursor walk, since sections are tick-sorted and contiguous:
+        /// half-open <c>[Tick, TickEnd)</c> ranges, a tick before the first section maps to 0, and
+        /// a tick at or past the last section's <c>Tick</c> maps to the last index. The search is
+        /// on <c>Tick</c> rather than <c>TickEnd</c>; contiguity makes the two equivalent.
+        /// </para>
+        /// Returns 0 for an empty section list, which no caller should reach: a chart with no
+        /// sections has one generated for it by <c>SongChart.PostProcessSections</c>.
+        /// </remarks>
+        public static int FindSectionIndex(IReadOnlyList<Section> sections, uint tick)
+        {
+            if (sections is null || sections.Count == 0)
+            {
+                return 0;
+            }
+
+            // Invariant: the answer is in [low, high]. low starts at 0 rather than at the first
+            // section whose Tick fits, which is what maps a tick before the first section to 0.
+            int low = 0;
+            int high = sections.Count - 1;
+
+            while (low < high)
+            {
+                // Biased upwards, so that a probe landing on low still narrows the range
+                int mid = low + (high - low + 1) / 2;
+
+                if (tick >= sections[mid].Tick)
+                {
+                    low = mid;
+                }
+                else
+                {
+                    high = mid - 1;
+                }
+            }
+
+            return low;
         }
 
         private static List<SectionCompletionResult> BuildResults(int[] totals, int[] hits)

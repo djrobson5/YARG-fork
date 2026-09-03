@@ -66,13 +66,30 @@ namespace YARG.Gameplay.HUD
         private SectionStripState _state;
         private int _currentBlock = -1;
 
+        /// <summary>
+        /// How many blocks are showing, and how wide the container was when their spacing was
+        /// last decided.
+        /// </summary>
+        /// <remarks>
+        /// <c>TrackView.UpdateSectionStripWidth</c> can resize the strip at any point - the HUD
+        /// layout runs before the player hands over a state, but dragging or rescaling the highway
+        /// in HUD edit mode runs long after - so the spacing has to be re-derived when the width
+        /// moves, not only when the blocks are built.
+        /// </remarks>
+        private int   _blockCount;
+        private float _lastLayoutWidth;
+
         private const int PREVIEW_BLOCK_COUNT = 8;
 
         /// <summary>
-        /// Past this many blocks the gaps cost more width than they buy readability, so the
-        /// blocks are packed edge to edge instead.
+        /// Once a block would be drawn narrower than this, the gaps cost more width than they buy
+        /// readability and the blocks are packed edge to edge instead.
         /// </summary>
-        private const int DENSE_BLOCK_COUNT = 40;
+        /// <remarks>
+        /// In the strip's own canvas units. A block this wide is still a clearly separate mark at
+        /// the strip's height; below it the gap starts eating a visible fraction of the block.
+        /// </remarks>
+        private const float MIN_SPACED_BLOCK_WIDTH = 6f;
 
         protected override void GameplayAwake()
         {
@@ -121,6 +138,23 @@ namespace YARG.Gameplay.HUD
             // Set without easing, so the strip doesn't animate into place on the first frame
             _currentBlock = _state.CurrentBlockIndex;
             ApplyCurrentBlock(false);
+        }
+
+        /// <summary>
+        /// Tells the strip its width has changed, so the blocks can be re-spaced for it.
+        /// </summary>
+        /// <remarks>
+        /// Called by <c>TrackView</c> after it sizes the strip. Cheap enough to call on every HUD
+        /// update: the width is compared first, and only an actual change touches the layout.
+        /// </remarks>
+        public void OnStripResized()
+        {
+            if (_blockLayout == null || Mathf.Approximately(_blockContainer.rect.width, _lastLayoutWidth))
+            {
+                return;
+            }
+
+            UpdateSpacing();
         }
 
         /// <remarks>
@@ -214,6 +248,15 @@ namespace YARG.Gameplay.HUD
         /// A section still in play shows how much of it this run has hit rather than a state
         /// word: the percent says everything "clean" did and keeps saying it as the section is
         /// played. A dropped section has no progress worth reading, so it keeps its word.
+        /// <para>
+        /// On drums a clean section can be left one note short of 100%: an SP activation note the
+        /// player skips is auto-hit inside the engine with no hit dispatch (see the note in
+        /// <c>TrackPlayer.OnNoteHit</c>), so nothing ever raises the count for it. Nothing is done
+        /// about it here. Only the block that is currently being played is named, and a block
+        /// stops being current the moment the song crosses its end, so a stale sub-100 percent is
+        /// never left sitting on a finished section - it is only ever read while the section is
+        /// still in play and the missing note is still, as far as the strip knows, ahead.
+        /// </para>
         /// </remarks>
         private string GetDetail(SectionStripBlockState state)
         {
@@ -285,14 +328,8 @@ namespace YARG.Gameplay.HUD
 
         private void BuildBlocks(int count)
         {
-            if (_blockLayout != null)
-            {
-                // Below the threshold the gaps stay; above it every pixel goes to the blocks.
-                // Widths are driven by the layout group, and the strip is never sized under a
-                // few hundred canvas units, so a block only falls under a pixel past several
-                // hundred sections.
-                _blockLayout.spacing = count > DENSE_BLOCK_COUNT ? 0f : _defaultSpacing;
-            }
+            _blockCount = count;
+            UpdateSpacing();
 
             for (int i = 0; i < count; i++)
             {
@@ -306,6 +343,33 @@ namespace YARG.Gameplay.HUD
                 _blockPool[i].rectTransform.DOKill();
                 _blockPool[i].gameObject.SetActive(false);
             }
+        }
+
+        /// <summary>
+        /// Decides whether the blocks get their gaps, from how wide each one would end up.
+        /// </summary>
+        /// <remarks>
+        /// A count on its own cannot answer this: the strip is sized to its highway, so the same
+        /// forty sections are comfortable across a single player strip and cramped across one of
+        /// four. The width the layout group has to share out is the container minus its padding
+        /// and the gaps between the blocks, which is what the block width below is.
+        /// </remarks>
+        private void UpdateSpacing()
+        {
+            if (_blockLayout == null)
+            {
+                return;
+            }
+
+            _lastLayoutWidth = _blockContainer.rect.width;
+
+            float available = _lastLayoutWidth - _blockLayout.padding.horizontal;
+            // With nothing to lay out there is no width to be short of, so the gaps stay
+            float spacedWidth = _blockCount <= 0
+                ? float.MaxValue
+                : (available - _defaultSpacing * (_blockCount - 1)) / _blockCount;
+
+            _blockLayout.spacing = spacedWidth < MIN_SPACED_BLOCK_WIDTH ? 0f : _defaultSpacing;
         }
 
         private Image GetOrCreateBlock(int index)
