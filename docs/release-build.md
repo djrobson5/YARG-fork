@@ -187,6 +187,28 @@ but do not expect it to match an official nightly's format.
 
 ---
 
+## First release (2026-09-03)
+
+The first successful release build was `v0.15.0-sectionfc.1`, run
+[33797702460](https://github.com/djrobson5/YARG-fork/actions/runs/33797702460) — published at
+<https://github.com/djrobson5/YARG-fork/releases/tag/v0.15.0-sectionfc.1>.
+
+- **Timings**: Unity step ran 19:42–20:18 UTC (~36 minutes, cold), with the Addressables
+  build taking 752 s of that; total job time was ~40 minutes.
+- **Asset**: `YARG-SectionFC_v0.15.0-sectionfc.1-Windows-x64.zip`, 129,623,695 bytes.
+- **Version string** baked into the build: `feature/section-fc b4046 (76dfa421)`.
+
+Two earlier attempts failed before this one succeeded:
+
+- Run 33794133823: the Unity account had no password (it was created via Google
+  sign-in), so the builder's login retries locked the account for 10 minutes. Fixed by
+  setting a password on the account and updating the `UNITY_PASSWORD` secret.
+- Run 33795939882: `CS0246: SharpGameInput could not be found` in HIDrogen, fixed by
+  vendoring — see [`CS0246: SharpGameInput could not be found` in
+  HIDrogen](#cs0246-sharpgameinput-could-not-be-found-in-hidrogen) below.
+
+---
+
 ## 4. Troubleshooting
 
 ### License failures
@@ -203,6 +225,10 @@ exits during `activate.sh`.
 - Do **not** run `activation.yml`. It requests a `.alf` for manual activation, which
   Unity's license portal now refuses for Personal licenses; it is kept only for
   Plus/Pro serials.
+- Unity emails "account locked for 10 minutes due to failed password attempts" during
+  the build → the `UNITY_PASSWORD` secret is wrong or the account has no password
+  (Google sign-in accounts); cancel the run, fix the password, wait out the lock, and
+  re-dispatch.
 
 ### NuGet deadlock / hundreds of missing-type errors
 
