@@ -150,6 +150,54 @@ and `ProjectSettings/**`, so an exact hit is rare in active development; the
 **Not compatible with the YARC Launcher.** The launcher only manages installs it
 downloaded itself; it will not see this build and cannot update it.
 
+### Updating
+
+`tools/update-yarg.ps1` updates an existing install in place from the fork's GitHub
+Releases. Copy it next to `YARG.exe` (it defaults to its own folder as the install
+directory) or point it at the install with `-InstallDir`.
+
+```powershell
+# What is installed, and what is the latest release? Touches nothing.
+powershell -ExecutionPolicy Bypass -File .\update-yarg.ps1 -CheckOnly
+
+# Update in place, then relaunch.
+powershell -ExecutionPolicy Bypass -File .\update-yarg.ps1
+
+# Show exactly what would happen without downloading or changing anything.
+powershell -ExecutionPolicy Bypass -File .\update-yarg.ps1 -DryRun
+
+# Point it at an install elsewhere, and do not relaunch afterwards.
+powershell -ExecutionPolicy Bypass -File .\update-yarg.ps1 `
+  -InstallDir "D:\Games\YARG-SectionFC" -NoLaunch
+```
+
+Other flags: `-Force` (reinstall even when already up to date; also offers to close a
+running YARG instead of waiting for it), `-CurrentVersion <tag>` (override version
+detection), `-Repo owner/name` (default `djrobson5/YARG-fork`).
+
+What it does: lists `/repos/<repo>/releases` (not `/releases/latest` — these are
+pre-releases), keeps tags containing `-sectionfc`, picks the highest **trailing integer**
+(`sectionfc.10` sorts before `sectionfc.9` lexically), downloads
+`YARG-SectionFC_<tag>-Windows-x64.zip` into `%LOCALAPPDATA%\YARG-fork-updates`, checks the
+downloaded byte count against the asset's `size` (the release publishes no checksum),
+extracts it and verifies `YARG.exe` + `YARG_Data\` are at the staging root, moves the old
+install into a sibling `backup\<old-tag>` folder, copies the new build in, and restores the
+backup if anything fails. The backup is left behind deliberately — delete it once the new
+build has launched cleanly.
+
+It refuses to run if the install directory is not writable (probed by creating and deleting
+a file) and **never elevates**. If YARG is running from that directory it waits for it to
+exit.
+
+Version detection, in order: `-CurrentVersion`, then the `.yarg-update-tag` marker the
+script writes after each successful update, then the `bundleVersion` string baked into
+`YARG_Data\globalgamemanagers` (which is what `Application.version` returns, and is set to
+the release tag by `CIBuild.ApplyVersionOverride`). Two plausible-looking sources are
+**not** usable and were checked against `v0.15.0-sectionfc.1`: `YARG.exe`'s version resource
+carries the Unity *editor* version (`6000.3.5f2 (3fa8bc678cb0)`), and `version.txt` holds a
+git description rather than the tag — and ships inside `resources.assets`, not as a loose
+file.
+
 ### Where its data lives
 
 The CI build defines `YARG_NIGHTLY_BUILD`, so `PathHelper` puts persistent data under the
