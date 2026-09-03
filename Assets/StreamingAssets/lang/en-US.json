@@ -254,6 +254,23 @@
                 "Description": "The options about to be displayed represent a work in progress. These features are subject to change, may contain bugs, and <b>could even cause major problems if enabled</b>.",
                 "Confirm": "I Understand"
             },
+            "Updates": {
+                "OpenReleasePage": "Open Release Page",
+                "UpToDate": {
+                    "Title": "Up to Date",
+                    "Description": "Installed  <b>{0}</b>\n<alpha=#80>{1}</alpha>\n\nYou are running the latest release."
+                },
+                "UpdateAvailable": {
+                    "Title": "Update Available",
+                    "Description": "Installed  <b>{0}</b>\nLatest  <b>{1}</b>\n\nOpen the release page to download the new build, then unzip it over your current install."
+                },
+                "Failed": {
+                    "Title": "Could Not Check for Updates",
+                    "Description": "Could not reach GitHub to check for a newer release. Check your internet connection and try again.\n\nInstalled  <b>{0}</b>\n<alpha=#80>{1}</alpha>",
+                    "NoReleases": "No fork releases were found on GitHub.\n\nInstalled  <b>{0}</b>\n<alpha=#80>{1}</alpha>",
+                    "RateLimited": "GitHub is rate limiting this connection. Try again in an hour.\n\nInstalled  <b>{0}</b>\n<alpha=#80>{1}</alpha>"
+                }
+            },
             "ShowDialog": {
                 "Title": "Choose Your Fate",
                 "Select": "That's Plenty"
@@ -1094,7 +1111,8 @@
             "Gameplay": "Gameplay",
             "CrowdFX": "Crowd FX",
             "OutputConfiguration": "Output Configuration",
-            "Accessibility": "Accessibility"
+            "Accessibility": "Accessibility",
+            "Updates": "Updates"
         },
         "Button": {
             "CopyCurrentSongJsonFilePath": "Copy Current Song Json File Path",
@@ -1110,7 +1128,8 @@
             "OpenExecutablePath": "Open Executable Path",
             "OpenPersistentDataPath": "Open Persistent Data Path",
             "RemoveRemoteContent": "Remove Cached Content",
-            "OpenAsioControlPanel": "Open ASIO Control Panel"
+            "OpenAsioControlPanel": "Open ASIO Control Panel",
+            "CheckForUpdates": "Check for Updates"
         },
         "Setting": {
             "AllowDuplicateSongs": {

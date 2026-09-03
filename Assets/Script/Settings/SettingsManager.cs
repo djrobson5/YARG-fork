@@ -11,6 +11,7 @@ using YARG.Core.Utility;
 using YARG.Helpers;
 using YARG.Settings.Metadata;
 using YARG.Settings.Types;
+using YARG.Song;
 
 namespace YARG.Settings
 {
@@ -43,10 +44,26 @@ namespace YARG.Settings
 
         public static SettingContainer Settings { get; private set; }
 
+        /// <summary>
+        /// Whether the "Check for Updates" row should appear at all. It is meaningless
+        /// outside of a CI release build (where <see cref="UnityEngine.Application.version"/>
+        /// is the project's bundle version rather than a release tag), and offline mode
+        /// suppresses every outgoing request.
+        /// </summary>
+        private static bool IsUpdateCheckAvailable()
+        {
+            return UpdateChecker.IsReleaseBuild && !GlobalVariables.OfflineMode;
+        }
+
         public static readonly List<Tab> DisplayedSettingsTabs = new()
         {
             new MetadataTab("General", icon: "Engine")
             {
+                // Hidden outside of CI release builds (nothing to compare) and in offline
+                // mode. See docs/updater-design.md.
+                new HeaderMetadata("Updates", visibleWhen: IsUpdateCheckAvailable),
+                new ButtonRowMetadata(nameof(Settings.CheckForUpdates), IsUpdateCheckAvailable),
+
                 new HeaderMetadata("Calibration"),
                 new ButtonRowMetadata(nameof(Settings.OpenCalibrator)),
                 nameof(Settings.AudioCalibration),

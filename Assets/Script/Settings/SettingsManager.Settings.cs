@@ -16,6 +16,8 @@ using YARG.Integration.RB3E;
 using YARG.Integration.Sacn;
 using YARG.Integration.StageKit;
 using YARG.Input.Bindings;
+using YARG.Localization;
+using YARG.Menu.Data;
 using YARG.Menu.Filters;
 using YARG.Menu.History;
 using YARG.Menu.MusicLibrary;
@@ -154,6 +156,99 @@ namespace YARG.Settings
             #endregion
 
             #region General
+
+            /// <summary>
+            /// Asks GitHub whether a newer <c>-sectionfc</c> release exists and reports the
+            /// answer in a dialog. Manual only, never automatic; see docs/updater-design.md.
+            /// </summary>
+            public async void CheckForUpdates()
+            {
+                // ShowMessage throws if a dialog is already up, and this is an async void, so
+                // that exception would go unobserved. A press while the answer is still on
+                // screen (or still in the air) does nothing.
+                if (DialogManager.Instance.IsDialogShowing)
+                {
+                    return;
+                }
+
+                try
+                {
+                    var result = await UpdateChecker.CheckForUpdate();
+
+                    // Another dialog may have opened while the request was in the air.
+                    if (DialogManager.Instance.IsDialogShowing)
+                    {
+                        return;
+                    }
+
+                    // The build description ("HEAD b4213 (51d52d8)") is worth showing when
+                    // there is no update to talk about, and noise next to a concrete new tag.
+                    string buildDescription = GlobalVariables.Instance.CurrentVersion;
+
+                    switch (result.Status)
+                    {
+                        case UpdateChecker.UpdateStatus.UpdateAvailable:
+                        {
+                            var dialog = DialogManager.Instance.ShowMessage(
+                                Localize.Key("Menu.Dialog.Updates.UpdateAvailable.Title"),
+                                Localize.KeyFormat("Menu.Dialog.Updates.UpdateAvailable.Description",
+                                    result.InstalledTag, result.LatestTag));
+
+                            if (!string.IsNullOrEmpty(result.ReleaseUrl))
+                            {
+                                string url = result.ReleaseUrl;
+                                dialog.AddDialogButton(
+                                    "Menu.Dialog.Updates.OpenReleasePage",
+                                    MenuData.Colors.ConfirmButton,
+                                    () =>
+                                    {
+                                        Application.OpenURL(url);
+                                        DialogManager.Instance.ClearDialog();
+                                    });
+                            }
+
+                            break;
+                        }
+                        case UpdateChecker.UpdateStatus.UpToDate:
+                        {
+                            DialogManager.Instance.ShowMessage(
+                                Localize.Key("Menu.Dialog.Updates.UpToDate.Title"),
+                                Localize.KeyFormat("Menu.Dialog.Updates.UpToDate.Description",
+                                    result.InstalledTag, buildDescription));
+                            break;
+                        }
+                        case UpdateChecker.UpdateStatus.NoReleases:
+                        {
+                            DialogManager.Instance.ShowMessage(
+                                Localize.Key("Menu.Dialog.Updates.Failed.Title"),
+                                Localize.KeyFormat("Menu.Dialog.Updates.Failed.NoReleases",
+                                    result.InstalledTag, buildDescription));
+                            break;
+                        }
+                        case UpdateChecker.UpdateStatus.RateLimited:
+                        {
+                            DialogManager.Instance.ShowMessage(
+                                Localize.Key("Menu.Dialog.Updates.Failed.Title"),
+                                Localize.KeyFormat("Menu.Dialog.Updates.Failed.RateLimited",
+                                    result.InstalledTag, buildDescription));
+                            break;
+                        }
+                        default:
+                        {
+                            DialogManager.Instance.ShowMessage(
+                                Localize.Key("Menu.Dialog.Updates.Failed.Title"),
+                                Localize.KeyFormat("Menu.Dialog.Updates.Failed.Description",
+                                    result.InstalledTag, buildDescription));
+                            break;
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    // Nothing here may throw out of an async void.
+                    YargLogger.LogException(e, "Failed to show the update check result.");
+                }
+            }
 
             public static float GetUpscaleRatioFromQualityMode(QualityMode qualityMode)
             {
