@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using UnityEngine;
@@ -8,6 +8,7 @@ using YARG.Core.Logging;
 using YARG.Core.Audio;
 using YARG.Helpers;
 using YARG.Input;
+using YARG.Input.Bindings;
 using YARG.Integration;
 using YARG.Localization;
 using YARG.Menu.Navigation;
@@ -26,7 +27,8 @@ namespace YARG
         Menu,
         Gameplay,
         Calibration,
-        Score
+        Score,
+        Content
     }
 
     [DefaultExecutionOrder(-5000)]
@@ -44,6 +46,9 @@ namespace YARG
         public SceneIndex CurrentScene { get; private set; } = SceneIndex.Persistent;
 
         public string CurrentVersion { get; private set; } = "v0.15";
+
+        private float _nextLocalizationUpdate;
+        private const float LOCALIZATION_UPDATE_INTERVAL = 1800f;
 
         protected override void SingletonAwake()
         {
@@ -79,12 +84,15 @@ namespace YARG
             CustomContentManager.Initialize();
             LocalizationManager.Initialize(CommandLineArgs.Language);
 
+            _nextLocalizationUpdate = Time.realtimeSinceStartup + LOCALIZATION_UPDATE_INTERVAL + UnityEngine.Random.Range(-30f, 30f);
+
             int profileCount = PlayerContainer.LoadProfiles();
             YargLogger.LogFormatInfo("Loaded {0} profiles", profileCount);
 
             int savedCount = PlayerContainer.SaveProfiles(false);
             YargLogger.LogFormatInfo("Saved {0} profiles", savedCount);
 
+            SettingsManager.LoadStartupSettings();
             GlobalAudioHandler.Initialize<BassAudioManager>();
 
             Players = new List<YargPlayer>();
@@ -102,43 +110,31 @@ namespace YARG
             LoadScene(SceneIndex.Menu);
         }
 
-        // Tracks whether audio was muted because the window lost focus,
-        // so it can be restored when focus returns.
-        private bool _mutedFromFocusLoss;
-
-        private void OnApplicationFocus(bool hasFocus)
-        {
-            if (!hasFocus)
-            {
-                if (SettingsManager.Settings.MuteOnFocusLoss.Value && !_mutedFromFocusLoss)
-                {
-                    GlobalAudioHandler.SetMasterVolume(0);
-                    _mutedFromFocusLoss = true;
-                }
-            }
-            else if (_mutedFromFocusLoss)
-            {
-                GlobalAudioHandler.SetMasterVolume(SettingsManager.Settings.MasterMusicVolume.Value);
-                _mutedFromFocusLoss = false;
-            }
-        }
-
 #if UNITY_EDITOR
-
         // For respecting the editor's mute button
         private bool _previousMute;
+#endif
 
         private void Update()
         {
+            GlobalAudioHandler.Update();
+
+#if UNITY_EDITOR
             bool muted = UnityEditor.EditorUtility.audioMasterMute;
             if (muted != _previousMute)
             {
                 GlobalAudioHandler.SetMasterVolume(muted ? 0 : SettingsManager.Settings.MasterMusicVolume.Value);
                 _previousMute = muted;
             }
-        }
 
+            if (CurrentScene != SceneIndex.Gameplay && Time.realtimeSinceStartup > _nextLocalizationUpdate)
+            {
+                _ = LocalizationManager.LoadUpdates();
+                _nextLocalizationUpdate = Time.realtimeSinceStartup + LOCALIZATION_UPDATE_INTERVAL + UnityEngine.Random.Range(-30f, 30f);
+                YargLogger.LogFormatDebug("Updating localization at {0}, next update at {1}", Time.realtimeSinceStartup, _nextLocalizationUpdate);
+            }
 #endif
+        }
 
         protected override void SingletonDestroy()
         {
@@ -178,6 +174,7 @@ namespace YARG
         public void LoadScene(SceneIndex scene)
         {
             Navigator.Instance.DisableMenuInputs = true;
+
             // Unload the current scene and load in the new one, or just load in the new one
             if (CurrentScene != SceneIndex.Persistent)
             {
@@ -245,6 +242,25 @@ namespace YARG
 #else
             return $"{branch} b{commitCount} ({commit})";
 #endif
+        }
+
+        public static string GetReleaseType()
+        {
+            string kind = null;
+#if UNITY_EDITOR || YARG_TEST_BUILD
+            kind = "dev";
+#elif YARG_NIGHTLY_BUILD
+            kind = "nightly";
+#else
+            kind = "release";
+#endif
+            return kind;
+        }
+
+        // Maybe there is a better place for this?
+        public LocalizeText[] GetLocalizedTexts()
+        {
+            return FindObjectsByType<LocalizeText>(FindObjectsSortMode.None);
         }
     }
 }

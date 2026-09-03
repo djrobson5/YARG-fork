@@ -47,7 +47,7 @@ namespace YARG.Menu.ProfileList
         {
             RefreshList();
 
-            Navigator.Instance.PushScheme(new NavigationScheme(new()
+            _ = Navigator.Instance.PushScheme(new NavigationScheme(new()
             {
                 new NavigationScheme.Entry(MenuAction.Red, "Menu.Common.Back", () => MenuManager.Instance.PopMenu(), hide: true),
             }, true));
@@ -61,9 +61,10 @@ namespace YARG.Menu.ProfileList
             PlayerContainer.SaveProfiles();
 
             // Update player icons if a profile has changed its GameMode.
-            StatsManager.Instance.UpdateActivePlayers();
+            // Persistent singletons may already be destroyed when Unity exits play mode.
+            StatsManager.Instance?.UpdateActivePlayers();
 
-            Navigator.Instance.PopScheme();
+            Navigator.Instance?.PopScheme();
 
             PlayerContainer.PlayerAdded -= OnPlayerAdded;
         }
@@ -83,6 +84,7 @@ namespace YARG.Menu.ProfileList
             AddListGroup(Localize.Key("Menu.ProfileList.ActiveProfiles"), activeProfiles);
             AddListGroup(Localize.Key("Menu.ProfileList.Players"), otherProfiles.Where(e => !e.IsBot));
             AddListGroup(Localize.Key("Menu.ProfileList.Bots"), otherProfiles.Where(e => e.IsBot));
+            AddUnloadedGroup(Localize.Key("Menu.ProfileList.CouldNotLoad"));
 
             if (selectedProfile == null)
             {
@@ -108,6 +110,25 @@ namespace YARG.Menu.ProfileList
             {
                 var go = Instantiate(_profileViewPrefab, _profileList);
                 go.GetComponent<ProfileView>().Init(this, profile, _profileSidebar);
+                _navigationGroup.AddNavigatable(go);
+            }
+        }
+
+        private void AddUnloadedGroup(string header)
+        {
+            if (PlayerContainer.UnloadedProfiles.Count == 0)
+            {
+                return;
+            }
+
+            var headerGo = Instantiate(_profileListHeaderPrefab, _profileList);
+            headerGo.GetComponentInChildren<TextMeshProUGUI>().text = header;
+            _navigationGroup.AddNavigatable(headerGo);
+
+            foreach (var record in PlayerContainer.UnloadedProfiles)
+            {
+                var go = Instantiate(_profileViewPrefab, _profileList);
+                go.GetComponent<ProfileView>().InitUnloaded(this, record, _profileSidebar);
                 _navigationGroup.AddNavigatable(go);
             }
         }

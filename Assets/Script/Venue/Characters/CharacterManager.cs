@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using YARG.Core;
 using YARG.Core.Chart;
@@ -10,6 +11,7 @@ using AnimationEvent = YARG.Core.Chart.AnimationEvent;
 using CharacterStateType = YARG.Core.Chart.Events.CharacterState.CharacterStateType;
 using HandMapType = YARG.Core.Chart.Events.HandMap.HandMapType;
 using StrumMapType = YARG.Core.Chart.Events.StrumMap.StrumMapType;
+using CharacterType = YARG.Venue.Characters.VenueCharacter.CharacterType;
 
 namespace YARG.Venue.Characters
 {
@@ -19,31 +21,48 @@ namespace YARG.Venue.Characters
         [SerializeField]
         private GameObject _venue;
 
-        private readonly Dictionary<VenueCharacter.CharacterType, VenueCharacter> _characters = new();
-        public Dictionary<VenueCharacter.CharacterType, VenueCharacter> Characters => _characters;
+        [SerializeField]
+        private Vector3 _wind;
+        private Vector3 _lastUpdatedWind     = Vector3.zero;
+        private bool    _lastKnownPausedState = false;
+
+        private readonly Dictionary<CharacterType, VenueCharacter> _characters = new();
+        public           Dictionary<CharacterType, VenueCharacter> Characters => _characters;
+
+        private Dictionary<CharacterType, List<PerformerEvent>> SingalongEventsByCharacter { get; } = new();
+        private Dictionary<CharacterType, List<LipsyncEvent>>   LipsyncDataByCharacter     { get; } = new();
+        private readonly CharacterType[] _lipsyncAssignmentPriority = {
+            CharacterType.Vocals,
+            CharacterType.Guitar,
+            CharacterType.Bass,
+            CharacterType.Drums,
+            CharacterType.Keys // In RB, keys just replaces either guitar or bass, so we'll just assign it last if no other characters are available
+        };
 
         private DrumCharacterHelper _drumCharacterHelper = new();
 
         // Ugh, the different note types ruin me again
-        private List<VocalNote>    _vocalNotes;
+        private List<ChartEvent>   _vocalEvents;
         private List<DrumNote>     _drumNotes;
         private List<GuitarNote>   _guitarNotes;
         private List<GuitarNote>   _bassNotes;
         private List<GuitarNote>   _keysNotes;
         private List<ProKeysNote>  _proKeysNotes;
 
+        private List<LyricsPhrase> _lyricPhrases;
+
         private List<AnimationEvent> _guitarAnimationEvents;
         private List<AnimationEvent> _bassAnimationEvents;
         private List<AnimationEvent> _drumAnimationEvents;
 
-        public List<LipsyncEvent> LipsyncEvents;
+        private List<List<LipsyncEvent>> LipsyncEventsByPart { get; } = new();
 
         private int _guitarNoteIndex;
         private int _bassNoteIndex;
         private int _keysNoteIndex;
         private int _proKeysNoteIndex;
         private int _drumNoteIndex;
-        private int _vocalNoteIndex;
+        private int _vocalEventIndex;
 
         private int _guitarAnimationIndex;
         private int _bassAnimationIndex;
@@ -73,6 +92,9 @@ namespace YARG.Venue.Characters
 
         private bool _songHasDrumAnimations;
 
+        private double _chartEndTime;
+        private bool   _endTriggered;
+
         public double SongTime => GameManager.SongTime;
 
         protected override void OnChartLoaded(SongChart chart)
@@ -99,17 +121,36 @@ namespace YARG.Venue.Characters
             _proKeysNotes = proKeysId.Notes;
             _drumNotes = drumsId.Notes;
 
-            _vocalNotes = new List<VocalNote>();
-            foreach (var note in vocalsId.Notes)
+            _vocalEvents = new List<ChartEvent>();
+            if (vocalsId.Notes.Count > 0)
             {
-                var phraseClone = note.Clone();
-                phraseClone.RemovePercussionChildNotes();
-
-                foreach (var phraseNote in phraseClone.ChildNotes)
+                foreach (var note in vocalsId.Notes)
                 {
-                    _vocalNotes.Add(phraseNote);
+                    var phraseClone = note.Clone();
+                    phraseClone.RemovePercussionChildNotes();
+
+                    foreach (var phraseNote in phraseClone.ChildNotes)
+                    {
+                        _vocalEvents.Add(phraseNote);
+                    }
                 }
             }
+            else
+            {
+                foreach (var lyric in chart.Lyrics.Phrases)
+                {
+                    var phraseClone = lyric.Clone();
+
+                    foreach (var phraseNote in phraseClone.Lyrics)
+                    {
+                        _vocalEvents.Add(phraseNote);
+                    }
+                }
+            }
+
+            _lyricPhrases = chart.Lyrics.Phrases;
+
+            _vocalMaps = GenerateMap(_vocalEvents);
 
             _guitarAnimationEvents = guitarTrack.Animations.AnimationEvents;
             _bassAnimationEvents = bassTrack.Animations.AnimationEvents;
@@ -121,7 +162,7 @@ namespace YARG.Venue.Characters
                 GenerateDrumsAnimations();
             }
 
-            LipsyncEvents = chart.LipsyncEvents;
+            LipsyncEventsByPart.AddRange(chart.LipsyncEventsByPart);
 
             // This will eventually be combined into the animation events stuff, but for now the text events from the
             // individual instrument difficulties are separate
@@ -152,14 +193,24 @@ namespace YARG.Venue.Characters
 
             if (_vocalMaps.Count < 1)
             {
-                _vocalMaps = GenerateMap(_vocalNotes);
+                _vocalMaps = GenerateMap(_vocalEvents);
+            }
+
+            var (_, endEvent) = chart.GetMusicEvents();
+            if (endEvent != null)
+            {
+                _chartEndTime = endEvent.Time;
+            }
+            else
+            {
+                _chartEndTime = GameManager.LastNoteTime;
             }
 
             // Register self with GameManager
             GameManager.SetVenueCharacterManager(this);
         }
 
-        public void Initialize()
+        public void Initialize(bool usingCustomChar = false)
         {
             // Find all the characters in the venue, done here because OnChartLoaded can get called before any
             // replacement characters are loaded.
@@ -172,11 +223,142 @@ namespace YARG.Venue.Characters
                 {
                     continue;
                 }
-                character.Initialize(this);
+                character.Initialize(this, usingCustomChar);
                 _characters.Add(character.Type, character);
             }
-
+            InitializeLipsync();
             GameManager.SetVenueCharacterManager(this);
+        }
+
+        private void InitializeLipsync()
+        {
+            YargLogger.LogFormatDebug("Initializing lipsync for {0} characters and {1} parts", _characters.Count, LipsyncEventsByPart.Count);
+            YargLogger.LogFormatDebug("Singer Preference: {0}", string.Join(", ", GameManager.Chart.SingerPreference.Select(x => x.ToString())));
+            var unassignedLipsyncEventIndices = new List<int>();
+            for (int i = 0; i < LipsyncEventsByPart.Count; i++)
+            {
+                if (i > GameManager.Chart.SingerPreference.Length - 1)
+                {
+                    unassignedLipsyncEventIndices.Add(i);
+                    continue;
+                }
+
+                var singerPreference = GameManager.Chart.SingerPreference[i];
+                if (singerPreference is Performer.None)
+                {
+                    unassignedLipsyncEventIndices.Add(i);
+                    continue;
+                }
+
+                var characterType = VenueCharacter.CharacterTypeFromPerformer(singerPreference)!.Value;
+                var lipsyncEvents = LipsyncEventsByPart[i];
+                YargLogger.LogFormatDebug("Assigning lipsync events for part {0} to preferred character {1}", i,
+                    characterType);
+                LipsyncDataByCharacter[characterType] = lipsyncEvents;
+            }
+
+            foreach (var lipsyncEventIndex in unassignedLipsyncEventIndices)
+            {
+                YargLogger.LogFormatDebug("Assigning unassigned lipsync events for part {0}", lipsyncEventIndex);
+                var lipsyncEvents = LipsyncEventsByPart[lipsyncEventIndex];
+                var characterType = GetFirstCharacterTypeWithoutLipsync();
+                if (characterType is null)
+                {
+                    YargLogger.LogWarning("No available character to assign unassigned lipsync events to");
+                    return;
+                }
+
+                YargLogger.LogFormatDebug("Assigning unassigned lipsync events for part {0} to character {1}",
+                    lipsyncEventIndex, characterType);
+                LipsyncDataByCharacter[characterType.Value] = lipsyncEvents;
+            }
+
+            foreach (var (characterType, character) in _characters)
+            {
+                SingalongEventsByCharacter[characterType] = GetSingalongEventsForCharacterType(characterType);
+                if (SingalongEventsByCharacter[characterType].Count > 0)
+                {
+                    YargLogger.LogFormatDebug("Assigning {1} singalong events to character {0}",
+                        characterType, SingalongEventsByCharacter[characterType].Count);
+                }
+                AssignLipsyncToCharacter(character);
+            }
+        }
+
+        /// <summary>
+        /// Gets the singalong events for a given character type, taking into account the singer preference and the performer events in the chart.
+        /// </summary>
+        /// <param name="characterType"> The type of the character for which to get singalong events. </param>
+        /// <returns> A list of singalong events (PerformerEvent) for the specified character type. </returns>
+        private List<PerformerEvent> GetSingalongEventsForCharacterType(CharacterType characterType)
+        {
+            if (characterType is CharacterType.Vocals || GameManager.Chart.VenueTrack.Performer.Count == 0)
+            {
+                return new List<PerformerEvent>();
+            }
+            // Performer is not in BandSongPref, just give them their events
+            if (!GameManager.Chart.SingerPreference.Contains(VenueCharacter.PerformerFromCharacterType(characterType)))
+            {
+                return GameManager.Chart.VenueTrack.Performer.Where(x =>
+                    x.Type is PerformerEventType.Singalong &&
+                    x.Performers.HasFlag(VenueCharacter.PerformerFromCharacterType(characterType))).ToList();
+            }
+            int prefIndex = GameManager.Chart.SingerPreference.ToList().IndexOf(VenueCharacter.PerformerFromCharacterType(characterType));
+            var performerToFetch = prefIndex switch
+            {
+                1 => Performer.Guitar,
+                2 => Performer.Bass,
+                3 => Performer.Drums,
+                _ => Performer.None
+            };
+            if (performerToFetch is Performer.None)
+            {
+                return new List<PerformerEvent>();
+            }
+            return GameManager.Chart.VenueTrack.Performer.Where(x =>
+                x.Type is PerformerEventType.Singalong &&
+                x.Performers.HasFlag(performerToFetch)).ToList();
+        }
+        /// <summary>
+        /// <p> Assigns lipsync and singalong events to a given character based on their type and the available lipsync data. </p>
+        /// <p> If the character is not a <see cref="VRMCharacter"/>, nothing happens. </p>
+        /// <p> If lipsync events are found for the character's type, they are assigned to the character along with any singalong events. </p>
+        /// <p> If no specific lipsync events are found for the character's type, but there are lipsync events available from the Vocals part, those events are assigned instead. </p>
+        /// </summary>
+        /// <param name="character"> The character to which to assign lipsync events. </param>
+        public void AssignLipsyncToCharacter(VenueCharacter character)
+        {
+            if (character is not VRMCharacter vrmCharacter)
+            {
+                return;
+            }
+
+            if (LipsyncDataByCharacter.TryGetValue(character.Type, out var lipsyncEvents))
+            {
+                YargLogger.LogFormatDebug("Assigning {1} lipsync events to character {0}",
+                    character.Type, lipsyncEvents.Count);
+                vrmCharacter.InitializeLipsync(lipsyncEvents, SingalongEventsByCharacter[character.Type]);
+            }
+            else if (LipsyncEventsByPart.Count >= 1 && SingalongEventsByCharacter.TryGetValue(character.Type, out var singalongEvents) && singalongEvents.Count > 0)
+            {
+                YargLogger.LogFormatDebug(
+                    "Assigning {1} singalong lipsync events from Vocals to character {0}",
+                    character.Type, LipsyncEventsByPart[0].Count);
+                vrmCharacter.InitializeLipsync(LipsyncEventsByPart[0],
+                    SingalongEventsByCharacter[character.Type]);
+            }
+        }
+
+        private CharacterType? GetFirstCharacterTypeWithoutLipsync()
+        {
+            foreach (var characterType in _lipsyncAssignmentPriority)
+            {
+                if (!LipsyncDataByCharacter.ContainsKey(characterType))
+                {
+                    return characterType;
+                }
+            }
+            return null;
         }
 
         private void Update()
@@ -202,20 +384,39 @@ namespace YARG.Venue.Characters
                 }
                 switch (key)
                 {
-                    case VenueCharacter.CharacterType.Guitar:
+                    case CharacterType.Guitar:
                         ProcessGuitar(character);
                         break;
-                    case VenueCharacter.CharacterType.Bass:
+                    case CharacterType.Bass:
                         ProcessBass(character);
                         break;
-                    case VenueCharacter.CharacterType.Vocals:
+                    case CharacterType.Vocals:
                         ProcessVocals(character);
                         break;
-                    case VenueCharacter.CharacterType.Drums:
+                    case CharacterType.Drums:
                         ProcessDrums(character);
                         break;
                 }
+
+                if (_lastKnownPausedState != GameManager.Paused && character is VRMCharacter)
+                {
+                    ((VRMCharacter) character).SetSpringPause(GameManager.Paused);
+                }
+
+                if (_wind != _lastUpdatedWind && character is VRMCharacter)
+                {
+                    ((VRMCharacter) character).SetWind(_wind);
+                }
+
+                if (_chartEndTime > 0 && GameManager.VisualTime >= _chartEndTime && !_endTriggered)
+                {
+                    _endTriggered = true;
+                    character.TriggerEnd();
+                }
             }
+
+            _lastKnownPausedState = GameManager.Paused;
+            _lastUpdatedWind = _wind;
         }
 
         public void ResetTime(double time)
@@ -225,7 +426,7 @@ namespace YARG.Venue.Characters
             _drumNoteIndex = 0;
             _keysNoteIndex = 0;
             _proKeysNoteIndex = 0;
-            _vocalNoteIndex = 0;
+            _vocalEventIndex = 0;
 
             _guitarAnimationIndex = 0;
             _bassAnimationIndex = 0;
@@ -237,6 +438,8 @@ namespace YARG.Venue.Characters
             _keysTriggerIndex = 0;
             _proKeysTriggerIndex = 0;
             _vocalTriggerIndex = 0;
+
+            _endTriggered = false;
 
             while (_guitarNoteIndex < _guitarNotes.Count && _guitarNotes[_guitarNoteIndex].Time < time)
             {
@@ -263,9 +466,9 @@ namespace YARG.Venue.Characters
                 _proKeysNoteIndex++;
             }
 
-            while (_vocalNoteIndex < _vocalNotes.Count && _vocalNotes[_vocalNoteIndex].Time < time)
+            while (_vocalEventIndex < _vocalEvents.Count && _vocalEvents[_vocalEventIndex].Time < time)
             {
-                _vocalNoteIndex++;
+                _vocalEventIndex++;
             }
 
             while (_guitarAnimationIndex < _guitarAnimationEvents.Count &&
@@ -345,7 +548,7 @@ namespace YARG.Venue.Characters
                 var mapEvent = _guitarMaps[_guitarTriggerIndex];
                 _guitarTriggerIndex++;
 
-                character.OnGuitarAnimation(mapEvent);
+                character.OnAnimationEvent(mapEvent);
             }
 
             while (_guitarNotes.Count > 0 && _guitarNoteIndex < _guitarNotes.Count && _guitarNotes[_guitarNoteIndex].Time - character.TimeToFirstHit <= GameManager.SongTime + character.TimeToFirstHit)
@@ -377,10 +580,10 @@ namespace YARG.Venue.Characters
                     var animEvent = _guitarAnimationEvents[_guitarAnimationIndex];
                     _guitarAnimationIndex++;
 
-                    character.OnGuitarAnimation(animEvent.Type);
+                    character.OnAnimationEvent(animEvent.Type);
                 }
 
-                character.OnNote(note);
+                character.OnChartEvent(note);
             }
         }
 
@@ -392,7 +595,7 @@ namespace YARG.Venue.Characters
                 var mapEvent = _bassMaps[_bassTriggerIndex];
                 _bassTriggerIndex++;
 
-                character.OnGuitarAnimation(mapEvent);
+                character.OnAnimationEvent(mapEvent);
             }
 
             while (_bassNotes.Count > 0 && _bassNoteIndex < _bassNotes.Count && _bassNotes[_bassNoteIndex].Time - character.TimeToFirstHit <= GameManager.SongTime)
@@ -419,7 +622,7 @@ namespace YARG.Venue.Characters
 
 
                 // Notify the character
-                character.OnNote(note);
+                character.OnChartEvent(note);
             }
 
             while (_bassAnimationEvents.Count > 0 && _bassAnimationIndex < _bassAnimationEvents.Count &&
@@ -428,11 +631,10 @@ namespace YARG.Venue.Characters
                 var animEvent = _bassAnimationEvents[_bassAnimationIndex];
                 _bassAnimationIndex++;
 
-                character.OnGuitarAnimation(animEvent.Type);
+                character.OnAnimationEvent(animEvent.Type);
             }
         }
 
-        // TODO: Figure out something reasonable to do for the vocalist
         private void ProcessVocals(VenueCharacter character)
         {
             while (_vocalMaps.Count > 0 && _vocalTriggerIndex < _vocalMaps.Count &&
@@ -441,21 +643,21 @@ namespace YARG.Venue.Characters
                 var mapEvent = _vocalMaps[_vocalTriggerIndex];
                 _vocalTriggerIndex++;
 
-                character.OnGuitarAnimation(mapEvent);
+                character.OnAnimationEvent(mapEvent);
             }
 
-            while (_vocalNotes.Count > 0 && _vocalNoteIndex < _vocalNotes.Count &&
-                _vocalNotes[_vocalNoteIndex].Time - character.TimeToFirstHit <= GameManager.SongTime)
+            while (_vocalEvents.Count > 0 && _vocalEventIndex < _vocalEvents.Count &&
+                _vocalEvents[_vocalEventIndex].Time - character.TimeToFirstHit <= GameManager.SongTime)
             {
-                if (_vocalNoteIndex >= _vocalNotes.Count)
+                if (_vocalEventIndex >= _vocalEvents.Count)
                 {
                     break;
                 }
 
-                var note = _vocalNotes[_vocalNoteIndex];
-                _vocalNoteIndex++;
+                var note = _vocalEvents[_vocalEventIndex];
+                _vocalEventIndex++;
 
-                character.OnNote(note);
+                character.OnChartEvent(note);
             }
         }
 
@@ -536,6 +738,14 @@ namespace YARG.Venue.Characters
         }
 
         private static List<AnimationTrigger> GenerateMap(List<VocalsPhrase> phrases)
+        {
+            var events = new List<ChartEvent>();
+            events.AddRange(phrases);
+
+            return GenerateMap(events);
+        }
+
+        private static List<AnimationTrigger> GenerateMap(List<LyricsPhrase> phrases)
         {
             var events = new List<ChartEvent>();
             events.AddRange(phrases);

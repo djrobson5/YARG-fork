@@ -2,12 +2,16 @@
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Linq;
 using Cinemachine;
 using Cysharp.Threading.Tasks;
 using Newtonsoft.Json;
 using UniHumanoid;
 using UnityEngine;
+using UnityEngine.AddressableAssets;
 using UnityEngine.Animations;
+using UnityEngine.ResourceManagement.AsyncOperations;
+using UnityEngine.ResourceManagement.ResourceLocations;
 using UnityEngine.UI;
 using UnityEngine.Video;
 using YARG.Core.IO;
@@ -19,14 +23,12 @@ using YARG.Venue;
 using YARG.Venue.Characters;
 using YARG.Core.Logging;
 using YARG.Helpers;
+using YARG.Song;
+using Random = UnityEngine.Random;
 
 #if UNITY_EDITOR
 using UnityEditor.SceneManagement;
 using UnityEngine.SceneManagement;
-#endif
-
-#if UNITY_EDITOR_OSX || UNITY_STANDALONE_OSX
-using System.Collections.Generic;
 #endif
 
 namespace YARG.Gameplay
@@ -60,10 +62,15 @@ namespace YARG.Gameplay
 
         private bool _videoStarted = false;
         private bool _videoSeeking = false;
+        private bool _videoSeekWaitForPause = false;
+        private bool _videoWasPausedBeforeSeek = false;
 
         private const float FADE_DURATION = 0.5f;
 
         private float YARGROUND_OFFSET = 50f;
+
+        private readonly List<AsyncOperationHandle<GameObject>> _handles = new();
+        private          bool                                   loadedAddressable;
 
         // These values are relative to the video, not to song time!
         // A negative start time will delay when the video starts, a positive one will set the video position
@@ -175,20 +182,49 @@ namespace YARG.Gameplay
 #endif
 
             using var result = VenueLoader.GetVenue(GameManager.Song, out _source);
+
             if (result == null)
             {
                 return;
             }
 
+            var vocalGender = GameManager.Song.VocalGender;
+
             var colorDim = _backgroundDimmer.color.WithAlpha(1 - SettingsManager.Settings.SongBackgroundOpacity.Value);
 
             _backgroundDimmer.color = colorDim;
 
+            // If we have a venue hint for the song and we can load the hinted yarground, prefer that
+            var hint = GameManager.Song.VenueHint;
+            if (!string.IsNullOrWhiteSpace(hint))
+            {
+                if (await AddressableVenueExists(hint))
+                {
+                    var loaded = await LoadAddressableYarground(hint, vocalGender);
+                    if (loaded)
+                    {
+                        GameManager.CrowdEventHandler.Start();
+                        return;
+                    }
+                }
+            }
+
+            // Hint didn't resolve or failed to load, so pretend it didn't exist
+
             _type = result.Type;
+
+            // Start crowd event handler now if we aren't waiting on a yarground
+            // TODO: Figure out how to decouple this
+            if (_type != BackgroundType.Yarground)
+            {
+                GameManager.CrowdEventHandler.Start();
+            }
+
             switch (_type)
             {
                 case BackgroundType.Yarground:
                     await LoadYarground(result);
+                    GameManager.CrowdEventHandler.Start();
                     break;
                 case BackgroundType.Video:
                     LoadVideoBackground(result);
@@ -201,25 +237,98 @@ namespace YARG.Gameplay
             }
         }
 
+        private async UniTask<bool> AddressableVenueExists(string hint)
+        {
+            const string venueLabel = "venue";
+
+            var venueKeys = await Addressables.LoadResourceLocationsAsync(venueLabel);
+            foreach (var location in venueKeys)
+            {
+                if (location.PrimaryKey == hint)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private async UniTask LoadAddressableYarground(VocalGender gender = VocalGender.Unspecified)
+        {
+            const string venueLabel = "venue";
+            var venueKeys = await Addressables.LoadResourceLocationsAsync(venueLabel);
+            if (venueKeys.Count > 0)
+            {
+                var location = venueKeys[Random.Range(0, venueKeys.Count)];
+                var key = location.PrimaryKey;
+                await LoadAddressableYarground(key, gender);
+            }
+            else
+            {
+                YargLogger.LogWarning("No addressable venues exist!");
+            }
+
+            Addressables.Release(venueKeys);
+        }
+
+        private async UniTask<bool> LoadAddressableYarground(string key, VocalGender gender)
+        {
+            var handle = Addressables.LoadAssetAsync<GameObject>(key);
+            await handle;
+            if (handle.IsDone && handle.Status == AsyncOperationStatus.Succeeded)
+            {
+                _handles.Add(handle);
+                loadedAddressable = true;
+            }
+            else
+            {
+                // We failed, so don't do anything except log a warning
+                Debug.LogWarning("Failed to load addressable background");
+                return false;
+            }
+
+            var bg = handle.Result;
+
+            await LoadCustomAudioAssetsAddressable(key);
+            await LoadYargroundPrefab(bg, gender);
+
+            return true;
+        }
+
         private async UniTask LoadYarground(BackgroundResult result)
         {
             var bundle = AssetBundle.LoadFromStream(result.Stream);
             AssetBundle shaderBundle = null;
 
-            ShowVenue();
             // KEEP THIS PATH LOWERCASE
             // Breaks things for other platforms, because Unity
             var bg = (GameObject) await bundle.LoadAssetAsync<GameObject>(
-                BundleBackgroundManager.BACKGROUND_PREFAB_PATH.ToLowerInvariant());
-            var renderers = bg.GetComponentsInChildren<Renderer>(true);
+                BackgroundHelper.BACKGROUND_PREFAB_PATH.ToLowerInvariant());
 
             // Load Metal shaders, if necessary
-            shaderBundle = await BackgroundHelper.LoadMetalShaders(bundle, bg, BackgroundHelper.ExportType.Background);
+            shaderBundle = BackgroundHelper.LoadMetalShaders(bundle, bg, BackgroundHelper.ExportType.Background);
 
-            // Hookup song-specific textures
+            // Load custom audio
+            await LoadCustomAudioAssets(bg, bundle);
+
+            var gender = GameManager.Song.VocalGender;
+            await LoadYargroundPrefab(bg, gender, manager =>
+            {
+                manager.Bundle = bundle;
+                manager.ShaderBundles.Add(shaderBundle);
+            });
+        }
+
+        private async UniTask LoadYargroundPrefab(GameObject bg, VocalGender gender,
+            Action<BundleBackgroundManager> callback = null)
+        {
+            ShowVenue();
+
+            var renderers = bg.GetComponentsInChildren<Renderer>(true);
+
             var textureManager = GetComponent<TextureManager>();
-            // Load SongBackground here to determine if textures need to be replaced
-            var songBackground = GameManager.Song.LoadBackground(true);
+            var songBackground = GameManager.Song.LoadBackground(SettingsManager.Settings.CensorMatureContent.Value);
+
             foreach (var renderer in renderers)
             {
                 foreach (var material in renderer.sharedMaterials)
@@ -230,17 +339,18 @@ namespace YARG.Gameplay
 
             var bgInstance = Instantiate(bg);
             var bundleBackgroundManager = bgInstance.GetComponent<BundleBackgroundManager>();
-            bundleBackgroundManager.Bundle = bundle;
-            bundleBackgroundManager.ShaderBundles.Add(shaderBundle);
+
+            callback?.Invoke(bundleBackgroundManager);
+
             bundleBackgroundManager.SetupVenueCamera(bgInstance);
             bundleBackgroundManager.LimitVenueLights(bgInstance);
 
             _bundleBackgroundManager = bundleBackgroundManager;
 
-            // Position venue as close to origin as is conveniently possible without wrecking scene view
+            // Position venue as close to origin as conveniently possible
             SetYargroundOrigin(bgInstance);
 
-            // Destroy the default camera (venue has its own)
+            // Destroy default camera (venue has its own)
             Destroy(_videoPlayer.targetCamera.gameObject);
 
             if (textureManager.VideoTexFound())
@@ -248,13 +358,93 @@ namespace YARG.Gameplay
                 SetUpVideoTexture(songBackground);
             }
 
-            await LoadCustomCharacter(bgInstance);
+            var hint = GameManager.Song.VocalCharacterHint;
+            var usingCustomChar = await LoadCharacter(bgInstance, hint, gender);
+
 
             // Initialize CharacterManager, if it exists
             var characterManager = bgInstance.GetComponentInChildren<CharacterManager>();
             if (characterManager != null)
             {
-                characterManager.Initialize();
+                characterManager.Initialize(usingCustomChar);
+            }
+        }
+
+        // Loads all audio assets from the given locations
+        private static async UniTask LoadCustomAudioAssetsAddressable(string baseKey)
+        {
+            if (!SettingsManager.Settings.UseVenueSfx.Value)
+            {
+                return;
+            }
+
+            var locations = Addressables.ResourceLocators;
+
+            var sfxAssets = new Dictionary<string, byte[]>();
+            foreach (var location in locations)
+            {
+                foreach (var key in location.Keys)
+                {
+                    if (key is not string k)
+                    {
+                        continue;
+                    }
+
+                    // Check if location.PrimaryKey ends with anything in BackgroundHelper.AUDIO_FILE_EXTENSIONS
+                    if (k.StartsWith(baseKey)
+                        && BackgroundHelper.AUDIO_FILE_EXTENSIONS
+                            .Any(s => k.EndsWith(s + ".bytes", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        var asset = await Addressables.LoadAssetAsync<TextAsset>(k);
+                        var sampleName = Path.GetFileNameWithoutExtension(k);
+                        sfxAssets.Add(sampleName, asset.bytes);
+                        // This should be fine since we are holding on to the venue asset itself so we shouldn't
+                        // be unloading and reloading the underlying AssetBundle repeatedly
+                        Addressables.Release(asset);
+                    }
+                }
+            }
+
+            if (sfxAssets.Count > 0)
+            {
+                CustomSFX.AddClips(sfxAssets);
+            }
+        }
+
+        private static async UniTask LoadCustomAudioAssets(GameObject bg, AssetBundle bundle)
+        {
+            if (!SettingsManager.Settings.UseVenueSfx.Value)
+            {
+                return;
+            }
+
+            var customSfx = bg.GetComponentInChildren<CustomSFX>();
+            if (customSfx != null)
+            {
+                var assetPaths = bundle.GetAllAssetNames();
+                var sfxAssets = new Dictionary<string, byte[]>();
+                foreach (var assetPath in assetPaths)
+                {
+                    if (!assetPath.Contains(BackgroundHelper.AUDIO_PATH.ToLowerInvariant()))
+                    {
+                        continue;
+                    }
+
+                    if (BackgroundHelper.AUDIO_FILE_EXTENSIONS.Any(s => assetPath.EndsWith(s + ".bytes", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        var sampleName = Path.GetFileNameWithoutExtension(assetPath);
+                        if (!sfxAssets.ContainsKey(assetPath))
+                        {
+                            var audioAsset = (TextAsset) await bundle.LoadAssetAsync<TextAsset>(assetPath);
+                            sfxAssets.Add(sampleName, audioAsset.bytes);
+                        }
+                    }
+                }
+
+                if (sfxAssets.Count > 0)
+                {
+                    CustomSFX.AddClips(sfxAssets);
+                }
             }
         }
 
@@ -341,7 +531,7 @@ namespace YARG.Gameplay
             if (_videoSeeking)
                 return;
 
-            double time = GameManager.SongTime + GameManager.Song.SongOffsetSeconds;
+            double time = GameManager.GetAudioPlaybackTime(GameManager.SongTime);
             // Start video
             if (!_videoStarted)
             {
@@ -421,7 +611,7 @@ namespace YARG.Gameplay
             }
         }
 
-        public void SetTime(double songTime)
+        public void SetTime(double songTime, bool waitForSeek = true)
         {
             switch (_type)
             {
@@ -451,7 +641,10 @@ namespace YARG.Gameplay
 
                         // Hack to ensure the video stays synced to the audio
                         _videoSeeking = true; // Signaling flag; must come first
-                        if (SettingsManager.Settings.WaitForSongVideo.Value)
+                        _videoSeekWaitForPause = waitForSeek;
+                        _videoWasPausedBeforeSeek = _videoPlayer.isPaused;
+
+                        if (waitForSeek && SettingsManager.Settings.WaitForSongVideo.Value)
                             GameManager.OverridePause();
 
                         _videoPlayer.time = videoTime;
@@ -465,11 +658,18 @@ namespace YARG.Gameplay
             if (!_videoSeeking)
                 return;
 
-            if (!SettingsManager.Settings.WaitForSongVideo.Value || GameManager.OverrideResume())
-                player.Play();
+            if (!_videoSeekWaitForPause ||
+                !SettingsManager.Settings.WaitForSongVideo.Value ||
+                GameManager.OverrideResume())
+            {
+                if (!_videoWasPausedBeforeSeek)
+                    player.Play();
+            }
 
             enabled = !double.IsNaN(_videoEndTime);
             _videoSeeking = false;
+            _videoSeekWaitForPause = false;
+            _videoWasPausedBeforeSeek = false;
         }
 
         public void SetSpeed(float speed)
@@ -500,49 +700,206 @@ namespace YARG.Gameplay
             // The venue is dealt with in the GameManager via Time.timeScale
         }
 
-        private async UniTask LoadCustomCharacter(GameObject venueRoot)
+        private async UniTask<GameObject> GetAddressableCharacter(string hint)
         {
-            string characterPath = SettingsManager.Settings.CustomVocalsCharacter.Value;
+            if (string.IsNullOrWhiteSpace(hint))
+            {
+                return null;
+            }
+
+            const string typeLabel = "character";
+
+            var keys = new[] {typeLabel, hint};
+
+            var validator = Addressables.LoadResourceLocationsAsync(keys, Addressables.MergeMode.Intersection);
+            var characterKeys = await validator.Task;
+
+            if (validator.Status == AsyncOperationStatus.Succeeded && characterKeys.Count > 0)
+            {
+                var filteredKeys = RemoveHiddenCharacters(characterKeys);
+
+                if (filteredKeys.Count == 0)
+                {
+                    Addressables.Release(validator);
+                    return null;
+                }
+
+                Addressables.Release(validator);
+
+                var handle = Addressables.LoadAssetAsync<GameObject>(hint);
+                _handles.Add(handle);
+                return await handle.Task;
+            }
+
+            return null;
+        }
+
+        private async UniTask<GameObject> GetAddressableCharacter(VocalGender gender)
+        {
+            const string typeLabel = "character";
+            var genderString = gender switch
+            {
+                VocalGender.Male => "male",
+                VocalGender.Female => "female",
+                VocalGender.Nonbinary => "nonbinary",
+                VocalGender.Other => "other",
+                _ => null
+            };
+
+            // Unspecified gender means we should fall back to defaults
+            if (genderString == null)
+            {
+                return null;
+            }
+
+            var labelGroup = new List<string>() { typeLabel };
+            labelGroup.Add(genderString);
+
+
+            GameObject character = null;
+            var locationHandle = Addressables.LoadResourceLocationsAsync(labelGroup, Addressables.MergeMode.Intersection);
+            var characterKeys = await locationHandle.Task;
+
+            // If we didn't find a character with the required gender, let the caller deal with it
+            if (characterKeys.Count == 0)
+            {
+                return null;
+            }
+
+            if (characterKeys.Count > 0)
+            {
+                var filteredKeys = RemoveHiddenCharacters(characterKeys);
+
+                var location = filteredKeys[Random.Range(0, filteredKeys.Count)];
+                var key = location.PrimaryKey;
+                Addressables.Release(locationHandle);
+                var handle = Addressables.LoadAssetAsync<GameObject>(key);
+                _handles.Add(handle);
+                character = await handle.Task;
+            }
+            else
+            {
+                YargLogger.LogWarning("No addressable characters with the specified gender exist!");
+            }
+
+            return character;
+        }
+
+        private static List<IResourceLocation> RemoveHiddenCharacters(IList<IResourceLocation> locations)
+        {
+            var filteredLocations = locations.ToList();
+            for (var i = 0; i < filteredLocations.Count; i++)
+            {
+                var characterInfo = new CustomCharacterInfo
+                {
+                    Identifier = filteredLocations[i].PrimaryKey,
+                    Source = CustomCharacterSource.Addressable
+                };
+
+                if (SettingsManager.Settings.HiddenCharacters.Contains(characterInfo))
+                {
+                    filteredLocations.RemoveAt(i);
+                    i--;
+                }
+            }
+
+            return filteredLocations;
+        }
+
+        private async UniTask<GameObject> GetCustomCharacterFromBundle(string characterPath)
+        {
+            // string characterPath = SettingsManager.Settings.CustomVocalsCharacter.Value;
 
             if (string.IsNullOrEmpty(characterPath))
             {
-                return;
+                return null;
             }
 
             var bundle = AssetBundle.LoadFromFile(characterPath);
 
             if (bundle == null)
             {
-                return;
+                return null;
             }
 
             _bundleBackgroundManager.CharacterBundles.Add(bundle);
 
-            var character = bundle.LoadAsset<GameObject>(BundleBackgroundManager.CHARACTER_PREFAB_PATH.ToLowerInvariant());
-            if (character == null)
-            {
-                YargLogger.LogFormatError("Failed to load character from {0}", characterPath);
-                return;
-            }
+            var character = bundle.LoadAsset<GameObject>(BackgroundHelper.CHARACTER_PREFAB_PATH.ToLowerInvariant());
 
             // Load Metal shaders
-            var shaderBundle = await BackgroundHelper.LoadMetalShaders(bundle, character, BackgroundHelper.ExportType.Character);
+            var shaderBundle = BackgroundHelper.LoadMetalShaders(bundle, character, BackgroundHelper.ExportType.Character);
             if (shaderBundle != null)
             {
                 _bundleBackgroundManager.ShaderBundles.Add(shaderBundle);
             }
 
+            return character;
+        }
+
+        // gender is a fallback in case the user's specified character fails to load
+        private async UniTask<GameObject> GetCustomVocalsCharacter()
+        {
+            if (SettingsManager.Settings.CustomCharacters.TryGetValue(VenueCharacter.CharacterType.Vocals,
+                out var characterInfo))
+            {
+                if (characterInfo.Source == CustomCharacterSource.None)
+                {
+                    return null;
+                }
+
+                if (characterInfo.Source == CustomCharacterSource.File)
+                {
+                    return await GetCustomCharacterFromBundle(characterInfo.Identifier);
+                }
+
+                if (characterInfo.Source == CustomCharacterSource.Addressable)
+                {
+                    return await GetAddressableCharacter(characterInfo.Identifier);
+                }
+            }
+
+            return null;
+        }
+
+        private async UniTask<bool> LoadCharacter(GameObject venueRoot, string hint, VocalGender gender)
+        {
+            var character = await GetAddressableCharacter(hint);
+
+            // Hint failed, try user's custom character
+            if (character == null)
+            {
+                character = await GetCustomVocalsCharacter();
+            }
+
+            // Couldn't get a custom character, try gender
+            if (character == null)
+            {
+                character = await GetAddressableCharacter(gender);
+            }
+
+            var usingCustomChar = await LoadCharacter(venueRoot, character);
+            return usingCustomChar;
+        }
+
+        private async UniTask<bool> LoadCharacter(GameObject venueRoot, GameObject character)
+        {
+            if (character == null)
+            {
+                YargLogger.LogWarning("Failed to load custom character");
+                return false;
+            }
+
             // Load default animation controller and parameters if necessary
             LoadAnimationDefaults(character);
 
-            var newType = character.GetComponent<VenueCharacter>().Type;
+            var venueCharacter = character.GetComponent<VenueCharacter>();
             // Find a character of the same type in venueRoot
             GameObject existingCharacter = null;
 
             var characters = venueRoot.GetComponentsInChildren<VenueCharacter>();
             foreach (var c in characters)
             {
-                if (c.Type == newType)
+                if (c.Type == venueCharacter.Type)
                 {
                     existingCharacter = c.gameObject;
                     break;
@@ -551,8 +908,8 @@ namespace YARG.Gameplay
 
             if (existingCharacter == null)
             {
-                YargLogger.LogFormatError("Failed to find character of type {0} in venue root", newType);
-                return;
+                YargLogger.LogFormatError("Failed to find character of type {0} in venue root", venueCharacter.Type);
+                return false;
             }
 
             // Replace existingCharacter with the new character
@@ -563,11 +920,31 @@ namespace YARG.Gameplay
             existingCharacter.SetActive(false);
             Destroy(existingCharacter);
 
+            if (venueCharacter is VRMCharacter vrmCharacter)
+            {
+                _ = CopyLipsyncToNewCharacter(venueRoot, vrmCharacter);
+            }
+
             AddMicrophoneToCharacter(newCharacter);
 
             // Lastly, make sure the new character and all its children are in the Venue layer
             var layerIndex = LayerMask.NameToLayer("Venue");
             SetLayer(newCharacter, layerIndex);
+
+            return true;
+        }
+
+        private static async UniTask CopyLipsyncToNewCharacter(GameObject venueRoot, VRMCharacter character)
+        {
+            // Find CharacterManager
+            var characterManager = venueRoot.GetComponentInChildren<CharacterManager>();
+
+            if (characterManager == null)
+            {
+                return;
+            }
+
+            characterManager.AssignLipsyncToCharacter(character);
         }
 
         private void AddMicrophoneToCharacter(GameObject character)
@@ -661,6 +1038,51 @@ namespace YARG.Gameplay
                     }
                 }
             }
+            else
+            {
+                SetCustomGenreSpecificAnimator(vrmCharacter);
+            }
+        }
+
+        /// <summary>
+        /// Checks the supplied VRMCharacter for genre-specific animator overrides
+        /// </summary>
+        /// <param name="character"></param>
+        /// <returns>
+        /// true: We found and replaced the character's animator<br />
+        /// false: We did not find a genre-specific animator override
+        /// </returns>
+        private bool SetCustomGenreSpecificAnimator(VRMCharacter character)
+        {
+            if (character == null)
+            {
+                return false;
+            }
+
+            var animator = character.GetComponent<Animator>();
+            if (animator == null)
+            {
+                return false;
+            }
+
+            var anims = character.GetGenreSpecificAnimations();
+
+            if (anims == null || anims.Keys.Count <= 0)
+            {
+                return false;
+            }
+
+            var genre = Genrelizer.GetBaseGenre(GameManager.Song.Genre);
+
+            if (!anims.ContainsKey(genre))
+            {
+                return false;
+            }
+
+            var controller = anims[genre];
+            animator.runtimeAnimatorController = controller;
+            animator.Rebind();
+            return true;
         }
 
 #pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
@@ -803,12 +1225,36 @@ namespace YARG.Gameplay
                 VIDEO_PATH = null;
             }
 
+            // In case this somehow doesn't happen in GameplayDestroy
+            if (loadedAddressable)
+            {
+                foreach (var handle in _handles)
+                {
+                    Addressables.Release(handle);
+                }
+                loadedAddressable = false;
+                _handles.Clear();
+            }
+
 #if UNITY_EDITOR
             if (_usingEditorVenue)
             {
                 SceneManager.UnloadSceneAsync(_editorVenueScene);
             }
 #endif
+        }
+
+        protected override void GameplayDestroy()
+        {
+            if (loadedAddressable)
+            {
+                foreach (var handle in _handles)
+                {
+                    Addressables.Release(handle);
+                }
+                loadedAddressable = false;
+                _handles.Clear();
+            }
         }
 
         ~BackgroundManager()

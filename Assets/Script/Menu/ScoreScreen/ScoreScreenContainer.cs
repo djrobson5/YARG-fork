@@ -77,7 +77,7 @@ namespace YARG.Menu.ScoreScreen
     public struct PlayerScoreCard
     {
         public bool  IsHighScore;
-        public float AverageMultiplier;
+        public bool  IsReplay;
 
         public YargPlayer Player;
         public BaseStats  Stats;
@@ -95,8 +95,11 @@ namespace YARG.Menu.ScoreScreen
         public int BandStars;
         public int BandScore;
 
+        public double MeanAverageOffset;
+
 #nullable enable
         public ReplayInfo? ReplayInfo;
+        public bool? ReplayWasConsistent;
 #nullable disable
     }
 }

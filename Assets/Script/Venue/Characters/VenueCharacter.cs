@@ -31,6 +31,32 @@ namespace YARG.Venue.Characters
             Keys,
         }
 
+        public static CharacterType? CharacterTypeFromPerformer(Performer performer)
+        {
+            return performer switch
+            {
+                Performer.Bass     => CharacterType.Bass,
+                Performer.Guitar   => CharacterType.Guitar,
+                Performer.Drums    => CharacterType.Drums,
+                Performer.Vocals   => CharacterType.Vocals,
+                Performer.Keyboard => CharacterType.Keys,
+                _                  => null
+            };
+        }
+
+        public static Performer PerformerFromCharacterType(CharacterType characterType)
+        {
+            return characterType switch
+            {
+                CharacterType.Bass   => Performer.Bass,
+                CharacterType.Guitar => Performer.Guitar,
+                CharacterType.Drums  => Performer.Drums,
+                CharacterType.Vocals => Performer.Vocals,
+                CharacterType.Keys   => Performer.Keyboard,
+                _                    => Performer.None
+            };
+        }
+
         [Tooltip("This only needs to be set if you are building the character into a venue.\n\nIt is handled automatically for .yargchar exports.")]
         [SerializeField]
         protected CharacterManager _characterManager;
@@ -78,7 +104,7 @@ namespace YARG.Venue.Characters
         private int _kickAnimationHash;
 
         private RuntimeAnimatorController _animatorController;
-        private Animator _animator;
+        protected Animator _animator;
 
         private float _animationLength;
         private float _animationSpeed;
@@ -87,7 +113,7 @@ namespace YARG.Venue.Characters
 
         private bool _isAnimating;
 
-        private string _currentLeftHandPosition;
+        private string _currentLeftHandPosition = "";
 
         private List<int> _strumUpHashes = new();
 
@@ -132,7 +158,15 @@ namespace YARG.Venue.Characters
         [NonSerialized]
         public bool HatIsOpen;
 
-        public virtual void Initialize(CharacterManager characterManager)
+        [NonSerialized]
+        public  bool HasRng = false;
+        [NonSerialized]
+        public int CurrentRng;
+        [NonSerialized]
+        public int RngAtLastTransition;
+        protected int  _rngHash;
+
+        public virtual void Initialize(CharacterManager characterManager, bool isCustom = false)
         {
             _characterManager = characterManager;
             _animator = GetComponent<Animator>();
@@ -414,7 +448,7 @@ namespace YARG.Venue.Characters
             }
         }
 
-        public void OnGuitarAnimation(AnimationTrigger animation)
+        public void OnAnimationEvent(AnimationTrigger animation)
         {
             switch (animation.Type)
             {
@@ -430,7 +464,7 @@ namespace YARG.Venue.Characters
             }
         }
 
-        public void OnGuitarAnimation(AnimationType animation)
+        public void OnAnimationEvent(AnimationType animation)
         {
             if (_animationEvents.TryGet(animation, out var animInfo))
             {
@@ -486,10 +520,9 @@ namespace YARG.Venue.Characters
 
         }
 
-        public virtual void OnNote<T>(Note<T> note) where T : Note<T>
+        public virtual void OnChartEvent(ChartEvent e)
         {
-
-            if (note is GuitarNote gNote)
+            if (e is GuitarNote gNote)
             {
                 // Handle alternate strums for bass
                 if (Type == CharacterType.Bass && _hasSlap && _strumMap == StrumMapType.SlapBass)
@@ -538,7 +571,7 @@ namespace YARG.Venue.Characters
                 SetHandAnimationForNote(gNote);
             }
 
-            if (note is Note<VocalNote> vocalNote)
+            if (e is Note<VocalNote> or LyricEvent)
             {
                 if (VrmInstance != null)
                 {
@@ -546,7 +579,7 @@ namespace YARG.Venue.Characters
 
                     expression.SetWeight(ExpressionKey.Oh, 1.0f);
 
-                    DOTween.Sequence().AppendInterval((float) vocalNote.TimeLength).AppendCallback(() =>
+                    DOTween.Sequence().AppendInterval((float) e.TimeLength).AppendCallback(() =>
                     {
                         expression.SetWeight(ExpressionKey.Oh, 0.0f);
                         expression.SetWeight(ExpressionKey.Happy, 1.0f);
@@ -554,7 +587,7 @@ namespace YARG.Venue.Characters
                 }
             }
 
-            if (note is Note<ProKeysNote>)
+            if (e is Note<ProKeysNote>)
             {
 
             }
@@ -809,6 +842,11 @@ namespace YARG.Venue.Characters
         public bool IsAnimating()
         {
             return _isAnimating;
+        }
+
+        public void TriggerEnd()
+        {
+            SetTrigger(CharacterStateType.End);
         }
 
         public void UpdateTempo(double secondsPerBeat)

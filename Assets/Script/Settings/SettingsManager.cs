@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using UnityEngine;
+using YARG.Core.Audio;
 using YARG.Core.Logging;
 using YARG.Core.Utility;
 using YARG.Helpers;
@@ -19,10 +21,25 @@ namespace YARG.Settings
             Formatting = Formatting.Indented,
             Converters = new List<JsonConverter>
             {
+                new JsonUnityColorConverter(),
                 new JsonColorConverter(),
                 new JsonVector2Converter()
             }
         };
+
+        /// <summary>
+        /// Holds settings needed before the full settings list has been loaded.
+        /// </summary>
+        private sealed class StartupSettingValues
+        {
+            public string OutputDevice { get; set; }
+        }
+
+        private static string _serializedSettings;
+
+        private static bool _settingsCanBeSaved = true;
+
+        public static string OutputDeviceAtStartup { get; private set; } = "Default";
 
         public static SettingContainer Settings { get; private set; }
 
@@ -35,6 +52,10 @@ namespace YARG.Settings
                 nameof(Settings.AudioCalibration),
                 nameof(Settings.VideoCalibration),
                 new FieldMetadata(nameof(Settings.AccountForHardwareLatency), true, isAdvanced: true),
+                // Not sure how to use nameof?
+                new HeaderMetadata("OffsetCalibration"),
+                nameof(Settings.ShowMeanSongOffsetCalibration),
+                nameof(Settings.UseSongOffsetCalibration),
 
                 new HeaderMetadata("Venues"),
                 new ButtonRowMetadata(nameof(Settings.OpenVenueFolder)),
@@ -42,6 +63,7 @@ namespace YARG.Settings
                 new FieldMetadata(nameof(Settings.DisableGlobalBackgrounds), isAdvanced: true),
                 nameof(Settings.DisablePerSongBackgrounds),
                 new FieldMetadata(nameof(Settings.WaitForSongVideo), isAdvanced: true),
+                nameof(Settings.AllowRemoteContent),
 
                 new HeaderMetadata("Gameplay"),
                 new FieldMetadata(nameof(Settings.InputPollingFrequency), isAdvanced: true),
@@ -79,13 +101,16 @@ namespace YARG.Settings
                 nameof(Settings.Genrelizer),
                 new HeaderMetadata("MusicLibrary"),
                 nameof(Settings.MaxSongRating),
+                nameof(Settings.CensorMatureContent),
                 nameof(Settings.ShowFavoriteButton),
                 nameof(Settings.DifficultyRings),
                 nameof(Settings.HighScoreInfo),
                 new FieldMetadata(nameof(Settings.ShowPercentDecimals), isAdvanced: true),
                 nameof(Settings.HighScoreHistory),
+                new FieldMetadata(nameof(Settings.SongLengthLabels), isAdvanced: true),
                 nameof(Settings.TrackSectionCompletion),
                 new HeaderMetadata("PlayAShow"),
+                nameof(Settings.EnablePlayAShow),
                 nameof(Settings.PlayAShowTimeout),
                 nameof(Settings.RequireAllDifficulties),
             },
@@ -104,12 +129,15 @@ namespace YARG.Settings
                 new FieldMetadata(nameof(Settings.CrowdVolume), isAdvanced: true),
                 nameof(Settings.SfxVolume),
                 new FieldMetadata(nameof(Settings.DrumSfxVolume), isAdvanced: true),
+                new FieldMetadata(nameof(Settings.VenueSfxVolume), isAdvanced: true),
                 new FieldMetadata(nameof(Settings.PreviewVolume), isAdvanced: true),
                 nameof(Settings.MusicPlayerVolume),
                 new FieldMetadata(nameof(Settings.VocalMonitoring)),
+                nameof(Settings.VocalReverb),
                 new FieldMetadata(nameof(Settings.MetronomeVolume), isAdvanced: true),
 
                 new HeaderMetadata("Customization", isAdvanced: true),
+                new FieldMetadata(nameof(Settings.AutomaticPlaybackBuffer), isAdvanced: true),
                 new FieldMetadata(nameof(Settings.PlaybackBufferLength), isAdvanced: true),
 
                 new HeaderMetadata("Input"),
@@ -118,15 +146,22 @@ namespace YARG.Settings
                 new HeaderMetadata("Gameplay"),
                 nameof(Settings.MuteOnMiss),
                 nameof(Settings.UseStarpowerFx),
-                nameof(Settings.UseCrowdFx),
+                nameof(Settings.UseVenueSfx),
                 nameof(Settings.OverstrumAndOverhitSoundEffects),
                 new FieldMetadata(nameof(Settings.AlwaysOnDrumSFX), isAdvanced: true),
                 new FieldMetadata(nameof(Settings.UseWhammyFx), isAdvanced: true),
                 new FieldMetadata(nameof(Settings.WhammyPitchShiftAmount), isAdvanced: true),
 
+                new HeaderMetadata("CrowdFX"),
+                nameof(Settings.UseCrowdCheering),
+                nameof(Settings.UseCrowdIdle),
+                nameof(Settings.UseStarPowerClaps),
+                nameof(Settings.UsePerformanceClaps),
+
                 new HeaderMetadata("Other"),
                 new FieldMetadata(nameof(Settings.UseChipmunkSpeed), isAdvanced: true),
                 new FieldMetadata(nameof(Settings.ApplyVolumesInMusicLibrary), isAdvanced: true),
+                new FieldMetadata(nameof(Settings.ApplyVolumesInMusicPlayer), isAdvanced: true),
                 nameof(Settings.EnableVoxSamples),
                 new FieldMetadata(nameof(Settings.MetronomeSound), isAdvanced: true),
             },
@@ -136,6 +171,7 @@ namespace YARG.Settings
                 nameof(Settings.VSync),
                 new FieldMetadata(nameof(Settings.FpsCap)),
                 new FieldMetadata(nameof(Settings.VenueFpsCap), isAdvanced: true),
+                nameof(Settings.BackgroundFpsCap),
                 nameof(Settings.FullscreenMode),
                 nameof(Settings.Resolution),
                 new FieldMetadata(nameof(Settings.FpsStats), isAdvanced: true),
@@ -165,10 +201,13 @@ namespace YARG.Settings
                 nameof(Settings.NoteStreakFrequency),
                 new FieldMetadata(nameof(Settings.VocalStreakFrequency), isAdvanced: true),
                 nameof(Settings.CountdownDisplay),
+                nameof(Settings.UnisonDisplay),
                 nameof(Settings.ShowPlayerNameWhenStartingSong),
                 nameof(Settings.LyricDisplay),
+                nameof(Settings.KeepLyricBar),
                 nameof(Settings.SongTimeOnScoreBox),
                 nameof(Settings.GraphicalProgressOnScoreBox),
+                nameof(Settings.GraphicalSongProgressTint),
                 nameof(Settings.KeepSongInfoVisible),
                 nameof(Settings.ShowSectionStrip),
             },
@@ -186,7 +225,8 @@ namespace YARG.Settings
                 new ButtonRowMetadata(
                     nameof(Settings.ExportSongsJson),
                     nameof(Settings.ExportSongsText),
-                    nameof(Settings.ExportSongsCsv)
+                    nameof(Settings.ExportSongsCsv),
+                    nameof(Settings.ExportSongsWeb)
                 ),
                 new HeaderMetadata("PathsAndFolders"),
                 new ButtonRowMetadata(
@@ -194,6 +234,8 @@ namespace YARG.Settings
                     nameof(Settings.CopyCurrentSongJsonFilePath)),
                 new ButtonRowMetadata(nameof(Settings.OpenPersistentDataPath)),
                 new ButtonRowMetadata(nameof(Settings.OpenExecutablePath)),
+                new HeaderMetadata("CacheManagement"),
+                new ButtonRowMetadata(nameof(Settings.RemoveRemoteContent)),
             },
             new MetadataTab("LightingPeripherals", icon: "Lighting", new DMXInformationPanelBuilder())
             {
@@ -220,6 +262,7 @@ namespace YARG.Settings
                 nameof(Settings.DMXBassChannel),
                 nameof(Settings.DMXKeysChannel),
                 new HeaderMetadata("AdvancedDMXSettings"),
+                nameof(Settings.DMXLocalIP),
                 nameof(Settings.DMXUniverseChannel),
                 nameof(Settings.DMXDimmerValues),
                 nameof(Settings.DMXTargetFPS),
@@ -237,18 +280,20 @@ namespace YARG.Settings
                 nameof(Settings.ShowAdvancedMusicLibraryOptions),
                 nameof(Settings.MinimumLogLevel),
             },
-            // new MetadataTab("Experimental", icon: "Beaker", new ExperimentalPreviewBuilder())
             new MetadataTab("Experimental", icon: "Beaker", new CharacterPreviewBuilder())
             {
                 new HeaderMetadata("Other"),
                 nameof(Settings.BandComboTypeSetting),
-                nameof(Settings.CustomVocalsCharacter),
                 nameof(Settings.DataStreamEnable),
                 nameof(Settings.SaveScoresWithBots),
+                nameof(Settings.ReverbImplementation),
                 new HeaderMetadata("Accessibility"),
                 nameof(Settings.FontScaling),
                 new HeaderMetadata("OutputConfiguration"),
+                new FieldMetadata(nameof(Settings.OutputMode), visibleWhen: IsWindows),
                 nameof(Settings.OutputDevice),
+                new FieldMetadata(nameof(Settings.AsioBufferSize), visibleWhen: IsAsioVisible),
+                new ButtonRowMetadata(nameof(Settings.OpenAsioControlPanel), IsAsioVisible),
                 nameof(Settings.OutputChannelDefault),
                 nameof(Settings.OutputChannelDrumSfx),
                 nameof(Settings.OutputChannelMetronome),
@@ -264,21 +309,57 @@ namespace YARG.Settings
 
         private static string SettingsFile => Path.Combine(PathHelper.PersistentDataPath, "settings.json");
 
+        public static void LoadStartupSettings()
+        {
+            try
+            {
+                _serializedSettings = File.ReadAllText(SettingsFile);
+                var startupSettings = JsonConvert.DeserializeObject<StartupSettingValues>(_serializedSettings);
+                OutputDeviceAtStartup = startupSettings?.OutputDevice ?? "Default";
+            }
+            catch
+            {
+                // Full settings load reports file and JSON errors during normal startup.
+                OutputDeviceAtStartup = "Default";
+            }
+        }
+
+        private static bool IsWindows() => Application.platform is RuntimePlatform.WindowsPlayer or
+            RuntimePlatform.WindowsEditor;
+
+        private static bool IsAsioVisible() => IsWindows() && Settings?.OutputMode.Value == AudioOutputMode.Asio;
+
         public static void LoadSettings()
         {
+            _settingsCanBeSaved = true;
+            bool settingsFileExists = File.Exists(SettingsFile);
+
             // Create settings container
             try
             {
-                string text = File.ReadAllText(SettingsFile);
-                Settings = JsonConvert.DeserializeObject<SettingContainer>(text, JsonSettings);
+                string text = _serializedSettings ?? File.ReadAllText(SettingsFile);
+                _serializedSettings = null;
+
+                var settingsJson = JObject.Parse(text);
+                settingsJson = SettingsMigration.Migrate(settingsJson, out _settingsCanBeSaved);
+                Settings = JsonConvert.DeserializeObject<SettingContainer>(
+                    settingsJson.ToString(Formatting.None), JsonSettings);
             }
             catch (Exception e)
             {
+                _settingsCanBeSaved = !settingsFileExists;
                 YargLogger.LogException(e, "Failed to load settings!");
             }
 
             // If null, recreate
             Settings ??= new SettingContainer();
+
+            AudioOutputMode outputMode = GlobalAudioHandler.GetOutputMode(Settings.OutputDevice.Value);
+            Settings.OutputMode.SetValueWithoutNotify(outputMode);
+            Settings.RememberOutputDevice(outputMode, Settings.OutputDevice.Value);
+            Settings.OutputDevice.UpdateValues(outputMode);
+            Settings.AsioBufferSize.UpdateValues();
+
             SettingContainer.IsInitialized = true;
 
             // Now that we're done loading, call all of the callbacks
@@ -300,10 +381,11 @@ namespace YARG.Settings
         {
             // If the game tries to save the settings before they are loaded, it can wipe the settings file
             // (such as closing the game before they load)
-            if (SettingContainer.IsInitialized && Settings is not null)
+            if (SettingContainer.IsInitialized && Settings is not null && _settingsCanBeSaved)
             {
-                var json = JsonConvert.SerializeObject(Settings, JsonSettings);
-                File.WriteAllText(SettingsFile, json);
+                var json = JObject.Parse(JsonConvert.SerializeObject(Settings, JsonSettings));
+                SettingsMigration.SetCurrentSchemaVersion(json);
+                File.WriteAllText(SettingsFile, json.ToString(Formatting.Indented));
             }
         }
 

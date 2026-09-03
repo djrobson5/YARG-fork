@@ -23,6 +23,11 @@ namespace YARG.Menu.Settings
 
         public override void Confirm()
         {
+            if (!BaseSettingVisual.IsEditable)
+            {
+                return;
+            }
+
             var scheme = BaseSettingVisual.GetNavigationScheme();
             scheme.PopCallback = () =>
             {
@@ -30,7 +35,7 @@ namespace YARG.Menu.Settings
                 _activeBackground.SetActive(false);
             };
 
-            Navigator.Instance.PushScheme(scheme);
+            _ = Navigator.Instance.PushScheme(scheme);
 
             _focused = true;
             _activeBackground.SetActive(true);

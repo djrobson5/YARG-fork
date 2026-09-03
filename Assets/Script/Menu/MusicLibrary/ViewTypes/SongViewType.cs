@@ -3,6 +3,7 @@ using Cysharp.Text;
 using UnityEngine;
 using YARG.Core.Game;
 using YARG.Core.Song;
+using YARG.Helpers;
 using YARG.Player;
 using YARG.Playlists;
 using YARG.Scores;
@@ -35,6 +36,7 @@ namespace YARG.Menu.MusicLibrary
         private bool _fetchedScores;
         private PlayerScoreRecord _playerScoreRecord;
         private GameRecord _bandScoreRecord;
+        private ScoreContext _fetchedScoreContext;
         private SectionProgress? _sectionProgress;
 
         public SongViewType(MusicLibraryMenu musicLibrary, SongEntry songEntry, string context = "library")
@@ -122,9 +124,11 @@ namespace YARG.Menu.MusicLibrary
             return GetStarAmount(playerScoreRecord, bandScoreRecord);
         }
 
+#nullable enable
         private static StarAmount? GetStarAmount(
             PlayerScoreRecord? playerScoreRecord,
             GameRecord? bandScoreRecord)
+#nullable disable
         {
             if (bandScoreRecord is not null)
             {
@@ -212,13 +216,15 @@ namespace YARG.Menu.MusicLibrary
 
         private void FetchHighScores()
         {
-            if (_fetchedScores)
+            var context = ScoreContext.Capture();
+            if (_fetchedScores && _fetchedScoreContext.Equals(context))
             {
                 return;
             }
 
             FetchHighScores(SongEntry, out _playerScoreRecord, out _bandScoreRecord);
             _sectionProgress = FetchSectionProgress(SongEntry, _playerScoreRecord);
+            _fetchedScoreContext = context;
             _fetchedScores = true;
         }
 
@@ -259,20 +265,8 @@ namespace YARG.Menu.MusicLibrary
 
         private static void FetchHighScores(SongEntry songEntry, out PlayerScoreRecord playerScoreRecord, out GameRecord bandScoreRecord)
         {
-            playerScoreRecord = null;
-            bandScoreRecord = null;
-
-            var humanCount = PlayerContainer.Players.Count(p => !p.Profile.IsBot);
-            if (humanCount == 1)
-            {
-                var player = PlayerContainer.Players.First(e => !e.Profile.IsBot);
-                playerScoreRecord = ScoreContainer.GetPreferredHighScore(
-                    songEntry.Hash, player.Profile.Id, player.Profile.CurrentInstrument);
-            }
-            else
-            {
-                bandScoreRecord = ScoreContainer.GetBandHighScore(songEntry.Hash);
-            }
+            ScoreContainer.GetPreferredHighScoresForCurrentPlayers(
+                songEntry.Hash, out playerScoreRecord, out bandScoreRecord);
         }
     }
 }

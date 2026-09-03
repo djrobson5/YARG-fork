@@ -12,7 +12,6 @@ using YARG.Gameplay.HUD;
 using YARG.Helpers.Extensions;
 using YARG.Helpers.UI;
 using YARG.Input;
-using YARG.Playback;
 using YARG.Player;
 using YARG.Scores;
 using YARG.Settings;
@@ -117,6 +116,8 @@ namespace YARG.Gameplay.Player
         private float _noteSpeedDifficultyScale;
 
         protected EngineManager.EngineContainer EngineContainer;
+
+        protected bool PlayerHasFailed;
 
         protected override void GameplayAwake()
         {
@@ -392,7 +393,7 @@ namespace YARG.Gameplay.Player
         protected void OnGameInput(ref GameInput input)
         {
             // Ignore completely if the song hasn't started yet or player failed
-            if (!GameManager.Started || GameManager.PlayerHasFailed)
+            if (!GameManager.Started || PlayerHasFailed)
                 return;
 
             // Ignore while paused
@@ -420,7 +421,7 @@ namespace YARG.Gameplay.Player
 
             LastInputs[input.Action] = input;
 
-            double adjustedTime = GameManager.GetRelativeInputTime(input.Time);
+            double adjustedTime = GameManager.GetInputTime(input.Time);
             // Apply input offset
             adjustedTime += InputCalibration;
             input = new(adjustedTime, input.Action, input.Integer);
@@ -457,7 +458,8 @@ namespace YARG.Gameplay.Player
         protected virtual void OnStarPowerStatus(bool active)
         {
             var deploySample = SfxSample.StarPowerDeploy;
-            if (SettingsManager.Settings.UseCrowdFx.Value == CrowdFxMode.Enabled)
+            if (SettingsManager.Settings.UseCrowdCheering.Value &&
+                !GlobalVariables.State.CrowdSfxVenueOverride)
             {
                 deploySample = SfxSample.StarPowerDeployCrowd;
             }

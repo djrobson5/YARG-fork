@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using YARG.Core.Audio;
 using YARG.Core.Chart;
@@ -10,13 +10,6 @@ using YARG.Settings;
 
 namespace YARG.Playback
 {
-    public enum CrowdFxMode
-    {
-        Disabled,
-        StarpowerClapsOnly,
-        Enabled
-    }
-
     public class CrowdEventHandler : IDisposable
     {
         public CrowdState CrowdState     { get; private set; } = CrowdState.Realtime;
@@ -46,8 +39,23 @@ namespace YARG.Playback
         private bool _endSamplePlayed;
         private bool _disposed;
 
+        private bool _started;
+        private CrowdClapScheduler _clapScheduler;
+
         private readonly double _musicStartTime;
         private readonly double _musicEndTime;
+
+        private bool UseCrowdCheering => SettingsManager.Settings.UseCrowdCheering.Value
+            && !GlobalVariables.State.CrowdSfxVenueOverride;
+
+        private bool UseCrowdIdle => SettingsManager.Settings.UseCrowdIdle.Value
+            && !GlobalVariables.State.CrowdSfxVenueOverride;
+
+        private bool UseStarPowerClaps => SettingsManager.Settings.UseStarPowerClaps.Value
+            && !GlobalVariables.State.CrowdSfxVenueOverride;
+
+        private bool UsePerformanceClaps => SettingsManager.Settings.UsePerformanceClaps.Value
+            && !GlobalVariables.State.CrowdSfxVenueOverride;
 
         public CrowdEventHandler(SongChart chart, GameManager gameManager)
         {
@@ -74,33 +82,41 @@ namespace YARG.Playback
                 _musicEndTime = musicEnd.Time;
             }
 
-            // If crowd fx is disabled, don't bother subscribing to beat events
-            if (SettingsManager.Settings.UseCrowdFx.Value != CrowdFxMode.Disabled)
+        }
+
+        public void SetClapScheduler(CrowdClapScheduler scheduler)
+        {
+            _clapScheduler = scheduler;
+            UpdateClapEnabled();
+        }
+
+        public void Start()
+        {
+            if (_started)
             {
-                // Clap sample takes 20ms to actually hit (not sure if this should actually be measure or strongbeat)
-                _gameManager.BeatEventHandler?.Audio.Subscribe(Clap, BeatEventType.StrongBeat, offset: -0.02);
-            }
-            else if (SettingsManager.Settings.UseCrowdFx.Value == CrowdFxMode.StarpowerClapsOnly)
-            {
-                ChangeCrowdMuteState(true);
+                return;
             }
 
-            if (SettingsManager.Settings.UseCrowdFx.Value == CrowdFxMode.Enabled)
+            if (UseCrowdIdle || (UseCrowdCheering && _startWithMurmur))
             {
                 _selectedOpenSample = _openSamples[UnityEngine.Random.Range(0, _openSamples.Length)];
+                GlobalAudioHandler.PlaySoundEffect(_selectedOpenSample, 1.0);
+            }
+
+            if (UseCrowdCheering)
+            {
                 _selectedStartSample = _startSamples[UnityEngine.Random.Range(0, _startSamples.Length)];
                 _selectedEndSample = _endSamples[UnityEngine.Random.Range(0, _endSamples.Length)];
 
-                if (_startWithMurmur)
-                {
-                    GlobalAudioHandler.PlaySoundEffect(_selectedOpenSample, 1.0);
-                }
-                else
+                if (!_startWithMurmur)
                 {
                     GlobalAudioHandler.PlaySoundEffect(_selectedStartSample, 1.0);
                     _startSamplePlayed = true;
                 }
             }
+
+            _started = true;
+            UpdateClapEnabled();
 
             if (SettingsManager.Settings.NoFail.Value == NoFailMode.NoMeter || GlobalVariables.State.IsPractice)
             {
@@ -111,16 +127,18 @@ namespace YARG.Playback
             {
                 _engineManager.OnSongFailed += OnSongFailed;
 
-                if (SettingsManager.Settings.UseCrowdFx.Value == CrowdFxMode.Enabled)
-                {
-                    _engineManager.OnHappinessUnderThreshold += OnHappinessUnderThreshold;
-                    _engineManager.OnHappinessOverThreshold += OnHappinessOverThreshold;
-                }
+                _engineManager.OnHappinessUnderThreshold += OnHappinessUnderThreshold;
+                _engineManager.OnHappinessOverThreshold += OnHappinessOverThreshold;
             }
         }
 
         public void Update(double time)
         {
+            if (!_started)
+            {
+                return;
+            }
+
             while (_eventIndex < _events.Count && _events[_eventIndex].Time <= time)
             {
                 var ev = _events[_eventIndex];
@@ -141,11 +159,11 @@ namespace YARG.Playback
             {
                 _startSamplePlayed = true;
 
-                if (SettingsManager.Settings.UseCrowdFx.Value == CrowdFxMode.Enabled)
+                if (UseCrowdCheering)
                 {
-                    if (_startWithMurmur)
+                    if (_startWithMurmur && !UseCrowdIdle)
                     {
-                        // GlobalAudioHandler.StopSoundEffect(_selectedOpenSample, 1.0);
+                        GlobalAudioHandler.StopSoundEffect(_selectedOpenSample, 1.0);
                     }
 
                     GlobalAudioHandler.PlaySoundEffect(_selectedStartSample, 0.25);
@@ -157,75 +175,78 @@ namespace YARG.Playback
                 _endSamplePlayed = true;
 
                 // Play the end sample if it hasn't been played yet
-                if (SettingsManager.Settings.UseCrowdFx.Value == CrowdFxMode.Enabled)
+                if (UseCrowdCheering)
                 {
                     GlobalAudioHandler.PlaySoundEffect(_selectedEndSample, 0.5);
                 }
             }
+
+            UpdateClapEnabled();
         }
 
-        private void Clap()
+        private void UpdateClapEnabled()
         {
-            // No clapping when charter has inhibited clapping, even if SP is active
-            if (ClapState == ClapState.NoClap)
-            {
-                return;
-            }
+            bool starPowerActive = _gameManager.StarPowerActivations > 0;
+            bool crowdIsHappy = _engineManager.Happiness >= 1.0f;
 
-            // No clapping before first note or after last note (in case charter forgot to put crowd back in realtime)
-            if (_gameManager.SongTime < _gameManager.FirstNoteTime || _gameManager.SongTime > _gameManager.LastNoteTime)
-            {
-                return;
-            }
+            bool clapTriggerActive = (UseStarPowerClaps && starPowerActive) ||
+                (UsePerformanceClaps && crowdIsHappy);
+            bool shouldEnableClaps = _started && clapTriggerActive;
 
-            // Only clap when happiness meter is full or SP is active
-            if (_gameManager.EngineManager.Happiness < 1.0f && _gameManager.StarPowerActivations < 1)
-            {
-                return;
-            }
-
-            GlobalAudioHandler.PlaySoundEffect(SfxSample.Clap);
+            _clapScheduler?.SetEnabled(shouldEnableClaps);
         }
 
         private void OnHappinessUnderThreshold()
         {
-            if (SettingsManager.Settings.UseCrowdFx.Value == CrowdFxMode.Disabled)
-            {
-                return;
-            }
-
             ChangeCrowdMuteState(true);
         }
 
         private void OnHappinessOverThreshold()
         {
-            if (SettingsManager.Settings.UseCrowdFx.Value == CrowdFxMode.Disabled)
-            {
-                return;
-            }
-
             ChangeCrowdMuteState(false);
         }
 
         private void OnSongFailed()
         {
             // TODO: Play crowd booing sound
+            if (SettingsManager.Settings.NoFail.Value != NoFailMode.Off || _gameManager.IsPractice)
+            {
+                return;
+            }
         }
 
-        private void ChangeCrowdMuteState(bool muted)
+        private void ChangeCrowdMuteState(bool muted, bool force = false)
         {
-            if (IsCrowdMuted != muted)
+            if (IsCrowdMuted != muted || force)
             {
                 _gameManager.ChangeStemMuteState(SongStem.Crowd, muted, 1.0f);
                 IsCrowdMuted = muted;
             }
         }
 
+        public void UpdateCrowdMuteState(bool force = false)
+        {
+            ChangeCrowdMuteState(_engineManager.IsCrowdBelowThreshold, force);
+        }
+
         public void StopAllCrowdSounds()
         {
-            GlobalAudioHandler.StopSoundEffect(_selectedOpenSample, 2.5);
-            GlobalAudioHandler.StopSoundEffect(_selectedStartSample);
-            GlobalAudioHandler.StopSoundEffect(_selectedEndSample, 1.5);
+            foreach (var sample in _openSamples)
+            {
+                GlobalAudioHandler.StopSoundEffect(sample, 2.5);
+            }
+
+            foreach (var sample in _startSamples)
+            {
+                GlobalAudioHandler.StopSoundEffect(sample);
+            }
+
+            foreach (var sample in _endSamples)
+            {
+                GlobalAudioHandler.StopSoundEffect(sample, 1.5);
+            }
+
+            GlobalAudioHandler.StopSoundEffect(SfxSample.Chatter);
         }
 
         public void Dispose()
@@ -241,7 +262,7 @@ namespace YARG.Playback
                 _engineManager.OnHappinessUnderThreshold -= OnHappinessUnderThreshold;
                 _engineManager.OnHappinessOverThreshold -= OnHappinessOverThreshold;
                 _engineManager.OnSongFailed -= OnSongFailed;
-                _gameManager?.BeatEventHandler?.Audio.Unsubscribe(Clap);
+                _clapScheduler?.SetEnabled(false);
 
                 StopAllCrowdSounds();
             }

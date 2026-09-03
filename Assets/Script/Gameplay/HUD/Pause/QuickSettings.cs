@@ -6,6 +6,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.Serialization;
 using YARG.Core.Logging;
+using YARG.Localization;
 using YARG.Menu.Navigation;
 using YARG.Player;
 using YARG.Settings;
@@ -58,6 +59,10 @@ namespace YARG.Gameplay.HUD
             _failMeter = FindAnyObjectByType<FailMeter>();
             _noFailText = _noFailButton.GetComponentInChildren<TextMeshProUGUI>();
             _venuePostProcessingText = _venuePostProcessingButton.GetComponentInChildren<TextMeshProUGUI>();
+            // Need to do this here instead of in the prefab since the value depends on the user's settings
+            _noFailText.text = Localize.Key("Menu.Pause.QuickSettings.NoFail", SettingsManager.Settings.NoFail.Value != NoFailMode.Off ? "Disable" : "Enable");
+            _venuePostProcessingText.text = Localize.Key("Menu.Pause.QuickSettings.VenuePP", SettingsManager.Settings.VenuePostProcessing.Value ? "Disable" : "Enable");
+
             _editHudButton.gameObject.SetActive(GameManager.Players.Count <= 1);
         }
 
@@ -68,10 +73,8 @@ namespace YARG.Gameplay.HUD
             _quickSettingsContainer.gameObject.SetActive(true);
             _subSettingsObject.SetActive(false);
             // _noFailButton.SetActive(!SettingsManager.Settings.NoFailMode.Value);
-            _noFailText.text = SettingsManager.Settings.NoFail.Value != NoFailMode.Off ? "Disable No Fail" : "Enable No Fail";
-            _venuePostProcessingText.text = SettingsManager.Settings.VenuePostProcessing.Value
-                ? "Disable Venue Post Processing"
-                : "Enable Venue Post Processing";
+            _noFailText.text = Localize.Key("Menu.Pause.QuickSettings.NoFail", SettingsManager.Settings.NoFail.Value != NoFailMode.Off ? "Disable" : "Enable");
+            _venuePostProcessingText.text = Localize.Key("Menu.Pause.QuickSettings.VenuePP", SettingsManager.Settings.VenuePostProcessing.Value ? "Disable" : "Enable");
         }
 
         public override void Back()
@@ -98,8 +101,18 @@ namespace YARG.Gameplay.HUD
             {
                 settings.Remove(nameof(SettingsManager.Settings.AutoCalibrateAudio));
                 settings.Remove(nameof(SettingsManager.Settings.AutoCalibrateVideo));
+                settings.Remove(nameof(SettingsManager.Settings.AutoCalibrateOffset));
             }
-            OpenSubSettings(settings);
+
+            // The specific song offset (and its auto-calibration) only matter if song offset
+            // calibration is actually applied during gameplay.
+            var showSongOffset = SettingsManager.Settings.UseSongOffsetCalibration.Value;
+            if (!showSongOffset)
+            {
+                settings.Remove(nameof(SettingsManager.Settings.AutoCalibrateOffset));
+            }
+
+            OpenSubSettings(settings, showSongOffset ? GameManager.SongOffsetOverride : null);
         }
 
         public void ToggleNoFail()
@@ -123,7 +136,7 @@ namespace YARG.Gameplay.HUD
                 : "Enable Venue Post Processing";
         }
 
-        private void OpenSubSettings(List<string> settings)
+        private void OpenSubSettings(List<string> settings, IntSetting extraIntSetting = null)
         {
             // Destroy all of the options (except for the back button)
             foreach (Transform child in _subSettingsContainer)
@@ -142,7 +155,7 @@ namespace YARG.Gameplay.HUD
             foreach (var settingName in settings)
             {
                 var setting = SettingsManager.GetSettingByName(settingName);
-
+            
                 switch (setting)
                 {
                     case VolumeSetting volumeSetting:
@@ -172,6 +185,16 @@ namespace YARG.Gameplay.HUD
                     default:
                         YargLogger.LogError("Didn't implement setting prefab for this setting type.");
                         break;
+                }
+
+                // Per-song settings (e.g. the specific song offset) aren't registered with
+                // SettingsManager, so they can't be looked up by name like the rest of the list.
+                // Instead, we just add it manually right after VideoCalibration.
+                if (settingName == nameof(SettingsManager.Settings.VideoCalibration) && extraIntSetting != null)
+                {
+                    var songOffset = Instantiate(_intPauseSettingPrefab, _subSettingsContainer);
+                    songOffset.Initialize("SongOffset", extraIntSetting);
+                    _subSettingsNavGroup.AddNavigatable(songOffset.gameObject);
                 }
             }
 

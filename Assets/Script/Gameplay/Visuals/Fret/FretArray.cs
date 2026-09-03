@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using UnityEngine;
 using YARG.Core.Chart;
 using YARG.Themes;
@@ -149,12 +150,33 @@ namespace YARG.Gameplay.Visuals
         }
         #nullable restore
 
+        /// <summary>
+        /// Re-applies colors to the already-created frets, optionally remapping which
+        /// color index each fret uses. Used by the settings preview to reverse the fret
+        /// color order for lefty flip without rebuilding the fret array.
+        /// </summary>
+        public void RecolorFrets(IFretColorProvider fretColorProvider, Func<int, int> colorIndexRemap)
+        {
+            foreach (var (noteType, fret) in _frets)
+            {
+                int colorIndex = colorIndexRemap(noteType);
+                fret.Initialize(
+                    fretColorProvider.GetFretColor(colorIndex),
+                    fretColorProvider.GetFretInnerColor(colorIndex),
+                    fretColorProvider.GetParticleColor(colorIndex),
+                    fretColorProvider.GetParticleColor((int) FiveFretGuitarFret.Open));
+            }
+        }
+
         public void SetPressed(int index, bool pressed)
         {
             _frets[index].SetPressed(pressed);
         }
 
-        public void SetPressedDrum(int index, bool pressed, Fret.AnimType animType)
+        // Used for frets that can only receive a momentary input rather than being held. This includes all
+        // drum frets, as well as the dedicated open lane fret for 5F Guitar (no, holding the strum bar down
+        // doesn't count)
+        public void SetPressedImpulse(int index, bool pressed, Fret.AnimType animType)
         {
             _frets[index].SetPressedDrum(pressed, animType);
         }
@@ -187,12 +209,12 @@ namespace YARG.Gameplay.Visuals
             _frets[index].PlayHitParticles();
         }
 
-        public void PlayOpenHitAnimation()
+        public void PlayFullWidthHitAnimation()
         {
             foreach (var (_, fret) in _frets)
             {
                 fret.PlayHitAnimation();
-                fret.PlayOpenHitParticles();
+                fret.PlayFullWidthHitParticles();
             }
         }
 
@@ -205,7 +227,7 @@ namespace YARG.Gameplay.Visuals
             }
         }
 
-        public void PlayOpenMissAnimation()
+        public void PlayFullWidthMissAnimation()
         {
             foreach (var (_, fret) in _frets)
             {

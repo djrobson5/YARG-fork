@@ -96,6 +96,7 @@ namespace YARG.Menu.DifficultySelect
 
         private YargPlayer CurrentPlayer => PlayerContainer.Players[_playerIndex];
 
+        private ScrollRect _scrollRect;
         private Scrollbar _scrollbar;
 
         private void OnEnable()
@@ -104,7 +105,7 @@ namespace YARG.Menu.DifficultySelect
             _subHeader.text = Localize.Key("Menu.Main.Options", subHeaderKey);
 
             // Set navigation scheme
-            Navigator.Instance.PushScheme(new NavigationScheme(new()
+            _ = Navigator.Instance.PushScheme(new NavigationScheme(new()
             {
                 NavigationScheme.Entry.NavigateUp,
                 NavigationScheme.Entry.NavigateDown,
@@ -143,6 +144,14 @@ namespace YARG.Menu.DifficultySelect
                 _songList = new List<SongEntry> { GlobalVariables.State.CurrentSong };
             }
 
+            // Starting a fresh selection session: discard any session-scoped modifiers
+            // imposed by a previous song (see ApplySessionModifiers) so each player's
+            // own saved selection is what shows and is edited here.
+            foreach (var player in PlayerContainer.Players)
+            {
+                player.Profile.RestoreSavedModifiers();
+            }
+
             // ChangePlayer(0) will update for the current player
             _playerIndex = 0;
             _vocalModifierSelectIndex = -1;
@@ -154,7 +163,7 @@ namespace YARG.Menu.DifficultySelect
             _sourceIcon.sprite = SongSources.SourceToIcon(GlobalVariables.State.CurrentSong.Source);
             _sourceIcon.gameObject.SetActive(_sourceIcon.sprite != null);
 
-
+            _scrollRect = GetComponentInChildren<ScrollRect>();
             _scrollbar = GetComponentInChildren<Scrollbar>();
             _navGroup.SelectionChanged += UpdateForSelectionChanged;
         }
@@ -162,27 +171,42 @@ namespace YARG.Menu.DifficultySelect
         private void UpdateForSelectionChanged(NavigatableBehaviour navigatableBehaviour,
             SelectionOrigin selectionOrigin)
         {
+            UpdateScrollbarForSelection();
+        }
+
+        private void UpdateScrollbarForSelection()
+        {
             if (!_scrollbar)
             {
                 return;
             }
 
             int? index = _navGroup.SelectedIndex;
-            if (index is { } i)
+            if (index is not { } i) return;
+
+            int count = _navGroup.Count;
+            if (count <= 0)
             {
-                int count = _navGroup.Count;
-                float highScrollBound = _scrollbar.size + (1 - _scrollbar.size) * _scrollbar.value;
-                float lowScrollBound = (1 - _scrollbar.size) * _scrollbar.value;
-                float indexHighBound = 1 - (1 / (float) count) * i;
-                float indexLowBound = 1 - (1 / (float) count) * (i + 1);
-                if (highScrollBound < indexHighBound)
-                {
-                    _scrollbar.value = (indexHighBound - _scrollbar.size) / (1 - _scrollbar.size);
-                }
-                else if (lowScrollBound > indexLowBound)
-                {
-                    _scrollbar.value = indexLowBound / (1 - _scrollbar.size);
-                }
+                return;
+            }
+
+            if (Mathf.Approximately(_scrollbar.size, 1f))
+            {
+                _scrollbar.value = 1f;
+                return;
+            }
+
+            float highScrollBound = _scrollbar.size + (1 - _scrollbar.size) * _scrollbar.value;
+            float lowScrollBound = (1 - _scrollbar.size) * _scrollbar.value;
+            float indexHighBound = 1 - (1 / (float) count) * i;
+            float indexLowBound = 1 - (1 / (float) count) * (i + 1);
+            if (highScrollBound < indexHighBound)
+            {
+                _scrollbar.value = (indexHighBound - _scrollbar.size) / (1 - _scrollbar.size);
+            }
+            else if (lowScrollBound > indexLowBound)
+            {
+                _scrollbar.value = indexLowBound / (1 - _scrollbar.size);
             }
         }
 
@@ -218,6 +242,27 @@ namespace YARG.Menu.DifficultySelect
             }
 
             _lastMenuState = _menuState;
+            RefreshScrollbar();
+        }
+
+        private void RefreshScrollbar()
+        {
+            if (_scrollRect == null)
+            {
+                UpdateScrollbarForSelection();
+                return;
+            }
+
+            Canvas.ForceUpdateCanvases();
+            _scrollRect.Rebuild(CanvasUpdate.PostLayout);
+
+            if (_scrollRect.ScrollableHeight() <= 0f)
+            {
+                _scrollRect.verticalNormalizedPosition = 1f;
+                return;
+            }
+
+            UpdateScrollbarForSelection();
         }
 
         private void CreateMainMenu()
@@ -373,6 +418,11 @@ namespace YARG.Menu.DifficultySelect
                 {
                     var preferredInstrument = CurrentPlayer.Profile.PreferredInstrument;
                     CurrentPlayer.Profile.CurrentInstrument = instrument;
+
+                    // Re-resolve after an instrument switch in case the raw harmony index is out
+                    // of range for this song (ChangePlayer's check can be masked by the
+                    // HarmonyIndex getter returning 0 when not on Harmony).
+                    CurrentPlayer.Profile.ResolveHarmonyIndex(_maxHarmonyIndex);
 
                     // What we are doing here is resetting preferred instrument only if the current preferred instrument
                     // was an option for this chart. This ensures that preferred instrument does not change when the
@@ -534,7 +584,8 @@ namespace YARG.Menu.DifficultySelect
                     // Call the player with the selected modifiers, the "primary player"
                     var primaryPlayer = PlayerContainer.Players[_vocalModifierSelectIndex];
 
-                    // Copy modifiers to all other vocal players
+                    // Apply the primary player's modifiers to the other vocal players
+                    // for this session only, so their own saved selections survive
                     foreach (var player in PlayerContainer.Players)
                     {
                         if (player.SittingOut) continue;
@@ -542,7 +593,7 @@ namespace YARG.Menu.DifficultySelect
 
                         if (player.Profile.GameMode == GameMode.Vocals)
                         {
-                            player.Profile.CopyModifiers(primaryPlayer.Profile);
+                            player.Profile.ApplySessionModifiers(primaryPlayer.Profile);
                         }
                     }
                 }
@@ -606,11 +657,14 @@ namespace YARG.Menu.DifficultySelect
                 _maxHarmonyIndex = Mathf.Min(_maxHarmonyIndex, showsong.VocalsCount);
             }
 
-            // Set the harmony index to a valid one
-            if (profile.HarmonyIndex >= _maxHarmonyIndex)
-            {
-                profile.HarmonyIndex = 0;
-            }
+            // Resolve the effective harmony index for this song from the player's last
+            // explicit selection (clamped to the available parts). Uses ResolveHarmonyIndex
+            // so the raw backing field is checked regardless of CurrentInstrument
+            // (HarmonyIndex getter returns 0 when not on Harmony, which would mask an
+            // out-of-range value from a direct comparison), and so a song with fewer
+            // parts doesn't permanently erase the selection — like DifficultyFallback
+            // preserves Expert+ across songs that lack it.
+            profile.ResolveHarmonyIndex(_maxHarmonyIndex);
 
             UpdatePossibleModifiers();
 

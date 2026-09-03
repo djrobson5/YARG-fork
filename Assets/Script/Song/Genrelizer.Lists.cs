@@ -219,8 +219,8 @@ namespace YARG.Song
             { (COUNTRY, "contemporary"),                (COUNTRY, "Contemporary Country") },
             //(COUNTRY, "honky tonk")                   unchanged
             { (COUNTRY, "outlaw"),                      (COUNTRY, "Outlaw Country") },
-            { (COUNTRY, "traditional folk"),            (FOLK, "Traditional Folk") },
-            { (COUNTRY, "traditionalfolk"),             (FOLK, "Traditional Folk") },
+            { (COUNTRY, "traditional folk"),            (TRADITIONAL, "Traditional Folk") },
+            { (COUNTRY, "traditionalfolk"),             (TRADITIONAL, "Traditional Folk") },
             { (COUNTRY, "other"),                       (COUNTRY, null) },
 
             //(GLAM, "goth")                            unchanged
@@ -449,6 +449,29 @@ namespace YARG.Song
             { (OTHER, "techno"),                        (TECHNO, null) },
             { (OTHER, "trance"),                        (TRANCE, null) },
         };
+
+        // Overgenrelizer keys to BaseGenre
+        private static Dictionary<SortString, BaseGenre> OVERGENRE_TO_BASE_GENRE = new()
+        {
+            { OVER_DANCE_ELECTRONIC, BaseGenre.DanceElectronic },
+            { OVER_HIP_HOP, BaseGenre.HipHop },
+            { OVER_METAL, BaseGenre.Metal },
+            { OVER_POP, BaseGenre.Pop },
+            { OVER_PUNK_SCENE_CORE, BaseGenre.Punk },
+            { OVER_ROCK, BaseGenre.Rock },
+            { OVER_OTHER, BaseGenre.Other },
+        };
+
+        public enum BaseGenre
+        {
+            DanceElectronic,
+            HipHop,
+            Metal,
+            Pop,
+            Punk,
+            Rock,
+            Other,
+        }
 
         private class TupleStringComparer : IEqualityComparer<(string genre, string subgenre)>
         {

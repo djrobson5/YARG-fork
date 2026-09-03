@@ -121,9 +121,9 @@ namespace YARG.Menu.ScoreScreen
         private StatInfo _sectionsPerfectedRow;
         private readonly List<Image> _sectionBlockPool = new();
 
-        protected bool IsHighScore;
-        protected T Stats;
-        protected float AverageMultiplier;
+        protected bool  IsHighScore;
+        protected T     Stats;
+        protected bool  IsReplay;
         protected PlayerSectionSummary Sections;
 
         public YargPlayer Player { get; private set; }
@@ -133,13 +133,13 @@ namespace YARG.Menu.ScoreScreen
             _colorizer = GetComponent<ScoreCardColorizer>();
         }
 
-        public void Initialize(bool isHighScore, YargPlayer player, T stats, float averageMultiplier,
+        public void Initialize(bool isHighScore, YargPlayer player, T stats, bool isReplay,
             PlayerSectionSummary sections)
         {
             IsHighScore = isHighScore;
             Player = player;
             Stats = stats;
-            AverageMultiplier = averageMultiplier;
+            IsReplay  = isReplay;
             Sections = sections;
         }
 
@@ -174,7 +174,7 @@ namespace YARG.Menu.ScoreScreen
                 _colorizer.SetCardColor(ScoreCardColorizer.ScoreCardColor.Gray);
                 ShowTag("Bot");
             }
-            else if (Player.IsReplay)
+            else if (IsReplay)
             {
                 if (Stats.IsFullCombo)
                 {
@@ -202,10 +202,15 @@ namespace YARG.Menu.ScoreScreen
                 _colorizer.SetCardColor(ScoreCardColorizer.ScoreCardColor.Blue);
                 ShowTag("High Score");
             }
-            else
+            else if (!GlobalVariables.State.IsReplay)
             {
                 _colorizer.SetCardColor(ScoreCardColorizer.ScoreCardColor.Blue);
                 ShowTag(SettingsManager.Settings.NoFail.Value != NoFailMode.Off ? "Completed" : "Cleared");
+            }
+            else
+            {
+                _colorizer.SetCardColor(ScoreCardColorizer.ScoreCardColor.Blue);
+                _tagGameObject.SetActive(false);
             }
 
             _score.text = Stats.TotalScore.ToString("N0");
@@ -217,7 +222,7 @@ namespace YARG.Menu.ScoreScreen
             _notesMissedContainer.gameObject.SetActive(Stats.NotesMissed != 0);
             _starpowerPhrases.text = $"{ColorizePrimary(Stats.StarPowerPhrasesHit)} / " +
                 $"{ColorizeSecondary(Stats.TotalStarPowerPhrases)}";
-            _averageMultiplier.text = ColorizePrimary(AverageMultiplier.ToString("0.00"));
+            _averageMultiplier.text = ColorizePrimary(Stats.AverageMultiplier.ToString("0.00"));
             _bandBonusScore.text = ColorizePrimary(Stats.BandBonusScore.ToString("N0"));
             _averageOffset.text = $"{ColorizePrimary(Math.Round(Stats.GetAverageOffset() * 1000, MidpointRounding.AwayFromZero))} {ColorizeSecondary("ms")}";
             _starPowerActivations.text = ColorizePrimary(Stats.StarPowerActivationCount);

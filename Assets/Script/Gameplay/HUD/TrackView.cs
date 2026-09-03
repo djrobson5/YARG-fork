@@ -77,6 +77,10 @@ namespace YARG.Gameplay.HUD
         private int _highwayIndex;
         private int _highwayCount = 1;
 
+        private bool _isSoloActive;
+        private bool _isUnisonActive;
+        private bool _isCodaActive;
+
         private readonly Vector3 _hiddenPosition = new(-10000f, -10000f, 0f);
         private float ExtraTopElementOffset => 8f * Screen.height / 1000f;
 
@@ -351,9 +355,9 @@ namespace YARG.Gameplay.HUD
         public void StartSolo(SoloSection solo)
         {
             _soloBox.StartSolo(solo);
-
+            _isSoloActive = true;
             // No text notifications during the solo
-            _textNotifications.SetActive(false);
+            UpdateTextNotificationStatus();
         }
 
         public void EndSolo(int soloBonus)
@@ -361,8 +365,38 @@ namespace YARG.Gameplay.HUD
             _soloBox.EndSolo(soloBonus, () =>
             {
                 // Show text notifications again
-                _textNotifications.SetActive(true);
+                _isSoloActive = false;
+                UpdateTextNotificationStatus();
             });
+        }
+
+        public void StartUnison()
+        {
+            _isUnisonActive = true;
+            UpdateTextNotificationStatus();
+        }
+
+        public void EndUnison()
+        {
+            _isUnisonActive = false;
+            UpdateTextNotificationStatus();
+        }
+
+        public void StartCoda()
+        {
+            _isCodaActive = true;
+            UpdateTextNotificationStatus();
+        }
+
+        public void EndCoda()
+        {
+            _isCodaActive = false;
+            UpdateTextNotificationStatus();
+        }
+
+        private void UpdateTextNotificationStatus()
+        {
+            _textNotifications.SetActive(!_isSoloActive && !_isUnisonActive && !_isCodaActive);
         }
 
         public void UpdateNoteStreak(int streak)
