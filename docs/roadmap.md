@@ -1,6 +1,6 @@
 # Roadmap
 
-Feasibility research for three features the user is considering after Section FC.
+Feasibility research for four features the user is considering after Section FC.
 Nothing here is implemented. Written 2026-09-03 against `feature/section-fc` (post
 upstream `dev` merge). Every claim is either backed by a file path plus symbol name
 or explicitly marked unverified.
@@ -743,6 +743,218 @@ strings read via `Localize.Key(...)`).
 
 ---
 
+## Feature 4 — In-game updater from the fork's GitHub Releases
+
+### Goal
+
+The fork ships as a bare `.zip` on GitHub Releases and is invisible to the YARC Launcher
+(`docs/release-build.md` §3). Today updating means: notice a release exists, download,
+unzip over the old folder by hand. The feature is to have the running build notice a
+newer `-sectionfc` release, offer it, and apply it.
+
+### What exists today
+
+**The build already knows its own release tag.** `Assets/Editor/Build/CIBuild.cs:156-165`
+reads `-version` / `-buildVersion` and assigns `PlayerSettings.bundleVersion = version`,
+and `.github/workflows/build-windows.yml` passes the release tag. So in a CI build
+`Application.version` is exactly `v0.15.0-sectionfc.N` — a string that can be compared
+directly against a release tag with no parsing beyond the trailing integer.
+
+**`GlobalVariables.CurrentVersion` is the wrong string for this.**
+`Assets/Script/Persistent/GlobalVariables.cs:48` defaults it to `"v0.15"` and `LoadVersion()`
+(line 195) replaces it with the contents of `Assets/Resources/version.txt`, which
+`CIBuild.WriteVersionFile` writes from `LoadVersionFromGit()` — a git description like
+`HEAD b4213 (51d52d8)`, per `docs/release-build.md`. That is what `DevWatermark.cs` and
+`MainMenu.cs` display. It is useful to *show*, useless to *compare*. **Compare
+`Application.version`; display `CurrentVersion` alongside it.**
+
+**The GitHub API shape.** Our releases are published as **pre-releases** (the tag trigger
+`v*-sectionfc*` always sets prerelease, per `docs/release-build.md` §2), and
+`/releases/latest` excludes pre-releases by definition. So the updater must list
+`https://api.github.com/repos/djrobson5/YARG-fork/releases`, filter to tags matching the
+`-sectionfc` pattern, and take the first (the endpoint returns newest-first by creation
+date). Each release object carries `tag_name`, `prerelease`, `body` (markdown release
+notes), `html_url`, and an `assets` array with `name`, `browser_download_url` and
+**`size`** — the last is the only integrity signal available, since the workflow publishes
+no checksum. Unauthenticated requests are rate-limited to **60/hour per IP** and GitHub
+requires a `User-Agent` header.
+
+**The fetch idiom is already in the repo, twice, against this exact API.**
+`Assets/Script/Song/SongSources.cs:139-142` and `Assets/Script/Song/Genrelizer.cs:177-180`
+both hit `api.github.com/repos/...` for a version probe and then download a `.zip`.
+`SongSources.DownloadSources()` is the template worth copying almost verbatim:
+
+- `using var request = UnityWebRequest.Get(url); request.SetRequestHeader("User-Agent", "YARG"); request.timeout = 2; await request.SendWebRequest();`
+- check `request.result == UnityWebRequest.Result.Success`, parse with `JArray.Parse(request.downloadHandler.text)` (Newtonsoft is already a dependency)
+- download the zip, `await File.WriteAllBytesAsync(zipPath, request.downloadHandler.data)`
+- `ZipFile.ExtractToDirectory(zipPath, folder)` — `System.IO.Compression` is already used
+  here and in `Assets/Script/Settings/Customization/CustomContent.cs`
+- everything wrapped in try/catch logging through `YargLogger.LogException`, failing silently
+
+Two deviations are required. The 2-second timeout is right for a version probe and wrong
+for a ~130 MB asset (`docs/release-build.md` records 129,623,695 bytes for
+`v0.15.0-sectionfc.1`). And `downloadHandler.data` buffers the whole thing in memory —
+use `DownloadHandlerFile` and poll `request.downloadProgress` for a progress readout.
+`GlobalVariables.OfflineMode` (`GlobalVariables.cs:39`, set from a CLI arg) must suppress
+the check entirely, exactly as `SongSources.LoadSources()` does.
+
+**Settings buttons exist and are cheap.** There is no `ButtonSetting` type under
+`Assets/Script/Settings/Types/`; the mechanism is instead a plain `public void` method on
+`SettingsContainer` referenced by `ButtonRowMetadata`. The nearest model is
+`Assets/Script/Settings/SettingsManager.Settings.cs:664` `RemoveRemoteContent()` — an
+`async void` method that shows a dialog and does work — wired at
+`Assets/Script/Settings/SettingsManager.cs:237` as
+`new ButtonRowMetadata(nameof(Settings.RemoveRemoteContent))` inside the
+`FileManagement` tab. A `CheckForUpdates()` button is the same three-line change plus
+localization keys. `Settings.OpenExecutablePath()` (line 659) already proves
+`PathHelper.ExecutablePath` is the install directory (`PathHelper.cs:128`,
+`Directory.GetParent(Application.dataPath)`), so the apply step does not need to
+rediscover it.
+
+**Dialogs and toasts.** `Assets/Script/Menu/Persistent/DialogManager.cs` offers
+`ShowMessage(title, message)` (line 58), `ShowConfirmDeleteDialog(...)` (line 196) — the
+type-to-confirm variant, too heavy here — and `WaitUntilCurrentClosed()` (line 292).
+There is **no progress dialog type** in `Assets/Script/Menu/Common/Dialogs/`; a download
+readout means either a custom dialog prefab, reuse of `LoadingScreen`'s `LoadingContext`,
+or simply a toast plus a message dialog when done.
+`Assets/Script/Menu/Persistent/Toasts/ToastManager.cs` gives
+`ToastInformation(text, onClick)` (line 109) with a **click callback**, which is exactly
+the non-blocking "a new build is available — click to update" affordance.
+`Assets/Script/Menu/Main/MainMenu.cs:134` (`Application.OpenURL("https://github.com/YARC-Official/YARG")`)
+is the existing zero-risk fallback: point the user at the release page and let them do it.
+
+**The apply step is the whole engineering problem.** Windows will not let a running
+process's `.exe` be overwritten, so the update cannot be applied in-process. Sketch:
+
+1. Download the asset to `Path.Combine(PathHelper.PersistentDataPath, "updates")` — a
+   persistent, writable location that is *not* the install dir, so a failed update cannot
+   corrupt the working install.
+2. Verify the downloaded length equals the asset's `size` field before touching anything.
+3. `ZipFile.ExtractToDirectory` into `updates/staging/<tag>`. Sanity-check that
+   `YARG.exe` and `YARG_Data/` are at the staging root (they are at the archive root per
+   `docs/release-build.md` §3).
+4. Write a helper `.cmd` (or a `powershell -ExecutionPolicy Bypass -File` script) that:
+   waits for the current PID to exit; renames the install dir's contents into a sibling
+   `backup/<old-tag>` folder; copies staging over `PathHelper.ExecutablePath`; relaunches
+   `YARG.exe`; deletes itself.
+5. `Application.Quit()`.
+
+Everything from step 4 on is Windows-only and must sit behind `#if UNITY_STANDALONE_WIN`.
+The fork also builds macOS (`.github/workflows/build-release-mac.yml`), and the idiomatic
+gating pattern to mirror is `Assets/Script/Helpers/FileExplorerHelper.cs:171`
+(`#if UNITY_STANDALONE_WIN / #elif UNITY_STANDALONE_OSX / #else` with graceful
+degradation). On any non-Windows build the button should degrade to "open the release
+page".
+
+**Write-permission detection matters more than it looks.** If the user unzipped into
+`C:\Program Files\...`, the copy step fails midway with the old install already renamed —
+the worst possible outcome. Probe writability first (create and delete a temp file in
+`PathHelper.ExecutablePath`) and, if it fails, tell the user to move the install
+somewhere under their profile. **Do not elevate.** A self-updater that requests admin is
+both a support liability and an antivirus red flag, and it is not needed for the intended
+install layout.
+
+### Approaches
+
+| | (a) Manual "Check for updates" button | (b) Automatic check on launch + toast | (c) Both, behind a toggle | (d) External PowerShell script |
+|---|---|---|---|---|
+| Trigger | user presses a button in Settings | one API call during startup, alongside `SongSources.LoadSources()` | (a) always, (b) gated on `ToggleSetting` | user runs `update-yarg.ps1` by hand |
+| UI | button → message dialog with the new tag + notes → confirm → progress → quit/relaunch | `ToastManager.ToastInformation(..., onClick)` opening the same flow | both | none, terminal only |
+| Rate limit | one call per press — never an issue | one call per launch; 60/hr is ample | same | n/a |
+| Failure mode | visible; the user asked, so an error message is expected | must fail **silently** (`SongSources` precedent) or it becomes noise offline | same | user sees the error directly |
+| Surprise factor | none | low, if the toast is dismissible and never auto-applies | none | none |
+| New code | fetch + compare + apply + one button + localization | (a) plus a startup hook | (a)+(b) plus a setting | zero C# |
+| Effort | **S–M** | **+S** on top of (a) | **+S** | **XS** |
+
+(d) is a genuine baseline, not a joke: a ~30-line PowerShell script that queries the API,
+downloads, unzips over the install and relaunches solves the user's actual problem today
+with zero risk to the shipped build, and it is also a working prototype of the helper
+script that (a) needs in step 4. It should be written first regardless of which
+in-game path is chosen.
+
+### Recommended approach
+
+**(a), with (d) written first as a spike, and (b) deferred behind a toggle if wanted later.**
+
+Slices, in the fork's usual rhythm:
+
+1. **`update-yarg.ps1`** in `docs/` or a `tools/` folder. Proves the API filter, the
+   asset naming and the copy-over-and-relaunch dance outside Unity, where iteration is
+   seconds rather than a 40-minute CI build. Ship it in the release notes as the interim
+   answer.
+2. **Check-only.** `UpdateChecker` static class next to `SongSources.cs`: list releases,
+   filter `-sectionfc`, compare `tag_name` to `Application.version`, return a small
+   record. A Settings button that shows a `DialogManager.ShowMessage` with current tag,
+   latest tag and a link. No downloading. Independently useful and completely safe.
+3. **Download + verify + stage.** Progress via toast or `LoadingContext`; size check;
+   staging-layout sanity check. Still no writes to the install dir.
+4. **Apply.** Helper script, backup folder, `Application.Quit()`, relaunch. Gated on
+   `UNITY_STANDALONE_WIN` and on the writability probe.
+5. **Optional automatic check** behind a `ToggleSetting`, plus a "latest build" line near
+   the version watermark.
+
+Per the fork's mockup-then-interview workflow, the Settings entry and the update dialog
+should be mocked up as an artifact from real values before any of slice 2's UI is built.
+
+### Effort
+
+**S** for slices 1–2 (the script plus a check-only button — a few hours).
+**M** for the full end state through slice 4; the apply step and its failure modes are
+most of the cost, and every change to it needs a real packaged build to test, which is a
+25–100 minute CI round trip (`docs/release-build.md` §2).
+
+### Risks
+
+1. **Antivirus.** A game that downloads a zip, writes a `.cmd`/`.ps1` and relaunches
+   itself is textbook dropper behaviour. Defender SmartScreen already flags unsigned
+   YARG builds; this makes it worse. Prefer a plain `.cmd` over PowerShell (no
+   ExecutionPolicy fight, less heuristic weight), and keep the script human-readable.
+2. **Partial or corrupt downloads.** The release publishes no checksum, so `size` is the
+   only check available. A truncated-but-right-size download is unlikely but a corrupt
+   extraction is not — validate the staging tree before overwriting anything, and keep
+   the backup folder until the next successful launch.
+3. **A failed apply leaves no working install.** The backup folder is the mitigation and
+   is not optional. The helper script should restore it on any copy failure.
+4. **TLS on Mono.** The standalone backend is **Mono, not IL2CPP**
+   (`docs/release-build.md` §2), and Mono has a history of certificate-validation
+   problems against `api.github.com`. `SongSources` and `Genrelizer` already do exactly
+   this in shipped builds, so it evidently works — but it is the first thing to check if
+   the request fails only in the packaged build.
+5. **Release notes are markdown.** `body` comes back with `##`, `*` and link syntax.
+   `MessageDialog` is TMP; either strip markdown, render a truncated plain-text summary,
+   or show only the tag and link to `html_url`.
+6. **Rate limiting.** 60/hr unauthenticated per IP. Fine for (a); fine for (b) too, but
+   never retry in a loop, and cache the result for the session.
+7. **No downgrade path.** The score DB is forward-only: sqlite-net's `MigrateTable` adds
+   columns but never removes them (see Feature 1), so an older build opening a newer
+   `scores.db` sees unknown columns. In practice sqlite-net ignores them, but this is not
+   a supported direction — the backup folder is a rollback for the *binaries*, not for
+   the data. Do not offer in-app downgrade.
+8. **Version comparison is string-shaped.** `v0.15.0-sectionfc.10` sorts before
+   `v0.15.0-sectionfc.9` lexically. Parse the trailing integer, or trust GitHub's
+   newest-first ordering and merely check "different from mine".
+9. **The `nightly` data folder is shared with official YARG nightlies** (Feature 1). An
+   updater that only replaces the fork's binaries does not touch that, but it is worth
+   remembering that "update" here never means "migrate data".
+
+### Open questions for the user
+
+1. **Automatic check on launch, or manual button only?** (Recommended: manual first; add
+   automatic behind a toggle once the flow is trusted.)
+2. **Keep a backup of the previous version**, and if so for how long — until the next
+   update, or deleted after one successful launch?
+3. **Filter to `-sectionfc` pre-releases only**, or show any release on the fork?
+4. **Where in Settings?** `FileManagement` (next to `OpenExecutablePath`) is the closest
+   fit; `General` is more discoverable; a `Debug`-tab placement is the most conservative.
+5. **A "latest build" indicator near the version watermark** (`DevWatermark.cs`), or keep
+   the whole feature inside Settings?
+6. **Is the PowerShell script alone enough?** It solves the problem today with zero risk
+   to the shipped build, and the in-game version is convenience on top.
+7. **How much of the release body to show** — full notes, first paragraph, or just the
+   tag plus a link?
+
+---
+
 ## Suggested order
 
 **1. Feature 1 — import scores. Do this first.**
@@ -756,7 +968,19 @@ editor. There is a mild ordering argument too: importing scores *before* impleme
 song deletion means the library is fully populated when the delete path is tested, so
 the "does the cache resurrect it" question gets exercised against a realistic library.
 
-**2. Feature 2 — delete songs. Do this second.**
+**2. Feature 4 — in-game updater. Do this second.**
+
+It is small (S for the useful half), entirely standalone, and it is the only feature that
+makes *every later release* easier to get into the user's hands — right now each new
+build is a manual download-and-unzip, and features 2 and 3 will produce several of them.
+Doing it early compounds; doing it last wastes the compounding. The first slice is a
+standalone PowerShell script with no Unity code at all, so it can be finished and
+delivered before any editor work starts, and the check-only in-game slice after it is
+safe by construction (it reads an API and shows a dialog — it cannot break anything).
+The one genuine cost is that testing the *apply* step requires real packaged builds, so
+that slice should be timed alongside a release that was going to happen anyway.
+
+**3. Feature 2 — delete songs. Do this third.**
 
 Effort is S-to-M and almost every piece already exists (`PopupMenu`, `ConfirmDeleteDialog`,
 `ActualLocation`, `RequestContainerRefresh`). It slices naturally into five small
@@ -765,10 +989,10 @@ established. It is also the one feature with a real chance of destroying user da
 argues for doing it while the surrounding work is small and the review attention is
 undivided — not alongside an XL feature.
 
-The one caveat: it is the *least* interesting of the three. If the user's motivation
-matters more than risk-adjusted ordering, swapping 2 and 3 is defensible.
+The one caveat: it is the *least* interesting of the four. If the user's motivation
+matters more than risk-adjusted ordering, swapping it with the SP path is defensible.
 
-**3. Feature 3 — optimal SP path. Do this last.**
+**4. Feature 3 — optimal SP path. Do this last.**
 
 L bordering on XL, and the only one that needs a policy decision before a line of code
 (the submodule question). It benefits from being last for two concrete reasons. First,
@@ -788,8 +1012,9 @@ last.
 | | Blocks | Blocked by |
 |---|---|---|
 | 1 Import scores | nothing | the user retrieving files from the other machine |
+| 4 In-game updater | nothing | nothing (the apply slice wants a real packaged build to test against) |
 | 2 Delete songs | nothing | nothing |
 | 3 SP path | nothing | a decision on modifying `YARG.Core`; a decision on whether the overlay invalidates scores |
 
-None of the three depend on each other technically. The order above is value-per-effort
+None of the four depend on each other technically. The order above is value-per-effort
 plus risk containment, not a dependency chain.
