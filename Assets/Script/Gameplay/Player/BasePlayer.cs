@@ -217,6 +217,59 @@ namespace YARG.Gameplay.Player
         public abstract void SetStemMuteState(bool muted);
 
         /// <summary>
+        /// This player's live section strip state, or <c>null</c> if this run cannot earn
+        /// section completion credit.
+        /// </summary>
+        public SectionStripState SectionState { get; private set; }
+
+        /// <summary>
+        /// Hands this player the section state built for it at song start.
+        /// </summary>
+        /// <remarks>
+        /// The eligibility gates live in <c>GameManager</c> next to the ones the end-of-song scan
+        /// uses, so there is only one place that decides whether a run counts.
+        /// </remarks>
+        public void SetSectionState(SectionStripState state)
+        {
+            SectionState = state;
+            OnSectionStateSet();
+        }
+
+        /// <summary>
+        /// Called once the section state has been assigned, so that players with somewhere to
+        /// draw it can pass it along.
+        /// </summary>
+        protected virtual void OnSectionStateSet()
+        {
+        }
+
+        /// <summary>
+        /// Tells the section state that a note at the given tick was missed, which drops the
+        /// section containing it for this run.
+        /// </summary>
+        /// <remarks>
+        /// The single place the per-instrument miss paths funnel into, so that adding an
+        /// instrument never means adding another hook.
+        /// </remarks>
+        protected void NotifySectionNoteMissed(uint tick)
+        {
+            SectionState?.OnNoteMissed(tick);
+        }
+
+        /// <summary>
+        /// Tells the section state that <paramref name="count"/> of the notes the scanner counts
+        /// were just hit at the given tick, which advances that section's live progress.
+        /// </summary>
+        /// <remarks>
+        /// The mirror image of <see cref="NotifySectionNoteMissed"/>, and the single place the
+        /// per-instrument hit paths funnel into.
+        /// </remarks>
+        protected void NotifySectionNoteHit(uint tick, int count)
+        {
+            SectionState?.OnNoteHit(tick, count);
+        }
+
+        /// <summary>
         /// Determines which of the chart's sections had every one of their notes hit this run.
         /// </summary>
         /// <returns>

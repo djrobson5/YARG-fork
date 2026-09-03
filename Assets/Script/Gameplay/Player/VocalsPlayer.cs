@@ -203,13 +203,32 @@ namespace YARG.Gameplay.Player
                 {
                     _percussionTrack.HitPercussionNote(note);
                 }
+
+                // Vocals are graded per phrase, and the same phrases the scanner counts are the
+                // ones that move a section's progress here. One phrase is worth one of the
+                // scanner's NotesTotal, so the count is always one.
+                //
+                // IsPercussion is a note inside a percussion phrase rather than a phrase of the
+                // phrase list the scanner walks, so it is excluded here as well.
+                if (!note.IsPercussion && !note.IsPercussionPhrase && !note.IsBigRockEnding)
+                {
+                    NotifySectionNoteHit(note.Tick, 1);
+                }
             };
 
-            engine.OnNoteMissed += (_, _) =>
+            engine.OnNoteMissed += (_, note) =>
             {
                 if (LastCombo >= 2)
                 {
                     GlobalAudioHandler.PlaySoundEffect(SfxSample.NoteMiss);
+                }
+
+                // Vocals are graded per phrase, and the same phrases the scanner counts are the
+                // ones that can drop a section here. IsPercussion is a note inside a percussion
+                // phrase rather than one of the phrases the scanner walks, so it is excluded too.
+                if (!note.IsPercussion && !note.IsPercussionPhrase && !note.IsBigRockEnding)
+                {
+                    NotifySectionNoteMissed(note.Tick);
                 }
 
                 LastCombo = Combo;

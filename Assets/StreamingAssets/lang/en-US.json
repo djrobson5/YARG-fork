@@ -601,6 +601,10 @@
             "StarPowerReady": "STAR POWER READY",
             "StrongFinish": "STRONG FINISH"
         },
+        "SectionStrip": {
+            "Dropped": "DROPPED",
+            "Preview": "SECTION"
+        },
         "Solo": {
             "Performance": {
                 "Awesome": "AWESOME\nSOLO!",

@@ -135,6 +135,11 @@ namespace YARG.Gameplay.Player
             TrackView.ShowPlayerName(player);
         }
 
+        protected override void OnSectionStateSet()
+        {
+            TrackView.SetSectionState(SectionState);
+        }
+
         protected override void ResetVisuals()
         {
             // "Muting a stem" isn't technically a visual,
@@ -1017,6 +1022,23 @@ namespace YARG.Gameplay.Player
                 _autoCalibrator.RecordAccuracy(note.Time);
             }
 
+            // Big rock ending notes aren't part of a section's note total, so hitting one can't
+            // move its progress either.
+            //
+            // The count is always one, for the same reason EngineStats.NotesHit only ever goes up
+            // by one: the engine dispatches exactly one hit per note it counts. Instruments that
+            // treat a chord as one note hit the whole chord at once, and the ones that don't hit
+            // each sub-note separately, so either way one hit is worth one of the scanner's
+            // NotesTotal. Engine.GetNumberOfNotes is deliberately not used here even though it is
+            // what builds those totals: it answers a different question - how many notes a note
+            // object stands for - and for a chord parent under separate-chord semantics (drums,
+            // keys) it returns the size of the whole chord, which the sub-notes' own hits would
+            // then count a second time and push the section past 100%.
+            if (!note.IsBigRockEnding)
+            {
+                NotifySectionNoteHit(note.Tick, 1);
+            }
+
             if (!GameManager.IsSeekingReplay)
             {
                 SetStemMuteState(false);
@@ -1052,6 +1074,13 @@ namespace YARG.Gameplay.Player
             {
                 ComboMeter.SetFullCombo(false);
                 IsFc = false;
+            }
+
+            // Big rock ending notes aren't part of a section's note total, so missing one can't
+            // drop the section either
+            if (!note.IsBigRockEnding)
+            {
+                NotifySectionNoteMissed(note.Tick);
             }
 
             if (!GameManager.IsSeekingReplay)

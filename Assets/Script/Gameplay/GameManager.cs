@@ -809,6 +809,64 @@ namespace YARG.Gameplay
         }
 
         /// <summary>
+        /// Builds the live section strip state of every player that is allowed to earn credit,
+        /// and hands it to them.
+        /// </summary>
+        /// <remarks>
+        /// The gates are the same ones <see cref="ScanSectionCompletions"/> applies at the end of
+        /// the song, so a run that will never be recorded never gets a strip promising otherwise.
+        /// <para>
+        /// Called before the song starts, while nothing has been hit, so the scan's hit counts are
+        /// all zero and only its note totals carry information: which sections have notes for this
+        /// player, and therefore which ones get a block. Reusing the scanner for that keeps
+        /// "applicable" defined in exactly one place.
+        /// </para>
+        /// </remarks>
+        private void InitializeSectionStripStates()
+        {
+            if (IsPractice || GlobalVariables.State.PlayingWithReplay ||
+                !ScoreContainer.IsBandScoreValid(SongSpeed))
+            {
+                return;
+            }
+
+            var sections = Chart.Sections;
+            if (sections.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var player in _players)
+            {
+                // Skip bots, replays, and anyone that's obviously cheating.
+                if (player.Player.IsReplay || !ScoreContainer.IsSoloScoreValid(SongSpeed, player.Player))
+                {
+                    continue;
+                }
+
+                // Only highway players have a TrackView to draw the strip on. Vocals keep the
+                // miss hook (see BasePlayer.NotifySectionNoteMissed) for a later vocals surface,
+                // but building a state they cannot show is dead work.
+                if (player is not TrackPlayer)
+                {
+                    continue;
+                }
+
+                var results = player.ScanSectionCompletion(sections);
+                if (results is null)
+                {
+                    continue;
+                }
+
+                var profile = player.Player.Profile;
+                var completedEarlier = ScoreContainer.GetCompletedSections(Song.Hash, profile.Id,
+                    profile.CurrentInstrument, profile.CurrentDifficulty, profile.HarmonyIndex);
+
+                player.SetSectionState(SectionStripState.Create(sections, results, completedEarlier));
+            }
+        }
+
+        /// <summary>
         /// Scans the section completion of every player that is allowed to earn credit for it.
         /// </summary>
         /// <remarks>
@@ -1189,6 +1247,10 @@ namespace YARG.Gameplay
                 }
 
                 player.Player.IsScoreValid = false;
+
+                // Nothing from here on can be recorded, so the strip would be promising credit
+                // that this run can no longer earn. Dropping the state hides it.
+                player.SetSectionState(null);
             }
 
             if (invalidated && !string.IsNullOrEmpty(toastKey))

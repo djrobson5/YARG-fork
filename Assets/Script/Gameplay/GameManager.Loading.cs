@@ -200,6 +200,9 @@ namespace YARG.Gameplay
 
             // Spawn players
             CreatePlayers();
+
+            // Must be after the players exist, since it reads their note tracks
+            InitializeSectionStripStates();
             YargLogger.LogFormatDebug("Calculating star cutoffs for {0} players", _players.Count);
             EngineManager.StarScoreThresholds = EngineManager.GetStarScoreCutoffs(_players.ConvertAll(p => p.BaseEngine.StarScoreThresholds));
             YargLogger.LogFormatDebug("Star score thresholds: {0}", string.Join(", ", EngineManager.StarScoreThresholds));

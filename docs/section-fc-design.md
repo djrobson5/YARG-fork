@@ -90,3 +90,20 @@ Mockup: https://claude.ai/code/artifact/8a15aac4-f3d8-41fe-90a1-946c909e8755 (va
 | Multiplayer rows | With two or more human players the row shows the band score and no pill; no fraction is shown there. |
 | Missing summary row | The fraction disappears (no `·` segment at all) when the difficulty of the player's best score, or their current harmony part, has no summary row — a consequence of following the high-score difficulty rather than the profile's. The pill still shows the percent. |
 | Pre-existing scores | Scores recorded before this feature shipped have no summary row, so they show no fraction until the player finishes another valid run on that chart. |
+
+## Slice 4 decisions (locked 2026-09-02)
+
+Mockup: https://claude.ai/code/artifact/9664aa50-7347-42ca-a66b-39a08a2d451a (variant 2 chosen).
+
+| Question | Decision |
+|---|---|
+| Marker | Per-player mini-strip of all applicable sections above the highway's far end, one block per section, the current section enlarged with its display name. Equal-width blocks. |
+| States | Perfected earlier (dim, quiet, no label), Needed (missing tone), Clean so far this run (violet), Dropped this run (red #E05265, label DROPPED). A dropped section is one where any applicable note was missed this run. |
+| Current-section label | The section name, then a live percent of the section's notes hit so far while it is Needed or Clean — floored, so it only reads 100% once the last note is hit. The denominator is the scan's `NotesTotal` for that section, so it carries the engine's chord semantics. A miss replaces the percent with DROPPED for the rest of the run; a section perfected earlier shows its name alone. |
+| Current-section detection | Advancing cursor on `SongTime >= section.TimeEnd`, same pattern as `PracticeHud`. Sections not applicable to the player's instrument are skipped in the strip but the cursor still walks the full list. |
+| Live drop detection | Hook the player's note-missed path (`TrackPlayer.OnNoteMissed`; vocals phrase miss) and map the note tick to a section index. |
+| Pre-run state | Loaded at song start from `ScoreContainer.GetCompletedSections` for the player's song/profile/instrument/difficulty/harmony. Ineligible runs (bot, replay, practice, playing-with-replay, invalid speed/modifiers) hide the strip. |
+| Visibility | On by default. Draggable in single-player HUD edit mode under element name `sectionStrip`, following `DraggableHudElement`. Slice 5 adds the off switch. |
+| Motion | One 150 ms ease when the current block changes; respect any existing reduced-motion or HUD animation settings. No other animation. |
+| Placement | Its own container in `TrackView.prefab`, pinned above `Top Elements` so it never collides with the solo box or streak text. Scales with `ScaleContainer`. |
+| Vocals | No strip in this slice; state is not built for vocals players. The miss hook exists for a later vocals HUD surface. |

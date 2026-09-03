@@ -144,6 +144,9 @@ namespace YARG.Scores
             return BuildResults(totals, hits);
         }
 
+        /// <summary>
+        /// Walks a section cursor forward to the section containing the given tick.
+        /// </summary>
         /// <remarks>
         /// Sections are half-open ranges of <c>[Tick, TickEnd)</c>, and both the section list and
         /// the note list are tick-sorted, so a single advancing cursor is enough.
@@ -157,8 +160,12 @@ namespace YARG.Scores
         /// </para>
         /// Notes before the first section fall into index 0, matching practice mode's
         /// <c>FindSectionAtTime</c> fallback; notes past the last section stay in the last one.
+        /// <para>
+        /// Public so that live consumers (the in-game section strip) map ticks onto sections the
+        /// exact same way the post-song scan does, rather than growing a second convention.
+        /// </para>
         /// </remarks>
-        private static int AdvanceSectionIndex(IReadOnlyList<Section> sections, int sectionIndex, uint tick)
+        public static int AdvanceSectionIndex(IReadOnlyList<Section> sections, int sectionIndex, uint tick)
         {
             while (sectionIndex < sections.Count - 1 && tick >= sections[sectionIndex].TickEnd)
             {
