@@ -17,7 +17,7 @@ When in doubt about which model fits, prefer the cheaper one and escalate on fai
 
 - Upstream: `https://github.com/YARC-Official/YARG.git`, cloned recursively. The `YARG.Core` engine submodule lives at the repo root (`YARG.Core/`), not under `Assets/Plugins`.
 - Unity project. Check `ProjectSettings/ProjectVersion.txt` for the required editor version before building.
-- Feature spec and locked design decisions: `docs/section-fc-design.md`. Session handoff with current state and next steps: `docs/section-fc-handoff.md`. Read both before touching section-completion code.
+- Feature spec and locked design decisions: `docs/section-fc-design.md`. Session handoff with current state and next steps: `docs/section-fc-handoff.md`. Running list of open items: `docs/open-items.md`. Read all three before touching section-completion code.
 
 ## Building headlessly
 
