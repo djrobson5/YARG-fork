@@ -76,6 +76,17 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      # HIDrogen is vendored into Packages/ rather than pulled from openupm, because the
+      # registry copy's SharpGameInput.v0.dll is import-restricted to Windows *editors* and
+      # the HIDrogen assembly therefore fails to compile in the Linux editor container.
+      # .gitignore has a negation for this path; if that ever regresses, fail fast here
+      # instead of 30 minutes into a Unity compile.
+      - name: "[Setup] Check vendored HIDrogen is present"
+        run: |
+          test -f Packages/com.thenathannator.hidrogen/package.json
+          test -f Packages/com.thenathannator.hidrogen/HIDrogen/Plugins/SharpGameInput.v0.dll
+          grep -q "OS: AnyOS" Packages/com.thenathannator.hidrogen/HIDrogen/Plugins/SharpGameInput.v0.dll.meta
+
       ###########################
       #     NuGet packages      #
       ###########################

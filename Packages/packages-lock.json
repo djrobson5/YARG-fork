@@ -66,13 +66,12 @@
       "url": "https://package.openupm.com"
     },
     "com.thenathannator.hidrogen": {
-      "version": "0.5.3",
+      "version": "file:com.thenathannator.hidrogen",
       "depth": 0,
-      "source": "registry",
+      "source": "embedded",
       "dependencies": {
         "com.unity.inputsystem": "1.4.4"
-      },
-      "url": "https://package.openupm.com"
+      }
     },
     "com.thenathannator.plasticband": {
       "version": "0.9.2",

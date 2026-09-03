@@ -215,6 +215,89 @@ and must succeed. If it fails (network, or a `dotnet tool install` conflict beca
 tool is already present), the Unity step will fail in a confusing way. Check that step's
 log first, and confirm `nugetforunity restore "$GITHUB_WORKSPACE"` printed a package list.
 
+### `CS0246: SharpGameInput could not be found` in HIDrogen
+
+Symptom: the builder step dies during asset import (before `[CIBuild]` ever logs) with ~60
+`CS0246` errors, all in
+`Library/PackageCache/com.thenathannator.hidrogen@*/HIDrogen/Backends/GameInput/GameInputBackend.cs`
+and `GameInputBackendDevice.cs` — `IGameInput`, `IGameInputDevice`, `GameInputDeviceInfo`,
+`GameInputCallbackToken`, `LightIGameInputDevice`, `GameInputDeviceStatus` and friends. The
+failing command is `Csc Library/Bee/artifacts/*.dag/HIDrogen.dll`.
+
+This is a **Linux-editor-building-a-Windows-player** problem and it does not reproduce in the
+Windows editor.
+
+- `GameInputBackend.cs` / `GameInputBackendDevice.cs` are wrapped in `#if UNITY_STANDALONE_WIN`.
+  Unity defines that symbol from the *active build target*, so it is on in the editor assemblies
+  too whenever the project is switched to StandaloneWindows64 — including in the Linux container.
+- The types come from the managed `HIDrogen/Plugins/SharpGameInput.v0.dll`, which the package's
+  asmdef pulls in via `overrideReferences` + `precompiledReferences`. Upstream, that DLL's `.meta`
+  has its **Editor** platform entry pinned to `OS: Windows`:
+
+  ```yaml
+  - first:
+      Editor: Editor
+    second:
+      enabled: 1
+      settings:
+        CPU: x86_64
+        OS: Windows
+  ```
+
+  So on a Linux editor the DLL is not referenced by the editor compile, while the sources that
+  need it are still compiled. Windows editor: referenced, compiles, nobody notices.
+
+HIDrogen has no define to turn the GameInput backend off (the README documents only
+`HIDROGEN_VERBOSE_LOGGING` and `HIDROGEN_FORCE_REPORT_IDS`), and `CIBuild`'s
+`extraScriptingDefines` would not help anyway — it applies to the *player* compile, and this
+failure happens earlier, in the editor compile.
+
+**Fix in this fork: HIDrogen is vendored as an embedded package.**
+
+- `Packages/com.thenathannator.hidrogen/` is a verbatim copy of the openupm 0.5.3 package
+  (`Library/PackageCache/com.thenathannator.hidrogen@fdda5cf073c6`), with exactly one edit:
+  `HIDrogen/Plugins/SharpGameInput.v0.dll.meta`'s Editor entry is `OS: AnyOS` / `CPU: AnyCPU`
+  instead of `OS: Windows` / `CPU: x86_64`.
+- `.gitignore` ignores `Packages/com.thenathannator.hidrogen/` upstream (it is the "manual
+  import" escape hatch for users who fight the package manager), so the fork adds a `!` negation
+  right after it. Without that the vendored copy never reaches CI.
+- `Packages/packages-lock.json` marks the package `"source": "embedded"`. The
+  `Packages/manifest.json` entry is deliberately left at `0.5.3` — embedded packages take
+  precedence over registry ones, so it is inert, but it keeps a working fallback if the folder is
+  ever deleted.
+- `.github/workflows/build-windows.yml` has a `[Setup] Check vendored HIDrogen is present` step
+  that fails in seconds if the folder or the `OS: AnyOS` line goes missing.
+
+Loosening the *editor* import setting does not make the Linux editor try to P/Invoke into
+GameInput: `HIDrogen/Initialization.cs` already refuses to start any backend unless the editor
+host OS matches the build target
+(`#if !UNITY_EDITOR || (UNITY_STANDALONE_WIN && UNITY_EDITOR_WIN) || ...`). The DLL is merely
+loaded as managed metadata so the compile can resolve types. The shipped Windows player is
+unaffected — the DLL is still enabled for `Standalone: Win64`, so **Xbox One / GameInput
+controller support is fully preserved**.
+
+Alternatives that were rejected:
+
+- *Disable the GameInput backend for CI.* No supported define exists, the failure predates
+  `extraScriptingDefines`, and it would cost raw Xbox One controller support in the shipped
+  build — a real regression for a rhythm game.
+- *Move the job to a Windows runner.* game-ci's Windows entrypoint
+  (`dist/platforms/windows/activate.ps1`) only implements **serial** activation and floating
+  license servers; there is no `UNITY_LICENSE` (`.ulf`) path like the Ubuntu one has. A Personal
+  license has no serial, so `unity-builder` on `windows-2022` would fail with "no license
+  activation strategy matched". Doing it anyway would mean installing Unity by hand on the runner
+  and dropping the `.ulf` into `C:\ProgramData\Unity\` — a much larger, unsupported workflow, plus
+  a multi-GB Windows image/editor install per run.
+- *Patch the `.meta` in `Library/PackageCache/`.* Not persistent; the cache is regenerated from
+  the registry tarball on every clean checkout.
+
+Upstream YARC does not hit this: their CI builds each platform on that platform's own runner, so
+they never cross-compile a Windows player from a Linux editor.
+
+**When updating HIDrogen**, re-copy the new version over `Packages/com.thenathannator.hidrogen/`
+and re-apply the one `.meta` edit — bumping the `manifest.json` version alone does nothing while
+the embedded copy exists.
+
 ### `MissingScriptBuildValidator` aborts the build
 
 Symptom: `BuildFailedException: Build aborted: Found N missing script(s) on '<object>' in

@@ -120,6 +120,12 @@ Assets/YargInput.cs
 Packages/com.thenathannator.hidrogen/
 Packages/com.thenathannator.plasticband/
 
+# Fork exception: HIDrogen is vendored on purpose (see docs/release-build.md).
+# The registry copy's SharpGameInput.v0.dll is restricted to Windows *editors*, which
+# breaks the Linux-container CI build of the Windows player. The embedded copy relaxes
+# that one import setting, so it has to be tracked.
+!Packages/com.thenathannator.hidrogen/
+
 # Other
 Assets/Nyx
 Assets/Settings/TestPlayInfo.asset
