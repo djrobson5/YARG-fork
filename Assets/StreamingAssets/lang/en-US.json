@@ -1395,6 +1395,10 @@
                 "Name": "Show Hit Window",
                 "Description": "If enabled, a box will be shown on your track that represents the \"window\" in which notes can be hit."
             },
+            "ShowSectionStrip": {
+                "Name": "Show Section Strip",
+                "Description": "Shows a strip of blocks above your track, one per section, marking which sections you have already perfected and how the current one is going. Has no effect when \"Track Section Completion\" is off."
+            },
             "SongTimeOnScoreBox": {
                 "Name": "Song Time On Score Box",
                 "Description": "Change the song time displayed above the score box. In the examples provided, the song is 5 minutes and 30 seconds long, and you are 1 minute and 10 seconds into the song.",
@@ -1428,6 +1432,10 @@
             "SongBackgroundOpacity": {
                 "Name": "Song Background Opacity",
                 "Description": "Adjusts the opacity of background during gameplay."
+            },
+            "TrackSectionCompletion": {
+                "Name": "Track Section Completion",
+                "Description": "Tracks which chart sections you have perfected across runs, and shows the progress on the Score Screen, in the Music Library, and on your track. Turning this off hides all of it and stops recording, but keeps the progress you have already earned."
             },
             "UseChipmunkSpeed": {
                 "Name": "Chipmunk Speed",

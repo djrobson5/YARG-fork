@@ -224,6 +224,21 @@ namespace YARG.Settings
 
             public ToggleSetting ShowPercentDecimals { get; } = new(false);
 
+            /// <summary>
+            /// Master switch for the Section FC feature.
+            /// </summary>
+            /// <remarks>
+            /// When off, no per-section scan runs at the end of a song, nothing is written to the
+            /// section tables, and none of the surfaces show: no in-game strip, no score card row,
+            /// strip or tag, and no fraction in the Music Library pill. Rows already in the
+            /// database are left alone, so turning it back on restores everything that was earned.
+            /// <para>
+            /// The callback drops the cached section progress and forces the Music Library to
+            /// rebuild its views, so a stale fraction cannot survive the toggle.
+            /// </para>
+            /// </remarks>
+            public ToggleSetting TrackSectionCompletion { get; } = new(true, TrackSectionCompletionCallback);
+
             #endregion
 
             #region Sound
@@ -439,6 +454,17 @@ namespace YARG.Settings
             public ToggleSetting GraphicalProgressOnScoreBox { get; } = new(true);
 
             public ToggleSetting KeepSongInfoVisible { get; } = new(false);
+
+            /// <summary>
+            /// Shows the per-player section strip above the far end of the highway.
+            /// </summary>
+            /// <remarks>
+            /// Affects the in-game HUD only; section completion is still scanned, recorded, and
+            /// shown on the score screen and in the Music Library. A no-op when
+            /// <see cref="TrackSectionCompletion"/> is off, since nothing is tracked then.
+            /// Read at song start, so flipping it mid-song does nothing until the next run.
+            /// </remarks>
+            public ToggleSetting ShowSectionStrip { get; } = new(true);
 
             #endregion
 
@@ -694,6 +720,23 @@ namespace YARG.Settings
                 {
                     MusicLibraryMenu.SetReload(MusicLibraryReloadState.Partial);
                 }
+            }
+
+            /// <summary>
+            /// Clears anything that could keep showing section progress after the feature is
+            /// turned off (or keep hiding it after it is turned back on).
+            /// </summary>
+            /// <remarks>
+            /// The fraction in the Music Library pill is read once per <c>SongViewType</c> and
+            /// then held on the view, so dropping <c>ScoreContainer</c>'s cache alone is not
+            /// enough; the views themselves have to be rebuilt. Settings are only reachable from
+            /// the main menu and the pause menu, so the library is always re-enabled afterwards
+            /// and picks the queued reload up in <c>OnEnable</c>.
+            /// </remarks>
+            private static void TrackSectionCompletionCallback(bool value)
+            {
+                ScoreContainer.InvalidateSectionProgressCache();
+                MusicLibraryMenu.SetReload(MusicLibraryReloadState.Partial);
             }
 
             private static void DataStreamEnableCallback(bool value)

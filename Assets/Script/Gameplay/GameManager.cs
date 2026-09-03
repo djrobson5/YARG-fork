@@ -824,6 +824,14 @@ namespace YARG.Gameplay
         /// </remarks>
         private void InitializeSectionStripStates()
         {
+            // Slice 5 gates: the master switch turns the whole feature off, and ShowSectionStrip
+            // hides just this surface while everything else keeps working
+            if (!SettingsManager.Settings.TrackSectionCompletion.Value ||
+                !SettingsManager.Settings.ShowSectionStrip.Value)
+            {
+                return;
+            }
+
             if (IsPractice || GlobalVariables.State.PlayingWithReplay ||
                 !ScoreContainer.IsBandScoreValid(SongSpeed))
             {
@@ -876,6 +884,14 @@ namespace YARG.Gameplay
         private Dictionary<BasePlayer, PendingSectionCompletion> ScanSectionCompletions()
         {
             var completions = new Dictionary<BasePlayer, PendingSectionCompletion>();
+
+            // Slice 5 master switch. An empty result means nothing is written to the section
+            // tables and every score card gets a null Sections, which hides the row, the strip
+            // and the tag. Existing rows are left in the database untouched.
+            if (!SettingsManager.Settings.TrackSectionCompletion.Value)
+            {
+                return completions;
+            }
 
             // Same gate as the band score; an invalid band score means nothing gets recorded
             if (!ScoreContainer.IsBandScoreValid(SongSpeed))

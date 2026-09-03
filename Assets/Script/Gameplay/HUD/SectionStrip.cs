@@ -4,6 +4,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 using YARG.Localization;
+using YARG.Settings;
 
 namespace YARG.Gameplay.HUD
 {
@@ -51,10 +52,11 @@ namespace YARG.Gameplay.HUD
         private float _blockHeight = 12f;
         [SerializeField]
         private float _currentBlockHeight = 26f;
-        // No setting in SettingsManager.Settings governs HUD animation or reduced motion.
-        // EnableHighwayAnimation is scoped to the highway camera and strikeline, and
-        // ReduceFlashingLights to venue lighting, so neither is the right switch for this.
-        // Slice 5 adds the strip's own settings; a motion switch belongs there if it is wanted.
+        // The strip itself is gated by the ShowSectionStrip and TrackSectionCompletion
+        // settings. EnableHighwayAnimation is scoped to the highway camera and strikeline,
+        // and ReduceFlashingLights to venue lighting, so neither is the right switch for
+        // motion here; no motion switch exists. The ease duration is the serialized field
+        // below.
         [SerializeField]
         private float _easeDuration = 0.15f;
 
@@ -412,6 +414,15 @@ namespace YARG.Gameplay.HUD
             if (_state != null)
             {
                 // The real strip is already showing; nothing to preview
+                return;
+            }
+
+            // A strip that is switched off must not reappear as a dummy while the HUD is being
+            // dragged, or the element would look available when it can never show in a run
+            if (!SettingsManager.Settings.TrackSectionCompletion.Value ||
+                !SettingsManager.Settings.ShowSectionStrip.Value)
+            {
+                SetVisible(false);
                 return;
             }
 

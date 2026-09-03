@@ -1,6 +1,6 @@
 # Section FC handoff
 
-Written 2026-09-02 at the end of the first session. Read this, then `docs/section-fc-design.md`, before doing anything.
+Written 2026-09-02 at the end of the first session, updated 2026-09-03. Read this, then `docs/section-fc-design.md`, before doing anything.
 
 ## State
 
@@ -16,20 +16,27 @@ Branch `feature/section-fc`, nothing pushed. Working tree clean. Commits, oldest
 | `a5f02838` | Slice 3: fraction in the library pill, `SectionProgress` summary table, cache |
 | `7b7459b5` | Slice 4: in-game section strip with live percent, draggable, per-highway width |
 | `e09f9924` | Slice 4 follow-up: binary-search note mapping, width stabilization |
+| `16027f49` | Docs: dotnet build compile check |
+| `74a8af3a` | Section FC slice 5: settings toggles |
 
-All four slices were verified by the user in the editor: solo run, two-player run, bot run with "Save Scores with Bots" on.
+All five slices were verified by the user in the editor: solo run, two-player run, bot run with "Save Scores with Bots" on.
 
 ## What remains
 
-**Slice 5, settings toggle.** No mockup needed. Proposed scope, not yet agreed with the user:
+Slice 5 is done. It shipped two settings:
 
-1. Master toggle `TrackSectionCompletion` (default on): when off, no scan, no rows, no UI anywhere.
-2. `ShowSectionStrip` (default on): hides the in-game strip only.
-3. Optionally expose the strip ease duration or a "no animation" toggle; no existing HUD motion setting exists.
+- `TrackSectionCompletion` (Song Manager > Music Library, master switch): off means no scan, no rows, no UI anywhere; existing rows are kept.
+- `ShowSectionStrip` (Graphics > HUD): hides the in-game strip only.
 
-Where: `SettingContainer` in `Assets/Script/Settings/SettingsManager.Settings.cs` near `HighScoreInfo`, registered in `DisplayedSettingsTabs` in `SettingsManager.cs` under the Music Library header (or Gameplay for the strip), plus `Settings.<Name>.Name` and `.Description` strings in `Assets/StreamingAssets/lang/en-US.json`. Read the toggle via `SettingsManager.Settings.<Name>.Value` at the gate sites: `GameManager.ScanSectionCompletions`, `GameManager.InitializeSectionStripStates`, and `SongViewType.FetchSectionProgress`.
+Both are read at song start. The master toggle's callback invalidates `ScoreContainer`'s section cache and calls `MusicLibraryMenu.SetReload(Partial)`.
 
-**Optional follow-ups the user has not requested:** a vocals HUD surface (the miss and hit hooks already exist on `VocalsPlayer`), a sidebar per-section checklist (deferred in the design doc), and letting section credit ignore bots (a change to the slice 1 eligibility rule; today it mirrors the high-score rule).
+**Known low-severity items left open:**
+
+a. With the strip off, its empty root stays registered with `DraggableHudManager`, so HUD edit mode can select an invisible outline above the track.
+b. Toggles flipped from the pause menu apply on the next song only, and turning the master off mid-song leaves the strip drawing though no credit is recorded.
+c. `SetReload(Partial)` can downgrade a pending Full reload if flipped right after a rescan, same as the existing `AllowDuplicateSongs` behavior.
+
+**Optional follow-ups the user has not requested:** a vocals HUD surface (the miss and hit hooks already exist on `VocalsPlayer`), a sidebar per-section checklist (deferred in the design doc), letting section credit ignore bots (a change to the slice 1 eligibility rule; today it mirrors the high-score rule), and the ease-duration/no-animation setting.
 
 ## Workflow that worked
 

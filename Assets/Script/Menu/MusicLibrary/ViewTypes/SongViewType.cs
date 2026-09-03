@@ -6,6 +6,7 @@ using YARG.Core.Song;
 using YARG.Player;
 using YARG.Playlists;
 using YARG.Scores;
+using YARG.Settings;
 using YARG.Song;
 
 namespace YARG.Menu.MusicLibrary
@@ -233,6 +234,14 @@ namespace YARG.Menu.MusicLibrary
         private static SectionProgress? FetchSectionProgress(SongEntry songEntry,
             PlayerScoreRecord playerScoreRecord)
         {
+            // Slice 5 master switch. Progress earned earlier stays in the database but is not
+            // shown, so the feature really is invisible everywhere while it is off. Toggling it
+            // queues a partial library reload, so no already-fetched view keeps a stale fraction.
+            if (!SettingsManager.Settings.TrackSectionCompletion.Value)
+            {
+                return null;
+            }
+
             if (playerScoreRecord is null)
             {
                 return null;
