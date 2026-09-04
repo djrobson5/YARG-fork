@@ -43,6 +43,9 @@ ExportedObj/
 .consulo/
 *.csproj
 !/Native/YargAudio/tests/GainIntegration/GainIntegration.csproj
+# The Star Power path verification harness (docs/sp-path-design.md §3) is fork-owned
+# and hand-written, not Unity-generated, so it has to survive the blanket *.csproj rule.
+!tools/SpPathTests/*.csproj
 /Native/YargAudio/tests/GainIntegration/[Bb]in/
 /Native/YargAudio/tests/GainIntegration/[Oo]bj/
 /scripts/NativeBuild/[Bb]in/

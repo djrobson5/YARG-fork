@@ -30,6 +30,15 @@ namespace YARG.Gameplay.SpPath
         /// <summary>Quarter tick at which the points are committed.</summary>
         public readonly uint Tick;
 
+        /// <summary>
+        /// <see cref="Tick"/> converted to measure-tick space with
+        /// <c>SyncTrack.QuarterTickToMeasureTick</c> (<c>SyncTrack.cs:325</c>). Star Power lives
+        /// entirely in this space — the drain is 1:1 with measure ticks
+        /// (<c>BaseEngine.Generic.cs:1073-1076</c>) — so this is the coordinate the window model
+        /// compares against.
+        /// </summary>
+        public readonly uint MeasureTick;
+
         /// <summary>Un-multiplied point value.</summary>
         public readonly int Points;
 
@@ -42,10 +51,12 @@ namespace YARG.Gameplay.SpPath
         /// <summary>What produced this award. Notes sort before sustain bursts at the same tick.</summary>
         public readonly ScoreEventKind Kind;
 
-        public ScoreEvent(int noteIndex, uint tick, int points, int multiplier, ScoreEventKind kind)
+        public ScoreEvent(int noteIndex, uint tick, uint measureTick, int points, int multiplier,
+            ScoreEventKind kind)
         {
             NoteIndex = noteIndex;
             Tick = tick;
+            MeasureTick = measureTick;
             Points = points;
             Multiplier = multiplier;
             Kind = kind;

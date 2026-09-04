@@ -25,8 +25,8 @@ Line numbers are against the tree at `feature/section-fc` @ `2b4a11c5`.
 | SP model | **Phrases only.** No whammy gain. Full combo assumed. No squeezes. Activation exactly on a note. |
 | Multiplayer | **Single player only.** Hidden whenever the run has 2+ human players, with the pause menu / setting text explaining why (band SP is coupled across players — `YARG.Core/YARG.Core/Engine/EngineManager.Band.cs:17`, `AwardUnisonBonus` at `BaseEngine.cs:637`). |
 
-Undecided, deferred to a mockup interview before slice 4: marker style, visibility
-window, score-gain labels, coexistence with the section strip, settings placement.
+The rendering and UI questions that were deferred to a mockup interview were settled on
+2026-09-03 and are locked in "Locked UI decisions" below.
 
 ---
 
@@ -160,8 +160,8 @@ distinct child tick (`Guitar/GuitarEngine.cs:424-439`).
 
 - **Release:** when the amount reaches 0 (`BaseEngine.Generic.cs:1029-1032`), at the update queued for `StarPowerEndTime` (`:286-290`).
 - **Activation:** `if (IsStarPowerInputActive && CanStarPowerActivate) ActivateStarPower();` (`BaseEngine.Generic.cs:1034-1037`), with `CanStarPowerActivate => StarPowerTickAmount >= TicksPerHalfSpBar` (`BaseEngine.cs:44`). **Half a bar minimum.**
-- **Ordering:** `RunEngineLoop` runs `UpdateStarPower()` *before* `UpdateHitLogic()` (`BaseEngine.cs:400-405`). So a note hit in the same engine loop as the activation **is** doubled. The optimizer's contract is therefore "activate on note N" ⇒ *N is the first note scored under SP*.
-- **Boundary rule (to be confirmed by the harness):** a note whose scoring tick maps to a measure tick `>= E` is **not** doubled, because the release runs first in the loop at `StarPowerEndTime`. Marked **unverified** until the harness pins it; a half-open `[activation, E)` interval is the model's assumption.
+- **Ordering:** `RunEngineLoop` runs `UpdateStarPower()` *before* `UpdateHitLogic()` (`BaseEngine.cs:400-405`). So a note hit in the same engine loop as the activation **is** doubled. The optimizer's contract is therefore "activate on note N" ⇒ *N is the first note scored under SP*, and the activation runs at `CurrentTick == Notes[N].Tick`. Confirmed in slice 3; see the "Settled activation semantics" table below for the harness detail this forced.
+- **Boundary rule — confirmed in slice 3.** A note whose scoring tick maps to a measure tick `>= E` is **not** doubled, because the release runs first in the loop at `StarPowerEndTime`. The window is the half-open measure-tick interval `[m, E)`, and both directions are asserted: every doubled award is inside it, and every award inside it is doubled (`SpSemanticsTests.ActivateAtNoteN_DoublesFromNInclusiveToEExclusive`).
 
 ### 1.6 Things that are constants under full combo, and are therefore ignored
 
@@ -223,8 +223,20 @@ and only the ~4 SP windows per bar-fill matter; a straightforward bound is
 only considering activations at notes where the doubled-interval boundary changes.
 
 Typical Expert 5-fret chart: 1,000–2,500 notes, 15–40 SP phrases. States: ≤ 12,500.
-Transitions: ≤ ~10 per state after candidate pruning. **Well under a millisecond**, fully
-hidden behind the loading screen.
+Transitions: ≤ ~10 per state after candidate pruning. Measured at **~2 ms** in a Debug build with
+no pruning at all (see slice 3's progress note), fully hidden behind the loading screen.
+
+**Tie-break policy: the earliest activation wins.** Two activation sets can score identically —
+the doubled interval is worth the same in two places, and on a chart with even note density that
+happens often. A human has to *hit* the marker, so among optimal paths the earliest activation is
+the safest one: it leaves more chart behind it to absorb a late tap, and a marker already passed is
+worse than one not yet reached. The DP implements it by taking the "activate here" branch on `>=`
+rather than `>` (`SpPathOptimizer.cs`), which cannot introduce a pointless zero-gain window because
+the activation note is itself inside `[m, E)` and so always pays at least `POINTS_PER_NOTE`. It
+stays deterministic either way: the scan over `(i, q)` is in fixed order, so a chart always yields
+the same path. Note that this policy can produce *more* activations than a later-biased one at the
+same total score — on `drawntotheflame.mid` it takes seven windows where the later-biased tie-break
+took six, for the same 392,750.
 
 Exactness caveat: the DP is exact **for the modelled subset** (full combo, phrases only,
 no squeezes, activation on a note). It is not exact for real play.
@@ -243,21 +255,29 @@ An activation is emitted as the **note index** it fires on, not a bare tick, bec
 public sealed class StarPowerPath
 {
     public IReadOnlyList<Activation> Activations { get; }
-    public int ProjectedScore { get; }        // TotalScore of a perfect run following this path
-    public int GreedyScore { get; }           // same run under the bot's naive policy, for the "gain" label
+    public int ProjectedScore { get; }                  // TotalScore of a perfect run following this path
+    public int ScoreGainOverNoActivations { get; }      // how much it beats never activating
 }
 
 public readonly struct Activation
 {
-    public int  NoteIndex;            // index into TrackPlayer.Notes
-    public uint ActivationTick;       // quarter tick of that note
-    public uint EndMeasureTick;       // E
-    public double ActivationTime;     // MeasureTickToTime / note.Time, for rendering
-    public double EndTime;            // FindMinTimeForMeasureTick(E) — once, here, not in a loop
-    public int  MeterAtActivation;    // 2..4 quarter-bars, for the divergence check
-    public int  ScoreGain;            // points this window adds over not activating
+    public readonly int    NoteIndex;              // index into TrackPlayer.Notes
+    public readonly uint   ActivationTick;         // quarter tick of that note
+    public readonly uint   ActivationMeasureTick;  // m — the window start, inclusive
+    public readonly uint   EndMeasureTick;         // E — exclusive
+    public readonly double ActivationTime;         // SyncTrack.TickToTime, for rendering
+    public readonly double EndTime;                // FindMinTimeForMeasureTick(E) — once, here, not in a loop
+    public readonly int    MeterAtActivation;      // 2..4 quarter bars, for the divergence check
+    public readonly int    ScoreGain;              // points this window adds over not activating
+    public readonly int    ScoringNoteIndex;       // index into ScoreModel.ScoringNotes (model bookkeeping)
 }
 ```
+
+Two differences from the sketch this section originally carried, both settled by slice 3: the
+"gain" figure is `ScoreGainOverNoActivations` rather than a `GreedyScore` (the greedy bot's path is
+not note-aligned, so it is not a number the path object can produce — see "Settled activation
+semantics"), and `Activation` carries the measure ticks and the `ScoringNoteIndex` because the
+window model and the renderer need different coordinate spaces.
 
 Plain C#, no `UnityEngine` types — see §3.
 
@@ -432,20 +452,51 @@ Three files, as with every previous toggle (`docs/roadmap.md`, Feature 3, "Effor
 `Assets/Script/Settings/SettingsManager.Settings.cs` (a `ToggleSetting`, next to
 `ShowSectionStrip` at `:849`), `Assets/Script/Settings/SettingsManager.cs` (a `nameof(...)`
 entry in the HUD `MetadataTab`, near `:238`), and
-`Assets/StreamingAssets/lang/en-US.json`. Placement is an open question for the mockup.
+`Assets/StreamingAssets/lang/en-US.json`. Placement is locked: Graphics → HUD, immediately after
+`ShowSectionStrip`, global rather than per-instrument, with the description stating that the path
+assumes a full combo and no whammy.
 
 ---
 
 ## 5. Rendering sketch
 
-Deliberately thin — the visual decisions are deferred to the mockup interview.
+The visual decisions are now locked — see "Locked UI decisions" immediately below. This section is
+the mechanical shape they imply.
 
 - **Copy `BeatlineElement`** (`Assets/Script/Gameplay/Visuals/TrackElements/BeatlineElement.cs`, 66 lines): a `TrackElement<TrackPlayer>` that overrides `ElementTime`, `InitializeElement()`, `UpdateElement()`, `HideElement()`, and scales/tints a single `MeshRenderer`.
 - **Prefab template:** `Assets/Prefabs/Gameplay/Visual/TrackElements/Beatline.prefab` — root → `Parent` → `Mesh`, `Quad.fbx` rotated X+90°, `localPosition (0, 0.002, 0)` to dodge z-fighting, `localScale (2, 0.05, 1)` where X = 2 = `TrackPlayer.TRACK_WIDTH`. Pooled from a `Beatline Pool` on `Assets/Prefabs/Gameplay/Visual/BaseVisual.prefab`. (Prefab internals **unverified** in this pass — taken from the roadmap's visuals research.)
-- **Positioning is free:** `TrackElement.UpdateElementPosition()` (`TrackElement.cs:42-61`) does the whole time → z conversion, and returns the element to the pool past `REMOVE_POINT`. `GetZPositionAtTime` (`:32-40`) is the same formula for a second anchor point (an SP-window end marker).
+- **Positioning is free:** `TrackElement.UpdateElementPosition()` (`TrackElement.cs:42-61`) does the whole time → z conversion, and returns the element to the pool past `REMOVE_POINT`. (`GetZPositionAtTime` at `:32-40` would give a second anchor point, but the locked design has no end marker to anchor.)
 - **Curvature and fade come for free** via `Assets/Script/Gameplay/Visuals/HighwayCameraRendering.cs`'s global `_YargCurveFactors` / `_YargFadeParams`, as long as the material stays off the `FadeExclude` layer.
-- **For a region** rather than a point, the existing patterns are `TrackEffectElement.RescaleForZ()` and `LaneElement.SetTimeRange(start, end)` (used at `TrackPlayer.cs:943`) — both cheaper than a new `TrackEffectType`.
+- **Not needed:** the region machinery (`TrackEffectElement.RescaleForZ()`, `LaneElement.SetTimeRange(start, end)` at `TrackPlayer.cs:943`, a new `TrackEffectType`). The locked marker is a point, not a region.
 - **The section strip is the wrong rendering precedent** (`Assets/Script/Gameplay/HUD/SectionStrip.cs` is runtime uGUI under a `HorizontalLayoutGroup`) but the right data-flow precedent, as used throughout §4.
+
+### 5.1 Locked UI decisions
+
+The mockup interview §5 deferred is **done (2026-09-03)**. These are locked; the trailing "open
+questions" list below is kept only as the record of what was asked.
+
+| Question | Decision |
+|---|---|
+| Marker style | **A single band across the highway at the activation note**, drawn beatline-style. Same geometry as `BeatlineElement` / `Beatline.prefab` — a full-width quad lying on the track. |
+| Marker colour | **Star Power orange, `#FF9800`** — `HighwayPreset.StarPowerColor`, `Color.FromArgb(255, 255, 152, 0)` at `YARG.Core/YARG.Core/Game/Presets/HighwayPreset.cs:10`. Read from the preset, never hardcoded a second time. |
+| Region or point | **Point only.** No shaded region spanning the window, and **no end marker** — the player acts at one instant, and a region competes visually with the SP fill on the highway. |
+| Score-gain labels | **None.** The overlay stays purely spatial; `Activation.ScoreGain` is still computed and logged, but nothing is drawn. |
+| Behaviour on deviation | Once the player deviates from the plan — a dropped note, an early or late activation, or actual SP state differing from the plan's — **all remaining markers fade to a low alpha for the rest of the song** and stay that way. Never recomputed (locked decision, §"Decisions"). |
+| Visibility window | **Always drawn.** Markers spawn from the pool exactly like beatlines, on the same `SpawnTimeOffset` cursor. |
+| Setting | A single `ToggleSetting` in **Settings → Graphics → HUD, immediately after `ShowSectionStrip`**. |
+| Setting scope | **Global, not per-instrument.** |
+| Setting copy | The description states that the path **assumes a full combo and no whammy** — that is the whammy disclosure (open question 5), and it lives in the setting rather than the pause menu. |
+| Band runs | With **2+ human players the markers are silently hidden** — no message, no marker. The gate is §4.5's predicate. |
+| Section strip | **Coexists.** The strip is uGUI at the top of the screen; the markers are on the highway. They do not compete for space. |
+
+Consequences worth stating, since they cut work out of §5:
+
+- No `TrackEffectType`, no `LaneElement.SetTimeRange`, no `RescaleForZ` — a point marker needs none
+  of the region machinery. `EndMeasureTick` / `EndTime` on `Activation` stay in the model (the
+  divergence check and the logging use them) but nothing renders them.
+- No text rendering on the highway, so no font, no billboarding, no localisation of a number.
+- The dim state is one bool per player plus an alpha on the shared material instance, not per-marker
+  state.
 
 ---
 
@@ -458,9 +509,9 @@ Each ends at a state that can be verified without the next one.
 | **1** | **Harness skeleton.** `Tools/SpPathTests/` (net8.0, NUnit) building against `YARG.Core.csproj`; one test that loads `drawntotheflame.mid`, runs a bot engine with the *stock* policy, and asserts a known `TotalScore`. No optimizer yet. | `dotnet test` green locally; the golden number recorded in the test. Proves the whole verification story before any model is written. | **S** |
 | **2** | **Scoring model, no SP.** `Assets/Script/Gameplay/SpPath/` (Unity-free): duplicate constants, prefix-sum score table, `ProjectPerfectScore()` with no activations. | Test asserts the projection equals a bot run with SP suppressed (`AllowStarPower(false)`, `BaseEngine.Generic.cs:424`), exactly. This is where every rounding rule in §1 gets pinned. | **M** |
 | **3** | **SP model + DP.** Window arithmetic, the five-state meter, the DP, `StarPowerPath`. | Test asserts a scripted-activation bot run reproduces `ProjectedScore` exactly for the optimizer's own path, **and** for three hand-picked suboptimal paths (so the model is right, not just self-consistent). Second test: optimizer ≥ stock greedy bot. Add `dotnet test` to CI. | **L** |
-| **4** | **Plumbing + logging.** `InitializeStarPowerPaths()`, `BasePlayer.SetStarPowerPath`, the four cursor sites, the practice recompute, the band gate, the divergence check. No visuals — log the plan and the live dim state. | Play a song, read the log: plan present in single-player, absent in a band run, recomputed on a practice-section change, dims on a dropped note. | **M** |
-| **5** | **Mockup + rendering.** Interview on the five deferred questions, then the pooled highway element. | Markers on the highway. | **M** |
-| **6** | **Settings toggle + copy.** Three files, plus the band-run explanation text. | Toggle works; overlay off by default or on, per the interview. | **S** |
+| **4** | **Plumbing, log-only.** `InitializeStarPowerPaths()` after `CreatePlayers()`, `BasePlayer.SetStarPowerPath` + `OnStarPowerPathSet()`, the four cursor-reset sites, the practice-section recompute and the `AllowStarPower(false)` clear, the band-run gate (§4.5), and the divergence check that flips the dim flag (§4.4). **No visuals at all** — the plan and every dim transition go to the log. | Play a song, read the log: plan present in single-player, absent in a band run, recomputed on a practice-section change, dim flag flips on a dropped note or an off-plan activation. | **M** |
+| **5** | **Rendering.** A pooled `TrackElement<TrackPlayer>` modelled on `BeatlineElement` + `Beatline.prefab`: one full-width quad at the activation note, tinted the `HighwayPreset` Star Power orange (`#FF9800`), spawned off the `_spPathIndex` cursor exactly as beatlines are, and dropped to low alpha once slice 4's dim flag is set. No region, no end marker, no label — see "Locked UI decisions". | Markers on the highway, at the right notes, fading as one when the run goes off-plan. | **M** |
+| **6** | **Settings toggle + copy.** The `ToggleSetting` in `SettingsManager.Settings.cs` immediately after `ShowSectionStrip`, its `nameof(...)` entry in the HUD `MetadataTab`, and the `en-US.json` strings — description stating the path assumes a full combo and no whammy. Global, not per-instrument. | Toggle works; the band-run case stays silently hidden with the toggle on. | **S** |
 
 Total: broadly the roadmap's **L**, weighted 15% harness / 45% model+DP / 20% plumbing /
 20% rendering+settings.
@@ -582,7 +633,7 @@ tested one.
 | Tempo map | 1 tempo (200 BPM), 1 time signature (4/4) | nothing meter-dependent |
 | `Resolution` / `MeasureResolution` | 480 / 1920 | `TicksPerSustainPoint`, burst threshold |
 
-**Slice 3 must add a synthetic fixture** — a small hand-authored `.mid` (or a chart built
+**Slice 3 must add a synthetic fixture** (done — see below) — a small hand-authored `.mid` (or a chart built
 programmatically against `SongChart`) covering exactly the untested branches above: a disjoint
 chord with sustained children, a sustain shorter than the burst threshold, an extended sustain
 crossing a multiplier change, an open note, a BRE with and without a preceding coda, and at least
@@ -604,10 +655,195 @@ chart whose sync track cannot distinguish YARG's measure-based SP bar from CHOpt
 `IsStarPowerInputActive` from a set of note indices, exactly as §3.2 step 4 predicted. With an
 empty set it reproduces the SP-suppressed score, which is the check that it really replaces the
 greedy toggle rather than racing it. Its per-note activation *semantics* (does note N get
-doubled?) are still **unverified** — that is slice 3's job, and §1.5's boundary rule with it.
+doubled?) were still **unverified** at the end of slice 2 — see "Progress — slice 3 done" below,
+which settles them and rewrites the override point in the process.
 
 **Not done here:** the measure-tick conversion and prefix sums from §2.1 (slice 3 needs them,
 slice 2 does not), and the CI step from §3.2.
+
+### Progress — slice 3 done (2026-09-03)
+
+35 tests, all green, ~2 s warm:
+
+```sh
+dotnet test tools/SpPathTests/SpPathTests.csproj -nologo -v q
+```
+
+#### Settled activation semantics
+
+All of §1.5 that was marked unverified is now pinned by `tools/SpPathTests/SpSemanticsTests.cs`,
+run against a real engine on `drawntotheflame.mid`:
+
+| Question | Answer, as measured |
+|---|---|
+| Which notes get doubled? | Exactly the awards whose **measure tick** lies in `[m, E)`, where `m = QuarterTickToMeasureTick(Notes[N].Tick)`. Asserted both ways: no doubled award outside the interval, no undoubled award inside it. |
+| First doubled note | **N itself**, not N+1. The activation runs in `UpdateStarPower`, which precedes `UpdateHitLogic` in the same loop pass. |
+| Last doubled note | The last one with measure tick `< E`. The first award at measure tick exactly `E` is **not** doubled — the half-open interval is real, not a convention. |
+| How `E` relates to activation and meter | `E = m + StarPowerTickAmount`, with the amount always a whole number of quarter bars (`TicksPerQuarterSpBar = MeasureResolution * 2`). Measured: half bar → `E - m = 7680`, three quarters → `11520`, full → `15360`, at `MeasureResolution = 1920`. |
+| Phrase completed while active | `E ← min(E + TicksPerQuarterSpBar, m_phrase + TicksPerFullSpBar)`. Verified on the window opened at note 238 (a full bar) crossing phrase end 264: `E` moved from 92160 to 96000. The repeated-extension case is exercised on the synthetic fixture, where the optimizer's single window runs from measure tick 10,080 to 40,800 on half a bar (7,680) — **six** extensions of a quarter bar each. |
+| Meter after a window | Always **0**. A phrase collected while active extends the window instead of banking, and the release fires at amount 0. This is what makes `(note index, meter)` a sufficient DP state. |
+| Held or pulsed? | **Pulsed is enough.** Raising the input for a single engine pass produces the full window; holding it across the whole window scores identically and does not re-activate, because `ActivateStarPower` returns early while already active (`BaseEngine.cs:483-486`). |
+| Below half a bar | The request is silently ignored — no activation, no meter spent. |
+
+**The harness change this forced.** `ScriptedBotGuitarEngine` now drives `IsStarPowerInputActive`
+from an override of **`UpdateStarPower`**, not from `UpdateBot` as slice 2 had it. `UpdateBot` runs
+*inside* `UpdateHitLogic`, i.e. after `UpdateStarPower` has already read the input, so an input
+raised there is only acted on some later pass — in practice a bare frame tick a few milliseconds
+before the next note, which puts the activation at the wrong tick and (because the meter is spent
+from there) shifts `E`. Setting the input at the top of `UpdateStarPower`, gated on
+`NoteIndex == N && CurrentTime >= Notes[N].Time`, makes the activation land on the engine's own
+queued "Bot Note Time" update for note N. That is exactly what a human tapping SP on note N gets,
+since a real player's input is drained before the loop runs.
+
+Consequence worth knowing: **the stock greedy bot's path is not note-aligned.** It toggles the
+input every bot tick (`YargFiveFretGuitarEngine.cs:30`) and so activates on whatever pass follows
+the meter reaching half — a frame tick, e.g. measure tick 237853. Re-anchoring those activations to
+notes and replaying them produces a *different* path (on guitar it starves the fourth activation of
+meter outright), so `SpModel_MatchesTheStockGreedyBotsActualRun` checks the model against the greedy
+run **as it happened**, using `SpScoreModel.WindowEndAt` on the engine's own activation ticks.
+
+#### Model corrections and additions
+
+1. **§2.1's prefix sums are over measure ticks, not quarter ticks.** `ScoreEvent` now carries
+   `MeasureTick` alongside `Tick`, and `SpScoreModel` binary-searches on it. `QuarterTickToMeasureTick`
+   is monotone, so the tick-ordered event list is measure-tick-ordered too; the constructor asserts
+   this rather than assuming it.
+2. **`NoStarPowerOverlap` is a model input, not an ignorable flag.** When true, a phrase hit while
+   active is stripped (`Guitar/GuitarEngine.cs:259-261`) and windows never extend. It is a
+   **required** argument on `SpScoreModel`'s constructor and on `SpPathOptimizer.Optimize` — no
+   default — because the value a forgotten argument would pick (`false`) is exactly the common one,
+   so the mistake would only ever show up on the presets where it matters. `SpScoreModel.FromParameters`
+   and the `Optimize(track, syncTrack, GuitarEngineParameters)` overload are the call sites the game
+   uses: both read `MaxMultiplier` and `NoStarPowerOverlap` straight off the live engine parameters
+   (`TrackPlayer.cs:245`), so neither can be dropped on the way in. Both goldens run at the preset
+   default, `false`.
+3. **The DP is solved backwards, iteratively**, over `(note index, meter ∈ 0..4)` — no recursion, so
+   no stack-depth concern on long charts. No candidate pruning: the activation transition is
+   `O(window length)`, and the solve is **2.2 ms** on the 1,269-note guitar chart and **2.0 ms** on
+   the 1,176-note bass chart — warm median of nine runs, **Debug** build (`dotnet test`'s default
+   configuration; Release will be faster). `Optimizer_BeatsGreedy_AndItsProjectionIsReproducibleOnTheEngine`
+   prints cold and warm figures and the build config on every run, so this number can be
+   re-derived rather than trusted. That is well inside a loading screen, so exactness is not worth
+   trading for pruning.
+4. **`ScoreModel.ScoringNotes`** is new: the note list minus BRE notes, each with its quarter tick,
+   its measure tick and whether it carries `IsStarPowerEnd`. Activations are indexed into this list
+   internally and reported back as note-track indices.
+
+#### New goldens
+
+`drawntotheflame.mid`, Expert, stock default preset, full combo:
+
+| Run | Guitar | Bass |
+|---|---|---|
+| No Star Power | 317,774 | 389,279 |
+| Stock greedy bot | 376,558 | **465,083** |
+| **Optimizer** | **392,750** (7 activations) | **484,979** (7 activations) |
+| Optimizer's gain over greedy | +16,192 (+4.3%) | +19,896 (+4.3%) |
+
+The optimizer takes fewer windows than greedy's ten, and spends them on dense, high-multiplier
+passages — hoarding to three quarters or a full bar where that pays. The seven-window count is the
+earliest-activation tie-break at work: the same 392,750 is reachable with six, and the DP prefers
+the path whose markers come soonest.
+
+Synthetic fixture (`tools/SpPathTests/SyntheticChart.cs`), Expert guitar, default preset:
+
+| Run | Score |
+|---|---|
+| No Star Power | 30,692 |
+| Stock greedy bot | 53,327 |
+| Optimizer | 55,204 |
+
+#### The synthetic fixture
+
+Built as a MIDI **in memory** with DryWetMidi and handed straight to `SongChart.FromMidi`, so
+nothing is written to disk and the submodule's charts are untouched. It closes every gap slice 2
+listed:
+
+| Branch slice 2 could not exercise | Now covered by |
+|---|---|
+| Time-signature change | 4/4 → 3/4 (at quarter tick 15360) → 4/4. `StarPowerBar_IsMeterAware_NotFlatBeat` pins the consequence: 1440 quarter ticks span 1440 measure ticks in 4/4 and **1920** in 3/4, so the SP bar drains 4/3 as fast per quarter tick there. A flat-beat model (CHOpt's) puts `E` somewhere else. |
+| Tempo change | 120 → 180 BPM at quarter tick 9600, on both sides of which a full bar is still 8 measures. |
+| Disjoint chord with unequal sustains | Green 960 ticks + yellow 480 at the same tick — one combo step, two sustains. |
+| Sustain below the burst threshold | A 90-tick sustain against a 120-tick threshold. **This needs a `ParseSettings` override**: `Default_Midi`'s sustain cutoff is `Resolution / 3` = 160 (`MidReader.cs:122-124`), which is *above* the 120-tick burst threshold, so with the stock setting the short-sustain branch is unreachable by construction. The fixture sets `SustainCutoffThreshold = 60`, a value real charts can set from `song.ini` (`SongEntry.IniBase.cs:258`). |
+| Extended sustain across a multiplier change | A 2400-tick sustain spanning ten later notes; seven extended sustains in total. |
+| Open note | Phase Shift sysex (`PS\0`, Expert, `Guitar_Open`) bracketing one note. |
+| BRE | Note 120 over the last measure, with a `[coda]` text event in the EVENTS track — and a second variant without it. |
+| SP phrases across the meter change | Eight, one of which straddles the 4/4 → 3/4 boundary. |
+
+Two of those rows are now asserted rather than assumed, because a fixture that quietly stops
+containing the shape it was built for is worse than no fixture:
+
+- `SpModel_MatchesTheEngine_AcrossTheMeterChange` asserts that at least one Star Power window
+  actually **overlaps the 3/4 stretch**. Without it the meter-aware drain could go untested while
+  the test kept passing.
+- `ASustainStraddlingAWindowEdge_IsScoredByItsBurstTick` searches the fixture for a sustain whose
+  **note is on one side of a window edge and whose burst is on the other**, asserts one exists, and
+  then reproduces the containing run on the engine. This is §1.4's discontinuity — the place a model
+  that thinks in "how much of the sustain overlapped SP" instead of "where did the burst land"
+  diverges first (risk 4). Found at note 18, note outside and burst inside a `[6240, 25440)` window.
+
+**The BRE TODO is resolved, and the divergence is real.** `ScoreModel` skips BRE notes
+*unconditionally*; the engine's skip is conditional on `CodaHasStarted` (`Guitar/GuitarEngine.cs:247`).
+`BigRockEnding_IsSkippedByBothSidesOnlyWhenACodaStartsIt` pins both sides: with a coda the two agree
+exactly (30,692); without one the engine scores the eight BRE notes and counts them towards combo
+(32,292) while the model does not move. Keeping the model's skip unconditional stays a deliberate
+decision — a BRE with no coda is malformed charting, and modelling `CodaHasStarted` would mean
+simulating the coda phrase — but it is now a *tested* decision rather than an unexamined one.
+
+#### What slice 3 shipped
+
+- `Assets/Script/Gameplay/SpPath/SpScoreModel.cs` — the window model: measure-tick prefix sums,
+  `SimulateWindow(note, quarterBars)`, `WindowEndAt(measureTick, meterTicks)`, `MeterAfter`, and
+  `ScoreForActivations` / `DoubledPointsForActivations` for an arbitrary activation list.
+- `Assets/Script/Gameplay/SpPath/SpPathOptimizer.cs` — the DP, plus `StarPowerPath` and
+  `Activation` (note index, activation tick, activation/end measure ticks, activation/end times,
+  meter at activation, score gain).
+- `Assets/Script/Gameplay/SpPath/ScoreEvent.cs`, `ScoreModel.cs` — `MeasureTick` on every event and
+  the new `ScoringNotes` list.
+- `tools/SpPathTests/` — `SpSemanticsTests`, `SpPathOptimizerTests` (with the brute-force check),
+  `SyntheticChart`, `SyntheticChartTests`; `ScriptedBotGuitarEngine` rewritten as described above and
+  extended with an award/window trace and a `useStockPolicy` mode.
+- `tools/SpPathTests/SyntheticChart.Dense` — a second, denser synthetic chart, built for the
+  brute-force check alone. The main fixture's optimum is one long window, so an exhaustive search
+  over it never has to get the *interaction* of several windows right. The dense chart is four
+  4-measure dense clusters (a cluster is exactly the span a half-bar window covers) separated by
+  4-measure sparse stretches worth an eighth as much, with exactly two Star Power phrases in each
+  sparse stretch and a dense lead-in to cap the multiplier first. Its optimum is therefore forced to
+  be **four chained windows**, one per cluster, and eight phrases put the brute force's activation
+  bound at exactly four — so the search has to chain all four to find it. Both agree at +12,800, and
+  the engine reproduces the four-window projection.
+- `.github/workflows/sp-path-tests.yml` — `dotnet test` on push and PR, submodules recursive, .NET 8,
+  path-filtered to `Assets/Script/Gameplay/SpPath/**`, `tools/SpPathTests/**` and the `YARG.Core`
+  submodule pointer. No Unity licence, no `Assets/Packages/` bootstrap.
+- `.gitignore` — `!tools/SpPathTests/*.csproj`, so the hand-written harness project survives the
+  blanket `*.csproj` rule for Unity-generated projects.
+
+#### The brute-force bound
+
+`BruteForce`'s activation cap is `floor(phrases / 2)`, which is exact rather than a guess: meter
+comes only from phrases, one quarter bar each; every activation spends at least half a bar; and a
+phrase collected while active extends the window instead of banking, so it can never fund a later
+activation. The search also prunes the whole subtree under an illegal prefix. That prune is sound
+because the legality of the k-th activation is a function of the activations *before* it only — the
+meter available and whether an earlier window already swallowed it — so appending more activations
+cannot rescue an illegal prefix. Sets that drop the offending index still get enumerated under the
+sibling branches.
+
+#### Still unverified after slice 3
+
+- **The disjoint-chord *combo* rule.** The fixture's disjoint chord has two children on the same
+  tick, so the "only increment combo if we haven't already seen a note in that tick" branch
+  (`Guitar/GuitarEngine.cs:430-438`) is never made to increment twice. Model and engine agree at one
+  combo step here, but a disjoint chord whose children sit on *different* ticks is untested.
+- **`NoStarPowerOverlap == true` against a real engine.** No preset in the fork sets it, so no test
+  can drive an engine with it on. Both of its consequences are now pinned as a *pure-model* test
+  (`SyntheticChartTests.NoStarPowerOverlap_WindowsNeverExtend_AndSwallowedPhrasesDoNotBank`):
+  windows never extend (checked over every (note, meter) pair on the synthetic chart, 428 of which
+  *would* have extended with overlap allowed, so the assertion is not vacuous), and a phrase
+  swallowed by a window does not bank meter for a later activation. What remains unverified is only
+  that the engine behaves as `Guitar/GuitarEngine.cs:259-261` reads.
+- **Whammy, squeezes, dropped notes.** Out of the model by design (§1.6).
+- **Anything Unity-side**: editor-only assemblies, prefabs, rendering. Slice 4 territory.
 
 ### Risks specific to this plan
 
@@ -618,7 +854,9 @@ slice 2 does not), and the CI step from §3.2.
 5. **"Optimal" is a claim** that assumes full combo and no whammy. Dimming handles the first; the second needs UI copy.
 6. **CHOpt disagreement is not evidence of a bug** — YARG's bar is 8 measures, CHOpt's is 32 flat beats.
 
-### Open questions for the mockup interview
+### Open questions for the mockup interview — answered 2026-09-03
+
+All seven are settled in "Locked UI decisions" above. Kept here as the record of what was asked:
 
 1. **Marker style** — a band at the activation point, a shaded region spanning the SP window, or both (start + end markers)?
 2. **Visibility window** — always drawn, or only within N seconds of the activation point?

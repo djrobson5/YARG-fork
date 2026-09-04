@@ -49,15 +49,16 @@ namespace YARG.Gameplay.SpPath
         // ---------------------------------------------------------------------------------
 
         private readonly List<ScoreEvent> _events;
+        private readonly List<ScoringNote> _scoringNotes;
 
         private ScoreModel(SyncTrack syncTrack, int maxMultiplier, List<ScoreEvent> events,
-            int soloBonusTotal, int comboSteps)
+            List<ScoringNote> scoringNotes, int soloBonusTotal)
         {
             SyncTrack = syncTrack;
             MaxMultiplier = maxMultiplier;
             _events = events;
+            _scoringNotes = scoringNotes;
             SoloBonusTotal = soloBonusTotal;
-            ComboSteps = comboSteps;
 
             TicksPerQuarterSpBar = syncTrack.MeasureResolution * 2;
             TicksPerHalfSpBar = TicksPerQuarterSpBar * 2;
@@ -87,8 +88,16 @@ namespace YARG.Gameplay.SpPath
         /// <summary>Every point award, ordered by commit tick then note-before-sustain.</summary>
         public IReadOnlyList<ScoreEvent> Events => _events;
 
+        /// <summary>
+        /// The notes a full combo actually scores, in order — the original note list minus BRE
+        /// notes. Star Power activations are indexed into <em>this</em> list by the optimizer and
+        /// reported back as <see cref="ScoringNote.NoteIndex"/>, an index into the post-modifier
+        /// note track.
+        /// </summary>
+        public IReadOnlyList<ScoringNote> ScoringNotes => _scoringNotes;
+
         /// <summary>Combo steps a full combo takes — one per scoring note (chords count once).</summary>
-        public int ComboSteps { get; }
+        public int ComboSteps => _scoringNotes.Count;
 
         /// <summary>
         /// <c>CommittedScore</c> for a full-combo run with no Star Power ever active.
@@ -125,6 +134,7 @@ namespace YARG.Gameplay.SpPath
 
             var noteEvents = new List<ScoreEvent>(notes.Count);
             var sustainEvents = new List<PendingSustain>();
+            var scoringNotes = new List<ScoringNote>(notes.Count);
 
             // Ticks of the notes that take a combo step, in order — used to resolve the
             // multiplier at each sustain burst.
@@ -159,7 +169,13 @@ namespace YARG.Gameplay.SpPath
                 int multiplier = MultiplierForCombo(comboTicks.Count + 1, maxMultiplier);
 
                 int notePoints = POINTS_PER_NOTE * (1 + note.ChildNotes.Count);
-                noteEvents.Add(new ScoreEvent(i, note.Tick, notePoints, multiplier, ScoreEventKind.Note));
+                uint noteMeasureTick = syncTrack.QuarterTickToMeasureTick(note.Tick);
+                noteEvents.Add(new ScoreEvent(i, note.Tick, noteMeasureTick, notePoints, multiplier,
+                    ScoreEventKind.Note));
+
+                // The phrase is credited at the note carrying IsStarPowerEnd
+                // (Guitar/GuitarEngine.cs:263-267), not at Phrase.TickEnd.
+                scoringNotes.Add(new ScoringNote(i, note.Tick, noteMeasureTick, note.IsStarPowerEnd));
 
                 // Guitar/GuitarEngine.cs:278-296: a disjoint chord starts one sustain per sustained
                 // child (AllNotes includes the parent); anything else starts at most one.
@@ -192,7 +208,8 @@ namespace YARG.Gameplay.SpPath
                 int combo = CountAtOrBefore(comboTicks, pending.BurstTick);
                 int multiplier = MultiplierForCombo(combo, maxMultiplier);
 
-                events.Add(new ScoreEvent(pending.NoteIndex, pending.BurstTick, pending.Points,
+                events.Add(new ScoreEvent(pending.NoteIndex, pending.BurstTick,
+                    syncTrack.QuarterTickToMeasureTick(pending.BurstTick), pending.Points,
                     multiplier, ScoreEventKind.SustainBurst));
             }
 
@@ -200,7 +217,7 @@ namespace YARG.Gameplay.SpPath
 
             int soloBonus = CalculateFullComboSoloBonus(notes);
 
-            return new ScoreModel(syncTrack, maxMultiplier, events, soloBonus, comboTicks.Count);
+            return new ScoreModel(syncTrack, maxMultiplier, events, scoringNotes, soloBonus);
         }
 
         // ---------------------------------------------------------------------------------
@@ -317,6 +334,36 @@ namespace YARG.Gameplay.SpPath
             }
 
             return total;
+        }
+
+        /// <summary>
+        /// One combo step: a note the engine will actually score, with the two coordinates the
+        /// Star Power window model needs and whether it completes a Star Power phrase.
+        /// </summary>
+        public readonly struct ScoringNote
+        {
+            /// <summary>Index into the post-modifier note track.</summary>
+            public readonly int NoteIndex;
+
+            /// <summary>Quarter tick of the note.</summary>
+            public readonly uint Tick;
+
+            /// <summary>Measure tick of the note — the Star Power coordinate space.</summary>
+            public readonly uint MeasureTick;
+
+            /// <summary>
+            /// The note carries <c>IsStarPowerEnd</c>, so hitting it awards
+            /// <c>TicksPerQuarterSpBar</c> (<c>Guitar/GuitarEngine.cs:263-267</c>).
+            /// </summary>
+            public readonly bool IsPhraseEnd;
+
+            public ScoringNote(int noteIndex, uint tick, uint measureTick, bool isPhraseEnd)
+            {
+                NoteIndex = noteIndex;
+                Tick = tick;
+                MeasureTick = measureTick;
+                IsPhraseEnd = isPhraseEnd;
+            }
         }
 
         private readonly struct PendingSustain
