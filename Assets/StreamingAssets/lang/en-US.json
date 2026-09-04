@@ -249,6 +249,23 @@
                 "Message": "Are you sure you want to delete <b>{0}</b>?\n\n{1}",
                 "Confirm": "Type <b>{0}</b> here to confirm"
             },
+            "DeleteSong": {
+                "Trash": "The song's files will be sent to the <b>Recycle Bin</b> where possible, so you can usually put them back if you change your mind. Windows still deletes outright on drives with no Recycle Bin, or when the files are too big for it.\n\nYour scores and section progress for this song are kept.",
+                "Permanent": "The song's files will be <b>deleted permanently</b>. There is no trash folder YARG can use on this system, so this cannot be undone.\n\nYour scores and section progress for this song are kept.",
+                "ExConWarning": "\n\nThis song lives in an unpacked pack. Its folder will be removed, but the pack's <b>songs.dta</b> will still list it, so the next full scan will report it as a bad song until you edit that file.",
+                "Path": "\n\n<alpha=#80>{0}",
+                "Trashed": "Moved \"{0}\" to the Recycle Bin.",
+                "Deleted": "Deleted \"{0}\".",
+                "Failed": "Could not delete \"{0}\". See the log for details.",
+                "LibraryRoot": {
+                    "Title": "That Is a Song Folder",
+                    "Description": "This song sits directly at one of your configured song folders:\n\n<alpha=#80>{0}<alpha=#FF>\n\nDeleting it would delete the folder itself, so \"Delete Song\" is unavailable here. Remove the folder in Settings > Song Manager instead."
+                },
+                "PackedCon": {
+                    "Title": "Song Is Inside a Pack",
+                    "Description": "This song is stored inside a packed Rock Band CON file, which YARG can read but cannot edit.\n\nDeleting it would mean deleting the whole pack and every other song in it, so \"Delete Song\" is unavailable here. Remove the pack file yourself if that is what you want."
+                }
+            },
             "Experimental": {
                 "Title": "Experimental Features Notice",
                 "Description": "The options about to be displayed represent a work in progress. These features are subject to change, may contain bugs, and <b>could even cause major problems if enabled</b>.",
@@ -423,6 +440,7 @@
                     "DeleteSetlist": "Delete Setlist",
                     "ViewSongFolder": "View Song Folder",
                     "CopySongChecksum": "Copy Song Checksum",
+                    "DeleteSong": "Delete Song",
                     "CollapseAll": "Collapse All",
                     "ExpandAll": "Expand All"
                 }

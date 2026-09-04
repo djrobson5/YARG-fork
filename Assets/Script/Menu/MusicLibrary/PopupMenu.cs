@@ -1,4 +1,5 @@
 ﻿using System.Linq;
+using Cysharp.Text;
 using Cysharp.Threading.Tasks;
 using TMPro;
 using UnityEngine;
@@ -7,10 +8,12 @@ using UnityEngine.UI;
 using YARG.Core;
 using YARG.Core.Extensions;
 using YARG.Core.Input;
+using YARG.Core.Logging;
 using YARG.Core.Song;
 using YARG.Helpers;
 using YARG.Helpers.Extensions;
 using YARG.Localization;
+using YARG.Menu.Data;
 using YARG.Menu.Navigation;
 using YARG.Menu.Persistent;
 using YARG.Player;
@@ -377,7 +380,119 @@ namespace YARG.Menu.MusicLibrary
 
                     gameObject.SetActive(false);
                 });
+
+                // Last in the menu on purpose: it is the only destructive entry here,
+                // so it should not sit where the cursor comes to rest.
+                if (song.SubType == EntryType.CON)
+                {
+                    // A packed CON's "location" is the whole pack file, often dozens of songs.
+                    // The item stays visible so its absence isn't a mystery, but it can only explain itself.
+                    CreateItem("DeleteSong", () =>
+                    {
+                        DialogManager.Instance.ShowMessage(
+                            Localize.Key("Menu.Dialog.DeleteSong.PackedCon.Title"),
+                            Localize.Key("Menu.Dialog.DeleteSong.PackedCon.Description"));
+
+                        CloseAfterDialog().Forget();
+                    }, MenuData.Colors.DeactivatedText);
+                }
+                else
+                {
+                    CreateItem("DeleteSong", () => DeleteSong(song).Forget());
+                }
             }
+        }
+
+        /// <summary>
+        /// Neutralizes TMP rich text in a value that came from song metadata or the file system,
+        /// so a song called <c>&lt;b&gt;</c> shows up as its own name instead of turning the rest
+        /// of the dialog bold.
+        /// </summary>
+        private static string EscapeRichText(string value)
+        {
+            return value?.Replace("<", "<noparse><</noparse>");
+        }
+
+        private async UniTaskVoid DeleteSong(SongEntry song)
+        {
+            string path = song.ActualLocation;
+            string name = song.Name;
+
+            // Refuse anything outside the library before asking the user to confirm anything.
+            // A song's location comes from scan data, which a hand-edited songs.dta can point
+            // anywhere, and one of them is "the song folder itself".
+            switch (FileDeleteHelper.CheckSongPath(path))
+            {
+                case SongPathSafety.IsLibraryRoot:
+                    DialogManager.Instance.ShowMessage(
+                        Localize.Key("Menu.Dialog.DeleteSong.LibraryRoot.Title"),
+                        Localize.KeyFormat("Menu.Dialog.DeleteSong.LibraryRoot.Description",
+                            EscapeRichText(path)));
+
+                    CloseAfterDialog().Forget();
+                    return;
+
+                case SongPathSafety.OutsideLibrary:
+                    YargLogger.LogFormatWarning<string>(
+                        "Refusing to delete `{0}`: it is not inside any configured song folder.",
+                        path);
+
+                    gameObject.SetActive(false);
+                    _musicLibrary.SetNavigationScheme(true);
+                    ToastManager.ToastError(Localize.KeyFormat(
+                        "Menu.Dialog.DeleteSong.Failed", EscapeRichText(name)));
+                    return;
+            }
+
+            using var messageBuilder = ZString.CreateStringBuilder();
+            messageBuilder.Append(Localize.Key("Menu.Dialog.DeleteSong",
+                FileDeleteHelper.SupportsTrash ? "Trash" : "Permanent"));
+
+            if (song.SubType == EntryType.ExCON)
+            {
+                messageBuilder.Append(Localize.Key("Menu.Dialog.DeleteSong.ExConWarning"));
+            }
+
+            messageBuilder.Append(Localize.KeyFormat("Menu.Dialog.DeleteSong.Path", EscapeRichText(path)));
+
+            bool delete = false;
+            // The confirm text is compared against what the user types, so it has to stay raw.
+            var dialog = DialogManager.Instance.ShowConfirmDeleteDialog(
+                messageBuilder.ToString(), () => delete = true, name);
+
+            await dialog.WaitUntilClosed();
+
+            if (this == null) return;
+
+            // Close the popup the same way CloseAfterDialog does
+            gameObject.SetActive(false);
+            _musicLibrary.SetNavigationScheme(true);
+
+            if (!delete) return;
+
+            // The preview holds the song's audio files open; deleting under it fails on Windows
+            await _musicLibrary.StopPreviewForFileOperationAsync();
+
+            if (this == null) return;
+
+            if (!FileDeleteHelper.SendToTrashOrDelete(path, out bool trashed))
+            {
+                ToastManager.ToastError(Localize.KeyFormat(
+                    "Menu.Dialog.DeleteSong.Failed", EscapeRichText(name)));
+                return;
+            }
+
+            if (ReferenceEquals(GlobalVariables.State.CurrentSong, song))
+            {
+                GlobalVariables.State.CurrentSong = null;
+            }
+
+            ToastManager.ToastSuccess(Localize.KeyFormat(
+                ("Menu.Dialog.DeleteSong", trashed ? "Trashed" : "Deleted"), EscapeRichText(name)));
+
+            // Slices 1-3 reconcile the song cache the blunt way. Slice 4 replaces this
+            // with in-memory removal plus a dirty flag that defers the scan to next launch.
+            _musicLibrary.RefreshSongs();
         }
 
         private void CreateSortSelect()
@@ -603,6 +718,12 @@ namespace YARG.Menu.MusicLibrary
             CreateItemUnlocalized(localized, a);
         }
 
+        private void CreateItem(string localizeKey, UnityAction a, Color textColor)
+        {
+            var localized = Localize.Key("Menu.MusicLibrary.Popup.Item", localizeKey);
+            CreateItemUnlocalized(localized, a, textColor);
+        }
+
         private void CreateItem(string localizeKey, string formatArg, UnityAction a)
         {
             var localized = Localize.KeyFormat(("Menu.MusicLibrary.Popup.Item", localizeKey), formatArg);
@@ -621,6 +742,13 @@ namespace YARG.Menu.MusicLibrary
         {
             var btn = Instantiate(_menuItemPrefab, _container);
             btn.Initialize(body, a);
+            _navGroup.AddNavigatable(btn.Button);
+        }
+
+        private void CreateItemUnlocalized(string body, UnityAction a, Color textColor)
+        {
+            var btn = Instantiate(_menuItemPrefab, _container);
+            btn.Initialize(body, a, textColor);
             _navGroup.AddNavigatable(btn.Button);
         }
     }

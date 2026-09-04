@@ -9,6 +9,7 @@ using YARG.Core;
 using YARG.Core.Audio;
 using YARG.Core.Game;
 using YARG.Core.Input;
+using YARG.Core.Logging;
 using YARG.Core.Song;
 using YARG.Localization;
 using YARG.Menu.Filters;
@@ -150,6 +151,11 @@ namespace YARG.Menu.MusicLibrary
 
         private CancellationTokenSource _previewCanceller;
         private PreviewContext _previewContext;
+
+        // The in-flight PreviewContext.Create, if any. Until it finishes it holds the song's
+        // audio files open through LoadPreviewAudio without _previewContext being set yet, so a
+        // file operation has to await this as well as the running preview.
+        private Task _previewStartTask;
         private double _previewDelay;
 
         private SongEntry _currentSong;
@@ -743,6 +749,44 @@ namespace YARG.Menu.MusicLibrary
             _ = StopPreviewAsync(clearCurrentSong);
         }
 
+        /// <summary>
+        /// Stops the library preview and waits for its audio to be released.
+        /// </summary>
+        /// <remarks>
+        /// Must be awaited before touching a song's files on disk — the preview holds them
+        /// open, and a delete would fail with a sharing violation on Windows.
+        /// <para>
+        /// Stopping the running preview is not enough on its own: a <c>PreviewContext.Create</c>
+        /// started moments ago may still be inside <c>LoadPreviewAudio</c>, holding the same
+        /// files with nothing yet assigned to <c>_previewContext</c>. Cancelling only asks it to
+        /// stop, so the create task has to be awaited too.
+        /// </para>
+        /// </remarks>
+        public async Task StopPreviewForFileOperationAsync()
+        {
+            var startTask = _previewStartTask;
+
+            // Cancels the token the in-flight create is watching, then waits out the preview.
+            await StopPreviewAsync(true);
+
+            if (startTask != null)
+            {
+                try
+                {
+                    await startTask;
+                }
+                catch (Exception ex)
+                {
+                    YargLogger.LogException(ex, "Error while waiting for the song preview to load.");
+                }
+            }
+
+            // If the create landed after the cancel, it installed a fresh context. Clear that too.
+            await StopPreviewAsync(true);
+
+            _previewStartTask = null;
+        }
+
         private async Task StopPreviewAsync(bool clearCurrentSong = false)
         {
             if (clearCurrentSong)
@@ -762,6 +806,11 @@ namespace YARG.Menu.MusicLibrary
             if (previewContext != null)
             {
                 await previewContext.WaitForCompletionAsync();
+
+                // The loop task returns without disposing if it threw, which leaves the mixer
+                // holding the song's audio files open and blocks moving or deleting them.
+                // PreviewContext.Dispose is idempotent, so this is a no-op on the normal path.
+                previewContext.Dispose();
             }
 
             previewCanceller?.Dispose();
@@ -810,7 +859,13 @@ namespace YARG.Menu.MusicLibrary
             }
         }
 
-        private async void StartPreview(double delay, CancellationTokenSource canceller)
+        private void StartPreview(double delay, CancellationTokenSource canceller)
+        {
+            // Kept so a file operation can wait for a create that has not landed yet.
+            _previewStartTask = StartPreviewAsync(delay, canceller);
+        }
+
+        private async Task StartPreviewAsync(double delay, CancellationTokenSource canceller)
         {
             if (_currentSong == null)
             {
