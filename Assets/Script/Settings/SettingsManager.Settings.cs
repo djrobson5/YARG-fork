@@ -848,6 +848,18 @@ namespace YARG.Settings
             /// </remarks>
             public ToggleSetting ShowSectionStrip { get; } = new(true);
 
+            /// <summary>
+            /// Draws a marker on the highway at every note where a perfect run should activate
+            /// Star Power.
+            /// </summary>
+            /// <remarks>
+            /// 5-fret guitar and bass only, single player only (band Star Power is coupled across
+            /// players, so a per-player path would be wrong). The path assumes a full combo and no
+            /// whammy; the markers dim for the rest of the run once the player leaves it.
+            /// Read at song start, so flipping it mid-song does nothing until the next run.
+            /// </remarks>
+            public ToggleSetting ShowStarPowerPath { get; } = new(false);
+
             #endregion
 
             #region File Management

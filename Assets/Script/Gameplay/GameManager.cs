@@ -944,6 +944,70 @@ namespace YARG.Gameplay
         }
 
         /// <summary>
+        /// Turns the optimal Star Power path overlay on for the one human player, when the run
+        /// qualifies for it.
+        /// </summary>
+        /// <remarks>
+        /// Called right after <see cref="InitializeSectionStripStates"/>, for the same reason: the
+        /// optimizer needs the post-modifier note track and the live engine parameters, neither of
+        /// which exists before <c>CreatePlayers()</c> (<c>docs/sp-path-design.md</c> §4.1).
+        /// <para>
+        /// The band gate is §4.5: Star Power is coupled across players (the band multiplier and
+        /// the unison bonus), so a single-player path is not merely approximate in a band run, it
+        /// is wrong. Bots do not count towards the human total, so playing alongside one still
+        /// gets an overlay.
+        /// </para>
+        /// <para>
+        /// Practice and replays are excluded outright, the way the section strip excludes them.
+        /// Practice because upstream swallows every Star Power input there
+        /// (<c>FiveFretGuitarPlayer.InterceptInput</c>), so a path could never be followed;
+        /// replays because the inputs are already fixed and an overlay telling the viewer what to
+        /// press is meaningless.
+        /// </para>
+        /// </remarks>
+        private void InitializeStarPowerPaths()
+        {
+            if (!SettingsManager.Settings.ShowStarPowerPath.Value)
+            {
+                return;
+            }
+
+            if (IsPractice)
+            {
+                YargLogger.LogInfo("SP path: skipped, practice mode");
+                return;
+            }
+
+            if (GlobalVariables.State.PlayingWithReplay)
+            {
+                YargLogger.LogInfo("SP path: skipped, replay playback");
+                return;
+            }
+
+            // §4.5. Sitting-out players are not in the run at all, and bots are not humans.
+            int humanCount = _players.Count(p => !p.Player.SittingOut && !p.Player.Profile.IsBot);
+            if (humanCount != 1)
+            {
+                YargLogger.LogFormatInfo("SP path: skipped, {0} human player(s) in this run",
+                    humanCount);
+                return;
+            }
+
+            foreach (var player in _players)
+            {
+                if (player.Player.SittingOut || player.Player.Profile.IsBot ||
+                    player.Player.IsReplay)
+                {
+                    continue;
+                }
+
+                // Everything else (instrument support) is the player's own business, since it
+                // also has to hold on a practice-section rebuild.
+                player.EnableStarPowerPath();
+            }
+        }
+
+        /// <summary>
         /// Scans the section completion of every player that is allowed to earn credit for it.
         /// </summary>
         /// <remarks>

@@ -9,6 +9,7 @@ using YARG.Core.Input;
 using YARG.Core.Logging;
 using YARG.Core.Replays;
 using YARG.Gameplay.HUD;
+using YARG.Gameplay.SpPath;
 using YARG.Helpers.Extensions;
 using YARG.Helpers.UI;
 using YARG.Input;
@@ -241,6 +242,66 @@ namespace YARG.Gameplay.Player
         /// draw it can pass it along.
         /// </summary>
         protected virtual void OnSectionStateSet()
+        {
+        }
+
+        /// <summary>
+        /// The optimal Star Power path computed for this player at song load, or <c>null</c> when
+        /// the overlay is off, the instrument is unsupported, or this is a band run.
+        /// </summary>
+        public StarPowerPath StarPowerPath { get; private set; }
+
+        /// <summary>
+        /// Whether the Star Power path overlay is switched on for this run
+        /// (<c>docs/sp-path-design.md</c> §4.5). Set once at song load; a player with this off
+        /// never computes a path, not even on a practice-section change.
+        /// </summary>
+        public bool StarPowerPathEnabled { get; private set; }
+
+        /// <summary>
+        /// Set once the player's actual Star Power state stops matching the plan. Never un-set
+        /// within a run — only a practice-section change or a replay seek clears it, both of
+        /// which rebuild the path anyway.
+        /// </summary>
+        public bool SpPathDiverged { get; protected set; }
+
+        /// <summary>
+        /// Turns the overlay on for this player and computes the first path.
+        /// </summary>
+        /// <remarks>
+        /// The gates live in <c>GameManager.InitializeStarPowerPaths</c>, next to the section
+        /// strip's, so there is only one place that decides whether a run gets an overlay.
+        /// </remarks>
+        public void EnableStarPowerPath()
+        {
+            StarPowerPathEnabled = true;
+            RecomputeStarPowerPath();
+        }
+
+        /// <summary>
+        /// Rebuilds the path from the player's current note track. A no-op for players that do
+        /// not support the overlay, and whenever <see cref="StarPowerPathEnabled"/> is false.
+        /// </summary>
+        public virtual void RecomputeStarPowerPath()
+        {
+        }
+
+        /// <summary>
+        /// Hands this player a freshly computed path (or <c>null</c> to clear it), and resets the
+        /// divergence flag, since a new path describes a run that has not started yet.
+        /// </summary>
+        protected void SetStarPowerPath(StarPowerPath path)
+        {
+            StarPowerPath = path;
+            SpPathDiverged = false;
+            OnStarPowerPathSet();
+        }
+
+        /// <summary>
+        /// Called once the path has been assigned, so that players with somewhere to draw it can
+        /// pass it along.
+        /// </summary>
+        protected virtual void OnStarPowerPathSet()
         {
         }
 

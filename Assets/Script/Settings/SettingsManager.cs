@@ -236,6 +236,7 @@ namespace YARG.Settings
                 nameof(Settings.GraphicalSongProgressTint),
                 nameof(Settings.KeepSongInfoVisible),
                 nameof(Settings.ShowSectionStrip),
+                nameof(Settings.ShowStarPowerPath),
             },
             new PresetsTab("Presets", icon: "Customization"),
             new AllSettingsTab(),

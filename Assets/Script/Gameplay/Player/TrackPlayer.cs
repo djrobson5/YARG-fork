@@ -13,6 +13,7 @@ using YARG.Core.Logging;
 using YARG.Gameplay.HUD;
 using YARG.Gameplay.Visuals;
 using YARG.Helpers;
+using YARG.Helpers.Extensions;
 using YARG.Playback;
 using YARG.Player;
 using YARG.Scores;
@@ -28,6 +29,13 @@ namespace YARG.Gameplay.Player
         public const float NOTE_SPAWN_OFFSET     = 5f;
 
         public const float TRACK_WIDTH  = 2f;
+
+        /// <summary>
+        /// How far from a planned activation the player's own activation still counts as being on
+        /// plan, in seconds. Wide enough to absorb a human tap and the engine's own loop
+        /// granularity, narrow enough that a deliberately different activation is caught.
+        /// </summary>
+        private const double SP_PATH_ACTIVATION_GRACE = 0.25;
 
         public static int HighwayCount = 1;
 
@@ -82,6 +90,22 @@ namespace YARG.Gameplay.Player
 
         protected int BeatlineIndex;
 
+        /// <summary>
+        /// Spawn cursor into <c>StarPowerPath.Activations</c>. Reset everywhere
+        /// <see cref="BeatlineIndex"/> is (<c>docs/sp-path-design.md</c> §4.3).
+        /// </summary>
+        protected int SpPathIndex;
+
+        /// Activations whose grace window the song has entered, and whose grace window it has left.
+        /// The player's activation count has to sit between the two, or they are off-plan.
+        private int _spPlanEarlyIndex;
+        private int _spPlanLateIndex;
+
+        /// Built on demand the first time a path arrives; null when the overlay is off.
+        private Pool _spPathMarkerPool;
+
+        private Color _spMarkerColor = Color.white;
+
         protected bool IsBass { get; private set; }
 
         public int LaneCount { get; protected set; }
@@ -106,6 +130,7 @@ namespace YARG.Gameplay.Player
 
             Beatlines = SyncTrack.Beatlines;
             BeatlineIndex = 0;
+            ResetStarPowerPathCursors();
 
             var preset = player.EnginePreset;
             IndicatorStripes.Initialize(preset);
@@ -143,6 +168,157 @@ namespace YARG.Gameplay.Player
             TrackView.SetSectionState(SectionState);
         }
 
+        /// <summary>
+        /// Puts the spawn cursor and the divergence cursors back to the start of the path, and
+        /// clears the divergence flag with them.
+        /// </summary>
+        /// <remarks>
+        /// The flag is derived from where the cursors are, so rewinding them and leaving it set
+        /// would leave the two disagreeing. Every caller is a seek or a rebuild — the run in
+        /// front of the player has not happened yet either way.
+        /// </remarks>
+        protected void ResetStarPowerPathCursors()
+        {
+            SpPathIndex = 0;
+            _spPlanEarlyIndex = 0;
+            _spPlanLateIndex = 0;
+            SpPathDiverged = false;
+        }
+
+        protected override void OnStarPowerPathSet()
+        {
+            ResetStarPowerPathCursors();
+
+            // A new path describes a run that has not happened yet, so nothing already on the
+            // highway belongs to it.
+            if (_spPathMarkerPool != null)
+            {
+                _spPathMarkerPool.ReturnAllObjects();
+            }
+
+            if (StarPowerPath is null || StarPowerPath.Activations.Count == 0)
+            {
+                return;
+            }
+
+            _spMarkerColor = Player.HighwayPreset.StarPowerColor.ToUnityColor();
+
+            if (_spPathMarkerPool == null)
+            {
+                _spPathMarkerPool = SpPathMarkerElement.CreateRuntimePool(BeatlinePool);
+            }
+        }
+
+        /// <summary>
+        /// Spawns the markers whose activation note is close enough to the highway's far end,
+        /// exactly as <c>UpdateBeatlines</c> does.
+        /// </summary>
+        protected void UpdateStarPowerPathMarkers(double time)
+        {
+            if (StarPowerPath is null || _spPathMarkerPool == null)
+            {
+                return;
+            }
+
+            var activations = StarPowerPath.Activations;
+            while (SpPathIndex < activations.Count &&
+                activations[SpPathIndex].ActivationTime <= time + SpawnTimeOffset)
+            {
+                // Skip this frame if the pool is full
+                if (!_spPathMarkerPool.CanSpawnAmount(1))
+                {
+                    break;
+                }
+
+                var poolable = _spPathMarkerPool.TakeWithoutEnabling();
+                if (poolable == null)
+                {
+                    YargLogger.LogWarning("Attempted to spawn a Star Power path marker, " +
+                        "but it's at its cap!");
+                    break;
+                }
+
+                var marker = (SpPathMarkerElement) poolable;
+                marker.ActivationRef = activations[SpPathIndex];
+                marker.MarkerColor = _spMarkerColor;
+                marker.EnableFromPool();
+
+                SpPathIndex++;
+            }
+        }
+
+        /// <summary>
+        /// Flips <see cref="BasePlayer.SpPathDiverged"/> the first time the player's actual Star
+        /// Power state stops matching the plan (<c>docs/sp-path-design.md</c> §4.4).
+        /// </summary>
+        /// <remarks>
+        /// Three ways to go off-plan: the full-combo assumption breaks (any missed note), an
+        /// activation happens that the plan does not call for yet, or a planned activation goes
+        /// by without one. The last two are counted rather than compared tick by tick, because
+        /// <c>StarPowerActivationCount</c> is the only thing that says an activation happened at
+        /// all. Never un-set — only a rebuilt path clears it.
+        /// </remarks>
+        protected void UpdateStarPowerPathDivergence()
+        {
+            if (StarPowerPath is null || SpPathDiverged)
+            {
+                return;
+            }
+
+            if (!IsFc)
+            {
+                SetStarPowerPathDiverged("a note was missed");
+                return;
+            }
+
+            var activations = StarPowerPath.Activations;
+
+            // SongTime, not InputTime: the plan's activation times are chart times, and SongTime
+            // is the same clock. InputTime leads it by the calibration offset, which would shift
+            // both grace windows by that offset.
+            double time = GameManager.SongTime;
+
+            while (_spPlanEarlyIndex < activations.Count &&
+                time >= activations[_spPlanEarlyIndex].ActivationTime - SP_PATH_ACTIVATION_GRACE)
+            {
+                _spPlanEarlyIndex++;
+            }
+
+            while (_spPlanLateIndex < activations.Count &&
+                time >= activations[_spPlanLateIndex].ActivationTime + SP_PATH_ACTIVATION_GRACE)
+            {
+                _spPlanLateIndex++;
+            }
+
+            int activated = BaseStats.StarPowerActivationCount;
+
+            if (activated > _spPlanEarlyIndex)
+            {
+                SetStarPowerPathDiverged("Star Power was activated off-plan");
+            }
+            else if (activated < _spPlanLateIndex)
+            {
+                SetStarPowerPathDiverged("a planned activation was not taken");
+            }
+        }
+
+        /// <summary>
+        /// Marks the run as off-plan, once. Safe to call from anywhere, including players with no
+        /// path at all.
+        /// </summary>
+        protected void SetStarPowerPathDiverged(string reason)
+        {
+            if (StarPowerPath is null || SpPathDiverged)
+            {
+                return;
+            }
+
+            SpPathDiverged = true;
+            YargLogger.LogFormatInfo("SP path: diverged — {0}. Remaining markers dim for the rest " +
+                "of the run. ({1}, {2:0.000}s)",
+                reason, Player.Profile.CurrentInstrument, GameManager.SongTime);
+        }
+
         protected override void ResetVisuals()
         {
             // "Muting a stem" isn't technically a visual,
@@ -156,6 +332,11 @@ namespace YARG.Gameplay.Player
             NotePool.ReturnAllObjects();
             LanePool.ReturnAllObjects();
             BeatlinePool.ReturnAllObjects();
+
+            if (_spPathMarkerPool != null)
+            {
+                _spPathMarkerPool.ReturnAllObjects();
+            }
 
             HitWindowDisplay.SetHitWindowSize();
         }
@@ -395,6 +576,7 @@ namespace YARG.Gameplay.Player
             }
 
             BeatlineIndex = 0;
+            ResetStarPowerPathCursors();
             ResetNoteCounters();
 
             ResetTrackEffectOverlay(0);
@@ -438,6 +620,8 @@ namespace YARG.Gameplay.Player
 
             UpdateNotes(visualTime);
             UpdateBeatlines(visualTime);
+            UpdateStarPowerPathMarkers(visualTime);
+            UpdateStarPowerPathDivergence();
             UpdateTrackEffects(visualTime);
             UpdateCodaEvents(visualTime);
             UpdateUnisonEvents(visualTime);
@@ -967,6 +1151,7 @@ namespace YARG.Gameplay.Player
             ResetNoteCounters();
 
             BeatlineIndex = 0;
+            ResetStarPowerPathCursors();
 
             // Removed by EngineManager
             EngineContainer = null;
@@ -982,12 +1167,17 @@ namespace YARG.Gameplay.Player
                 Engine.SetSpeed(GameManager.SongSpeed);
             }
 
+            // The note track was rebuilt from a tick range and the engine recreated, so the old
+            // plan's note indices mean nothing (docs/sp-path-design.md 4.3).
+            RecomputeStarPowerPath();
+
             ResetPracticeSection();
         }
 
         public override void SetReplayTime(double time)
         {
             BeatlineIndex = 0;
+            ResetStarPowerPathCursors();
             ResetNoteCounters();
 
             // Reset the track effect overlay

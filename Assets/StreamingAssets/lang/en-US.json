@@ -1648,6 +1648,10 @@
                 "Name": "Show Section Strip",
                 "Description": "Shows a strip of blocks above your track, one per section, marking which sections you have already perfected and how the current one is going. Has no effect when \"Track Section Completion\" is off."
             },
+            "ShowStarPowerPath": {
+                "Name": "Show Star Power Path",
+                "Description": "Marks the notes where a perfect run should activate Star Power to score the most points. 5-fret guitar and bass only, and only when you are playing alone. The path assumes a full combo with no whammy, so the markers dim once your run leaves it."
+            },
             "SongTimeOnScoreBox": {
                 "Name": "Song Time On Score Box",
                 "Description": "Change the song time displayed above the score box. In the examples provided, the song is 5 minutes and 30 seconds long, and you are 1 minute and 10 seconds into the song.",

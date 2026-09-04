@@ -12,6 +12,7 @@ using YARG.Core.Input;
 using YARG.Core.Logging;
 using YARG.Core.Replays;
 using YARG.Gameplay.HUD;
+using YARG.Gameplay.SpPath;
 using YARG.Gameplay.Visuals;
 using YARG.Helpers;
 using YARG.Helpers.Extensions;
@@ -159,6 +160,75 @@ namespace YARG.Gameplay.Player
         {
             var track = chart.GetFiveFretTrack(Player.Profile.CurrentInstrument).Clone();
             return track.GetDifficulty(Player.Profile.CurrentDifficulty);
+        }
+
+        /// <summary>
+        /// Computes the optimal Star Power path for this player's current note track.
+        /// </summary>
+        /// <remarks>
+        /// 5-fret is the only instrument the optimizer models
+        /// (<c>docs/sp-path-design.md</c> §"Decisions"), so this is the only player that overrides
+        /// it. Everything the model needs is read live: the post-modifier
+        /// <see cref="TrackPlayer{TEngine,TNote}.NoteTrack"/> and the
+        /// <see cref="EngineParams"/> the engine was actually constructed with.
+        /// </remarks>
+        public override void RecomputeStarPowerPath()
+        {
+            if (!StarPowerPathEnabled)
+            {
+                return;
+            }
+
+            // The overlay is off in practice entirely: InterceptInput below swallows every Star
+            // Power input while GameManager.IsPractice, so a path could never be followed there.
+            // GameManager.InitializeStarPowerPaths already refuses to enable it, but a practice
+            // section change re-enters here, so hold the line at both ends.
+            if (GameManager.IsPractice)
+            {
+                SetStarPowerPath(null);
+                return;
+            }
+
+            if (NoteTrack is null || NoteTrack.Notes.Count == 0 || EngineParams is null)
+            {
+                SetStarPowerPath(null);
+                return;
+            }
+
+            try
+            {
+                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                var path = SpPathOptimizer.Optimize(NoteTrack, SyncTrack, EngineParams);
+                stopwatch.Stop();
+
+                if (path.Activations.Count == 0)
+                {
+                    YargLogger.LogFormatInfo(
+                        "SP path ({0}): no activations — projected {1}, solved in {2:0.0} ms",
+                        Player.Profile.CurrentInstrument, path.ProjectedScore,
+                        stopwatch.Elapsed.TotalMilliseconds);
+                }
+                else
+                {
+                    var first = path.Activations[0];
+                    YargLogger.LogFormatInfo(
+                        "SP path ({0}): {1} activation(s), first at tick {2} ({3:0.000}s, note {4}), " +
+                        "projected {5} (+{6} over no Star Power), solved in {7:0.0} ms",
+                        Player.Profile.CurrentInstrument, path.Activations.Count,
+                        first.ActivationTick, first.ActivationTime, first.NoteIndex,
+                        path.ProjectedScore, path.ScoreGainOverNoActivations,
+                        stopwatch.Elapsed.TotalMilliseconds);
+                }
+
+                SetStarPowerPath(path);
+            }
+            catch (Exception e)
+            {
+                // The overlay is cosmetic; a model that trips over an odd chart must not take the
+                // song down with it.
+                YargLogger.LogException(e, "SP path: the optimizer failed, hiding the overlay");
+                SetStarPowerPath(null);
+            }
         }
 
         protected override GuitarEngine CreateEngine()
@@ -697,6 +767,14 @@ namespace YARG.Gameplay.Player
 
         private void OnSustainEnd(GuitarNote parent, double timeEnded, bool finished)
         {
+            // A dropped sustain does not break the combo, so IsFc never sees it, but the
+            // projection assumed every sustain point was collected — including the Star Power
+            // ticks whammy-free sustains feed. The plan is stale from here on.
+            if (!finished)
+            {
+                SetStarPowerPathDiverged("a sustain was dropped");
+            }
+
             foreach (var note in parent.AllNotes)
             {
                 // If the note is disjoint, only iterate the parent as sustains are added separately

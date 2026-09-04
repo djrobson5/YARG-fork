@@ -390,27 +390,32 @@ Mirror the `SectionStripState` plumbing exactly (`Assets/Script/Gameplay/HUD/Sec
 - `BasePlayer.StarPowerPath { get; private set; }` + `SetStarPowerPath(StarPowerPath)` + `protected virtual void OnStarPowerPathSet()`, alongside the existing `SectionState` at `BasePlayer.cs:224,233-243`.
 - `TrackPlayer.OnStarPowerPathSet()` forwards to the highway, the way `OnSectionStateSet()` forwards to `TrackView` at `TrackPlayer.cs:141-144`.
 
-### 4.3 The three cursor-reset sites
+### 4.3 The four cursor-reset sites
 
-An `_spPathIndex` spawn cursor must be reset everywhere `BeatlineIndex` is, in
-`Assets/Script/Gameplay/Player/TrackPlayer.cs`:
+The `SpPathIndex` spawn cursor, the two divergence cursors and the divergence flag all reset
+together in `TrackPlayer.ResetStarPowerPathCursors()`, called everywhere `BeatlineIndex = 0`
+happens, in `Assets/Script/Gameplay/Player/TrackPlayer.cs` (line numbers as implemented):
 
 | Line | Method | Also needs |
 |---|---|---|
-| `108` | `Initialize` | initial value |
-| `397` | `ResetPracticeSection()` | cursor reset only |
-| `969` | `SetPracticeSection(uint, uint)` | **cursor reset *and* a full recompute** — this method rebuilds `NoteTrack` from a tick range (`:954-965`) and calls `CreateEngine()` again (`:974`), so the old plan's note indices are meaningless |
-| `990` | `SetReplayTime(double)` | cursor reset only |
+| `133` | `Initialize` | initial value |
+| `579` | `ResetPracticeSection()` | cursor reset only |
+| `1154` | `SetPracticeSection(uint, uint)` | **cursor reset *and* a full recompute** — this method rebuilds `NoteTrack` from a tick range (`:1140-1148`) and calls `CreateEngine()` again (`:1160`), so the old plan's note indices are meaningless |
+| `1180` | `SetReplayTime(double)` | cursor reset only |
 
-The spawn loop itself copies `UpdateBeatlines` (`TrackPlayer.cs:561-596`): a `while` over
+A fifth caller is `OnStarPowerPathSet()` (`:190`), which is the rebuild case.
+
+The spawn loop itself copies `UpdateBeatlines` (`TrackPlayer.cs:745-780`): a `while` over
 the ordered activation list against `time + SpawnTimeOffset`, taking from a pool with
 `TakeWithoutEnabling()`.
 
-Practice mode is also where SP itself can be switched off —
-`Assets/Script/Gameplay/PracticeManager.cs:213` calls
-`player.BaseEngine.AllowStarPower(allowPracticeSP)`, which strips `NoteFlags.StarPower`
-from the notes (`BaseEngine.Generic.cs:424-447`). When SP is disallowed the path must be
-cleared, not recomputed.
+Practice mode does not need any of this: the overlay is **off in practice entirely**, because
+upstream swallows every Star Power input there — `FiveFretGuitarPlayer.InterceptInput`
+(`FiveFretGuitarPlayer.cs:822-825`) returns `true` for `GuitarAction.StarPower` whenever
+`GameManager.IsPractice`, so no path could ever be followed. That also makes the stripped-flag
+question moot: `PracticeManager.cs:213` calling `player.BaseEngine.AllowStarPower(false)`
+(which strips `NoteFlags.StarPower`, `BaseEngine.Generic.cs:424-447`) and the ordering of that
+call against `SetPracticeSection` no longer matter to the overlay either way.
 
 ### 4.4 Reading live SP state to dim markers
 
@@ -865,3 +870,133 @@ All seven are settled in "Locked UI decisions" above. Kept here as the record of
 5. **Whammy disclosure** — does the UI state that the path assumes no whammy, and where?
 6. **Settings placement** — Graphics → HUD next to `ShowSectionStrip`, and per-instrument or global?
 7. **Dim styling** — what "diverged" looks like: alpha, desaturation, or outline-only?
+
+### Progress — slices 4, 5 and 6 done (2026-09-03)
+
+Plumbing, rendering and the settings toggle all landed together. `dotnet build Assembly-CSharp.csproj`
+is green and `dotnet test tools/SpPathTests/SpPathTests.csproj` still passes all 35 tests —
+`Assets/Script/Gameplay/SpPath/` was not touched at all, so it stays Unity-free.
+
+#### Slice 4 — plumbing
+
+| Concern | Where it landed |
+|---|---|
+| Compute site | `GameManager.InitializeStarPowerPaths()` (`Assets/Script/Gameplay/GameManager.cs`), called from `GameManager.Loading.cs` immediately after `InitializeSectionStripStates()`, exactly as §4.1 specified. |
+| Gates | `ShowStarPowerPath` off → nothing. Practice mode → nothing, logged (`SP path: skipped, practice mode`). Replay playback (`GlobalVariables.State.PlayingWithReplay`) → nothing, logged; individual replay players (`player.Player.IsReplay`) are skipped too, following the section strip's precedent. Human count `!= 1` → nothing, logged. Humans are counted as `_players.Count(p => !p.Player.SittingOut && !p.Player.Profile.IsBot)`, so **bots do not count** and playing alongside one still gets an overlay. |
+| Per-player storage | `BasePlayer.StarPowerPath` / `StarPowerPathEnabled` / `SpPathDiverged`, with `EnableStarPowerPath()`, `virtual RecomputeStarPowerPath()`, `SetStarPowerPath(path)` and `virtual OnStarPowerPathSet()` — the `SectionStripState` shape, gate for gate. |
+| The optimizer call | `FiveFretGuitarPlayer.RecomputeStarPowerPath()` — the only override, since 5-fret is the only modelled instrument. Calls `SpPathOptimizer.Optimize(NoteTrack, SyncTrack, EngineParams)`, so `MaxMultiplier` and `NoStarPowerOverlap` both come off the live engine parameters. Wrapped in a try/catch: the overlay is cosmetic and must not take a song down. |
+| Practice excluded | The overlay is off in practice outright, at both ends: `InitializeStarPowerPaths` refuses to enable it, and `RecomputeStarPowerPath` clears the path when `GameManager.IsPractice` so a practice-section change cannot rebuild one. The reason is upstream's own: `FiveFretGuitarPlayer.InterceptInput` (`FiveFretGuitarPlayer.cs:822-825`) swallows every `GuitarAction.StarPower` input while `IsPractice`, so a path could never be followed there. The stripped-flag concern (`AllowStarPower` and its ordering against `SetPracticeSection`) is therefore moot. |
+| Cursor resets | `TrackPlayer.ResetStarPowerPathCursors()` called at all four `BeatlineIndex = 0` sites: `Initialize`, `ResetPracticeSection`, `SetPracticeSection` and `SetReplayTime`, plus `OnStarPowerPathSet`. It clears `SpPathDiverged` along with the three cursors — the flag is derived from where they are, so rewinding them and leaving it set would leave the two disagreeing. `SetPracticeSection` additionally calls `RecomputeStarPowerPath()` after the engine is rebuilt. |
+| Logging | Info level, at every path build: activation count, the first activation's tick/time/note index, `ProjectedScore`, `ScoreGainOverNoActivations` and the solve time. Divergence logs its reason and the song time once. |
+
+**Divergence detection** is `TrackPlayer.UpdateStarPowerPathDivergence()`, run every frame from
+`UpdateVisuals`. It reads live stats rather than subscribing to engine events, because the one
+number that says an activation happened at all — `BaseStats.StarPowerActivationCount` — has no
+event of its own, and `IsFc` aggregates the *combo-breaking* paths (missed note, overstrum) that
+the per-instrument code maintains. It does **not** cover a dropped sustain: releasing a sustain
+early keeps the combo, so `IsFc` stays true, but the projection assumed the full sustain points
+(and the Star Power ticks a whammy-free sustain feeds). That one is caught by its own hook.
+Four ways to go off-plan:
+
+1. `!IsFc` — the full-combo assumption is broken.
+2. `StarPowerActivationCount` exceeds the number of plan activations whose grace window the song
+   has *entered* → the player activated something the plan does not call for.
+3. `StarPowerActivationCount` falls short of the number whose grace window the song has *left* →
+   a planned activation went by untaken.
+4. `FiveFretGuitarPlayer.OnSustainEnd` firing with `finished == false` → a sustain was dropped.
+   This one is an engine event rather than a per-frame read, since nothing in `BaseStats`
+   distinguishes a dropped sustain from a short one.
+
+The three per-frame checks compare against `GameManager.SongTime`, not `InputTime`: the plan's
+activation times are chart times on the same clock, and `InputTime` leads it by the calibration
+offset, which would shift both grace windows by that offset.
+
+Two cursors (`_spPlanEarlyIndex`, `_spPlanLateIndex`) walk the activation list against
+`ActivationTime -/+ SP_PATH_ACTIVATION_GRACE` (0.25 s), so a human tap near the marker is not read
+as a deviation in either direction. A one-cursor version is wrong: without the early bound, an
+on-time activation reads as "off-plan" for the whole grace window. The flag is set once and never
+un-set within a run; only a rebuilt path (`SetStarPowerPath`) or a replay seek clears it.
+
+#### Slice 5 — rendering, and the prefab decision
+
+**No new prefab, and no prefab edits at all.** `SpPathMarkerElement.CreateRuntimePool(BeatlinePool)`
+(`Assets/Script/Gameplay/Visuals/TrackElements/SpPathMarkerElement.cs`) builds the pool from code at
+song load:
+
+1. A new `GameObject` gets the beatline pool's parent and its exact local transform, so markers land
+   in the same space beatlines do. It is created **inactive**, which is what keeps `Pool.Awake`'s
+   prewarm from running before there is a prefab to prewarm from.
+2. `Beatline.prefab` is instantiated under it (inactive parent means no `Awake` on a half-built
+   object), its `BeatlineElement` removed with `DestroyImmediate` — a deferred `Destroy` would leave
+   two `IPoolable`s on the template for a frame and `Pool.CreateNew` looks one up with
+   `GetComponent` — and an `SpPathMarkerElement` added. The clone is then the new pool's prefab.
+3. `Pool.ConfigureRuntime(prefab, prewarm, cap)` is the one addition to `Pool`
+   (`Assets/Script/Gameplay/Pool.cs`): a code-created pool cannot otherwise set the serialized
+   `_prewarmAmount` / `_objectCap`, and the serialized defaults (300 / 500) are absurd for ~7
+   markers. Markers use 4 / 16.
+
+This was chosen over copying `Beatline.prefab` to `SpPathMarker.prefab` with fresh GUIDs precisely
+because a hand-written prefab cannot be verified without opening the editor, and over a serialized
+field on the track player prefab because that is a prefab edit this pass cannot check either. The
+cost is that the marker's `MeshRenderer` is found with `GetComponentInChildren` rather than
+serialized.
+
+The element itself mirrors `BeatlineElement`: `TrackElement<TrackPlayer>`, `ElementTime =>
+ActivationRef.ActivationTime`, a `0.07` Y scale (the measure-line thickness), and the material
+colour set from `Player.HighwayPreset.StarPowerColor.ToUnityColor()` — read from the preset by the
+spawner, never hardcoded a second time. Alpha is `1.0` normally and `0.25` once
+`Player.SpPathDiverged` is set; it is re-applied in `UpdateElement()` (guarded by the last applied
+value) so markers **already on the highway** dim with the ones still to come. Spawning is
+`TrackPlayer.UpdateStarPowerPathMarkers`, a copy of `UpdateBeatlines` over the `SpPathIndex` cursor
+and the same `SpawnTimeOffset`.
+
+#### Slice 6 — settings
+
+`ShowStarPowerPath`, a `ToggleSetting` defaulting to **false**, in `SettingsManager.Settings.cs`
+immediately after `ShowSectionStrip`, with its `nameof(...)` entry appended to the HUD `MetadataTab`
+in `SettingsManager.cs` and `Name`/`Description` in `en-US.json`. The description states the
+single-player and 5-fret limits and that the path **assumes a full combo with no whammy** — the
+whammy disclosure of open question 5.
+
+#### What still needs verifying in the editor
+
+Nothing here has been through a Unity compile or a real frame; `dotnet build` covers only
+`Assembly-CSharp`. In rough order of risk:
+
+1. **The runtime pool.** That `Instantiate` under an inactive parent, `DestroyImmediate` of the
+   `BeatlineElement`, and `AddComponent` produce a working poolable — and that the markers appear at
+   the right place on the highway, i.e. that copying the beatline pool's local transform was enough.
+2. **`GetComponentInParent<TrackPlayer>()` in `TrackElement.GameplayAwake`.** Prewarmed clones are
+   inactive, so their `Awake` is deferred to the first `EnableFromPool`; that runs synchronously
+   inside `SetActive(true)`, before `InitializeElement`, but it is an ordering worth watching for a
+   null `Player` on the very first marker.
+3. **The z-fight lift.** The marker mesh's local `y` is set to `0.003` in `InitializeElement`,
+   just above the beatline quad's `0.002`, so a marker landing on a beat line is not coplanar
+   with it. Worth confirming that 1 mm of highway space reads as "on top" and not as a gap.
+4. **The colour actually reading as Star Power orange** through the highway's curve/fade shaders,
+   and the dimmed 0.25 alpha still being visible.
+5. **The settings row** rendering with its new copy, and the toggle surviving a settings save/load.
+
+#### Manual test steps
+
+1. Settings → Graphics → HUD: **Show Star Power Path** exists right after **Show Section Strip**,
+   defaults to off, and its description mentions full combo, no whammy, and single player. Turn it
+   on.
+2. Play a 5-fret guitar or bass song alone. The log carries one
+   `SP path (FiveFretGuitar): N activation(s), first at tick ... projected ...` line. Orange bands
+   appear on the highway at those notes.
+3. Miss a note. The log carries `SP path: diverged — a note was missed`, and every marker — the ones
+   on screen included — drops to a faint orange for the rest of the song.
+4. Restart and instead activate Star Power somewhere the plan does not mark. The reason logged is
+   `Star Power was activated off-plan`.
+5. Restart and instead let a marker go by without activating. After ~0.25 s the reason logged is
+   `a planned activation was not taken`.
+6. Restart and instead drop a sustain (release it early) without breaking the combo. The reason
+   logged is `a sustain was dropped`, and the combo meter still shows a full combo.
+7. Play the same song with a second **human** player: no markers, and the log says
+   `SP path: skipped, 2 human player(s) in this run`. Add a **bot** instead of a human: markers come
+   back.
+8. Play drums or vocals with the setting on: no markers, no log line (the player simply does not
+   override `RecomputeStarPowerPath`).
+9. Enter practice mode: `SP path: skipped, practice mode`, and no markers appear for any section.
+10. Play back a replay of the same song: `SP path: skipped, replay playback`, no markers.
