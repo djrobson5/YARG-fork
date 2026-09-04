@@ -254,8 +254,8 @@
                 "Permanent": "The song's files will be <b>deleted permanently</b>. There is no trash folder YARG can use on this system, so this cannot be undone.\n\nYour scores and section progress for this song are kept.",
                 "ExConWarning": "\n\nThis song lives in an unpacked pack. Its folder will be removed, but the pack's <b>songs.dta</b> will still list it, so the next full scan will report it as a bad song until you edit that file.",
                 "Path": "\n\n<alpha=#80>{0}",
-                "Trashed": "Moved \"{0}\" to the Recycle Bin.",
-                "Deleted": "Deleted \"{0}\".",
+                "Trashed": "Moved \"{0}\" to the Recycle Bin. A full song scan will run the next time you start YARG.",
+                "Deleted": "Deleted \"{0}\". A full song scan will run the next time you start YARG.",
                 "Failed": "Could not delete \"{0}\". See the log for details.",
                 "LibraryRoot": {
                     "Title": "That Is a Song Folder",

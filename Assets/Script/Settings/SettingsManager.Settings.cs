@@ -156,6 +156,16 @@ namespace YARG.Settings
             public Dictionary<CharacterType,CustomCharacterInfo> CustomCharacters = new();
             public List<CustomCharacterInfo> HiddenCharacters = new();
 
+            /// <summary>
+            /// Set when the in-memory song library and <c>songcache.bin</c> have been allowed to
+            /// disagree — today only by deleting a song, which removes its files and its entry from
+            /// memory but cannot rewrite the cache incrementally. While this is set, startup runs a
+            /// full song scan instead of the quick one, because the quick scan does not stat files
+            /// and would resurrect the deleted song as an unplayable ghost entry. Cleared and saved
+            /// by whichever full scan runs next. See docs/delete-song-design.md.
+            /// </summary>
+            public bool SongCacheDirty = false;
+
             #endregion
 
             #region General

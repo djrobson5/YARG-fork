@@ -475,6 +475,13 @@ namespace YARG.Menu.MusicLibrary
 
             if (this == null) return;
 
+            // Set the dirty flag *before* the delete, not after. songcache.bin still lists the
+            // song and cannot be rewritten incrementally, so the flag is what forces the full
+            // scan that drops it; if the game dies between the delete and the flag, the quick
+            // scan brings the song back as a ghost. Setting it first can only cost a spurious
+            // full scan when the delete then fails, which is much cheaper than a ghost entry.
+            SongContainer.MarkSongCacheDirty();
+
             if (!FileDeleteHelper.SendToTrashOrDelete(path, out bool trashed))
             {
                 ToastManager.ToastError(Localize.KeyFormat(
@@ -487,12 +494,65 @@ namespace YARG.Menu.MusicLibrary
                 GlobalVariables.State.CurrentSong = null;
             }
 
+            // Take the song out of the in-memory library.
+            if (!SongContainer.RemoveSong(song))
+            {
+                YargLogger.LogFormatWarning(
+                    "Deleted \"{0}\" from disk but found no matching library entry to remove; " +
+                    "the list may show it until the next scan.", name);
+            }
+
+            PruneFromPlaylists(song);
+
             ToastManager.ToastSuccess(Localize.KeyFormat(
                 ("Menu.Dialog.DeleteSong", trashed ? "Trashed" : "Deleted"), EscapeRichText(name)));
 
-            // Slices 1-3 reconcile the song cache the blunt way. Slice 4 replaces this
-            // with in-memory removal plus a dirty flag that defers the scan to next launch.
-            _musicLibrary.RefreshSongs();
+            // Update the visible list now. The library menu is already enabled, so the
+            // SetReload(Partial) that RemoveSong queued would not be acted on until it is
+            // re-entered.
+            _musicLibrary.RefreshAndReselect(preserveSelectedIndex: true);
+        }
+
+        /// <summary>
+        /// Removes a deleted song's hash from every playlist, from the favourites list and from the
+        /// current setlist, so the delete does not leave dead hashes behind.
+        /// </summary>
+        /// <remarks>
+        /// Must run <i>after</i> <see cref="SongContainer.RemoveSong"/>: a playlist stores hashes,
+        /// not entries, so the hash may only be pruned once no other copy of the same chart is
+        /// still in the library. Duplicate copies in different folders share a checksum.
+        /// </remarks>
+        private void PruneFromPlaylists(SongEntry song)
+        {
+            if (SongContainer.HasAnyEntryForHash(song.Hash))
+            {
+                // Another copy of this chart is still installed; the hash is still live. This asks
+                // the raw cache rather than SongsByHash, which is rating-filtered: a copy the user
+                // has filtered out of the library is still installed and still owns the hash.
+                return;
+            }
+
+            // The setlist is ephemeral and lives only on the library menu, but a dead hash in it
+            // would make StartSetlist build an empty song list and then index into it.
+            _musicLibrary.ShowPlaylist?.RemoveSong(song);
+
+            foreach (var playlist in PlaylistContainer.Playlists)
+            {
+                if (playlist.ContainsSong(song))
+                {
+                    playlist.RemoveSong(song);
+                }
+            }
+
+            var favorites = PlaylistContainer.FavoritesPlaylist;
+            if (favorites != null && favorites.ContainsSong(song))
+            {
+                favorites.RemoveSong(song);
+            }
+
+            // Playlist.RemoveSong saves the playlist it edited; this covers the favourites
+            // list, which PlaylistContainer persists under its own fixed path.
+            PlaylistContainer.SaveAll();
         }
 
         private void CreateSortSelect()

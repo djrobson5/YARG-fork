@@ -27,7 +27,7 @@ plan they imply.
 | Scores / section FC | **Kept.** They are keyed by checksum, there is no deletion path in `Assets/Script/Scores/` at all, and re-adding the song later restores everything for free. Matches the profile-delete dialog's own "play history will remain" promise. |
 | Success feedback | A toast: `Moved "<song>" to the Recycle Bin.` on Windows, `Deleted "<song>".` elsewhere. No dialog — the user just confirmed one. |
 | Library refresh | The library updates in place; the on-disk song cache is reconciled by a **full song scan on next launch**. |
-| Playlists / favourites | The song is **pruned from every playlist and the favourites list** as part of the delete, rather than left as a dead hash for a later cleanup pass. |
+| Playlists / favourites | The song is **pruned from every playlist, the favourites list and the current setlist** as part of the delete, rather than left as a dead hash for a later cleanup pass. |
 | Preview audio | The library preview **must be stopped and awaited** before any file is touched — the preview stream holds the audio file open and the delete fails on Windows otherwise. Stopping the *running* preview is not enough: an in-flight `PreviewContext.Create` is inside `LoadPreviewAudio` with nothing assigned to `_previewContext` yet, so that task is tracked in a field and awaited too. |
 | Queued song | If the deleted song is `GlobalVariables.State.CurrentSong`, that field is cleared. |
 
@@ -67,17 +67,88 @@ so deferring is the only option that is both correct and fast.
    Needs a `SongContainer.RemoveSong(SongEntry)` (the cache is private today) that matches
    on `ActualLocation`, **not** on hash — `SongCache.Entries` maps one hash to a *list*,
    because duplicate copies of the same chart in different folders share a checksum.
-5. **Playlist pruning**: `RemoveSong` on every playlist and on
-   `PlaylistContainer.FavoritesPlaylist`.
+5. **Playlist pruning**: `RemoveSong` on every playlist, on
+   `PlaylistContainer.FavoritesPlaylist` and on the ephemeral setlist
+   (`MusicLibraryMenu.ShowPlaylist`).
 
-Slices 1-3 are implemented. 4 and 5 are not.
+All five slices are implemented.
+
+### Slice 4 — in-memory removal and the dirty flag
+
+`SongContainer.RemoveSong(SongEntry)` looks the entry up by `song.Hash`, then finds it inside
+that hash's list by reference first and `SubType` + `ActualLocation` (ordinal, case-insensitive)
+second. Only that one element is removed; the hash key itself is dropped only when its list
+empties, so duplicate copies of the same chart in another folder survive. It then calls
+`RequestContainerRefresh()`, which re-sorts and runs `FillContainers()` — that rebuilds
+`_songsByHash` (the separate dictionary `SongsByHash` exposes) and bumps `LibraryRevision` —
+and finally `MusicLibraryMenu.SetReload(MusicLibraryReloadState.Partial)`. `Partial` rather than
+`Full` because nothing outside the one entry changed and the user's playlist and scroll position
+should survive.
+
+`SetReload` only takes effect when the library menu is next enabled, and the library is already
+enabled while the popup is open, so `PopupMenu.DeleteSong` also calls
+`_musicLibrary.RefreshAndReselect(preserveSelectedIndex: true)` to redraw the visible list in
+place. There is no loading screen and no rescan.
+
+**Dirty-flag lifecycle.** `SettingsManager.Settings.SongCacheDirty` (hidden setting, so it is
+persisted but never shown in the menu) is:
+
+- **set** by `SongContainer.MarkSongCacheDirty()` **before** `FileDeleteHelper.SendToTrashOrDelete`
+  runs, not after. The flag is the only thing that stops the next launch's quick scan from
+  resurrecting the song, so the window between the file leaving the disk and the flag reaching
+  settings.json has to be closed. Setting it first inverts the failure mode: if the delete then
+  fails, the cost is one spurious full scan on the next launch, which is far cheaper than a ghost
+  entry the user cannot remove. It calls `SettingsManager.SaveSettings()` straight away — nothing
+  else does, and a flag that is lost when the game is killed is worse than no flag. The save goes
+  through `PersistSongCacheDirtyFlag`, which never throws: an `IOException` writing settings.json
+  must not abort a delete that has already happened on disk, so it is caught and logged via
+  `YargLogger.LogException`. It also checks `SettingsManager.SettingsCanBeSaved` first —
+  `SaveSettings` is a silent no-op when a failed load or a `SettingsMigration` has locked the file
+  — and logs a warning instead of pretending the flag was persisted;
+- **read** in `LoadingScreen`, which now runs `SongContainer.RunRefresh(quick: !SongCacheDirty)`;
+- **cleared** by `SongContainer.ClearSongCacheDirty()` (also saving immediately) after every full
+  scan: the startup one, `MusicLibraryMenu.RefreshSongs` ("Scan Songs"), and
+  `SongManagerHeader.RefreshSongs` (Settings > Song Manager). Any full scan reconciles the cache
+  with the disk, so any full scan is allowed to clear it.
+
+The quick scan itself is not hardened: it lives in `CacheHandler` inside `YARG.Core`, which this
+fork does not modify, and there is no cheap main-repo hook that runs between the cache read and
+the containers being filled. The dirty flag is therefore the only thing standing between a delete
+and a ghost entry, which is why it is written through to disk synchronously.
+
+### Slice 5 — playlist pruning
+
+After `RemoveSong`, `PopupMenu.PruneFromPlaylists` checks
+`SongContainer.HasAnyEntryForHash(song.Hash)` and returns early if it is still there: a
+playlist stores hashes, not entries, so a duplicate copy of the chart elsewhere in the library
+keeps the hash live and it must not be pruned. The check deliberately asks the raw
+`SongCache.Entries` rather than `SongsByHash`, which is rating-filtered — a duplicate copy the
+user's rating filter hides from the library is still installed on disk, and pruning its hash
+would silently gut playlists.
+
+Otherwise the hash is removed from the ephemeral setlist (`MusicLibraryMenu.ShowPlaylist`), from
+every playlist in `PlaylistContainer.Playlists` and from `FavoritesPlaylist`, followed by
+`PlaylistContainer.SaveAll()`. The setlist has to be included even though it is never written to
+disk: `Playlist.ToList()` silently drops hashes that are no longer in the library, so a stale
+setlist entry left behind would make `StartSetlist` pass its non-empty `Count > 0` guard and then
+index into an empty list. `Playlist.RemoveSong` is safe to call on it — `SaveAfterManualEdit`
+returns immediately for an ephemeral playlist and never touches disk. `StartSetlist` also now
+re-checks the resolved list before indexing, since the same hole opens whenever a scan drops a
+song a setlist referenced. `Playlist.RemoveSong` already saves the playlist it edited (via
+`SaveAfterManualEdit`, which also drops any other dead hashes in that playlist); `SaveAll()`
+covers the favourites list, which `PlaylistContainer` persists under its own fixed path.
 
 ## Files
 
 | Concern | Touch point |
 |---|---|
 | Trash / delete a path | `Assets/Script/Helpers/FileDeleteHelper.cs` |
-| Popup item, confirm dialog, delete flow | `Assets/Script/Menu/MusicLibrary/PopupMenu.cs` |
+| Popup item, confirm dialog, delete flow, playlist pruning | `Assets/Script/Menu/MusicLibrary/PopupMenu.cs` |
+| `RemoveSong`, `MarkSongCacheDirty`, `ClearSongCacheDirty`, `HasAnyEntryForHash` | `Assets/Script/Song/SongContainer.cs` |
+| The `SongCacheDirty` hidden setting | `Assets/Script/Settings/SettingsManager.Settings.cs` |
+| `SettingsCanBeSaved` (so a dropped save can be warned about) | `Assets/Script/Settings/SettingsManager.cs` |
+| Setlist pruning and the `StartSetlist` empty-list guard | `Assets/Script/Menu/MusicLibrary/MusicLibraryMenu.Playlist.cs` |
+| Reading the dirty flag at startup | `Assets/Script/Persistent/LoadingScreen.cs` |
 | Greyed-out item support | `Assets/Script/Menu/MusicLibrary/PopupMenuItem.cs` |
 | Stopping the preview before the delete, and disposing its context | `Assets/Script/Menu/MusicLibrary/MusicLibraryMenu.cs` |
 | Strings | `Assets/StreamingAssets/lang/en-US.json` |
@@ -99,8 +170,12 @@ one.
 
 ## Risks
 
-1. **Ghost entries from the quick scan.** The highest-probability defect once slice 4 lands.
-   Test by deleting, restarting the game, and checking the library — not by watching the UI.
+1. **Ghost entries from the quick scan.** The highest-probability defect now that slice 4 has
+   landed, and still only mitigated, not eliminated: if `SongCacheDirty` fails to persist, the
+   next launch quick-scans and the deleted song comes back unplayable. The flag is now written
+   before the file is touched and a failed or disabled save is logged, so the remaining window is
+   a crash between the write and the delete (harmless — one extra full scan). Test by deleting,
+   restarting the game, and checking the library — not by watching the UI.
 2. **CON mass-deletion.** Losing a 50-song pack while removing one song is the worst
    realistic outcome; the greyed item is the gate.
 3. **macOS and Linux have no trash path** without native glue, so delete is permanent there.

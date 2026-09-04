@@ -1385,6 +1385,8 @@ namespace YARG.Menu.MusicLibrary
             try
             {
                 await SongContainer.RunRefresh(false, context);
+                // A full scan has just reconciled songcache.bin with the disk.
+                SongContainer.ClearSongCacheDirty();
                 RefreshAndReselect();
             }
             finally
