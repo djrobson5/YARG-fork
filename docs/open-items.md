@@ -33,19 +33,34 @@ exercise updater slices 2-3, then updater slice 4 (apply).
   themselves. Cut a CI release build and exercise slices 2 and 3 against the packaged `.exe`.
 - **`tools/update-yarg.ps1`'s copy-over-and-relaunch step is untested** — it has never been pointed
   at a real install.
-- **Feature 3, SP path — computes in the editor, but no marker has been seen rendering.** A real run
-  logged `SP path (FiveFretGuitar): 4 activation(s), first at tick 45000 (54.612s ...)` plus the
-  divergence line, so the optimizer, plumbing and gating work. The run diverged early and the first
-  activation is 55 s in, so every band was dim and nothing was seen. `088d5016` narrowed the dim
-  rule to Star Power state only (missed SP phrase / off-plan activation / planned activation not
-  taken); ordinary misses and dropped sustains no longer dim.
-  **Next: the user re-tests with the new rule.** If bands still do not appear, debug
-  `SpPathMarkerElement.CreateRuntimePool` and `TrackPlayer.UpdateStarPowerPathMarkers` — log spawn
-  calls, check the pooled object is active and parented under the track, check the material colour
-  write. Still unproven besides: the 0.003 z-lift over the beatline quad, the orange reading through
-  the highway shaders, and the settings row. Harness stays green (35 tests,
-  `dotnet test tools/SpPathTests/SpPathTests.csproj`). Manual test steps are in
-  `docs/section-fc-handoff.md` and `docs/sp-path-design.md`.
+- **Feature 3, SP path — computes in the editor; the visuals were redesigned on 2026-09-04 and
+  nothing about the new ones has been seen running.** A real run logged
+  `SP path (FiveFretGuitar): 4 activation(s), first at tick 45000 (54.612s ...)` plus the divergence
+  line, so the optimizer, plumbing and gating work. The original thin orange band was never
+  identifiable — same thickness as a beat line, same colour as everything Star Power around it — so
+  it was replaced (design doc: "Visual redesign, 2026-09-04"): a green ring on the activation note
+  plus a beat-long green band with rail caps and a lead-in tick on the highway, a steady green wash
+  over the strike line at the activation moment (skipped when `ReduceFlashingLights` is on), and a
+  code-built `ACTIVATE IN n` chip in `TrackView`'s top band. Colour is the drum Star Power
+  activation green (`#52FF00` / `#005400`), not Star Power orange; the highway preset's
+  `StarPowerColor` is now ignored. **Amended 2026-09-04 at the user's instruction:** nothing dims
+  any more — the dimmed marker state, grey ring and `OFF PLAN` chip are gone, the glow follows the
+  activation window alone, and the cue stays bright for the whole song; divergence detection is
+  kept as a log-only diagnostic. The activation note itself is now recoloured green as the one
+  guaranteed-visible part of the cue. **The user has since confirmed the band, the green note and
+  the chip all render, so the temporary `SP path: TEMPORARY ...` logs were deleted, and the cue is
+  now player-configurable:** four settings in Graphics → HUD after `ShowStarPowerPath` and greyed
+  out with it — `StarPowerPathColor` (colour picker, default `#52FF00`, drives every surface),
+  `StarPowerPathChipLeadIn` (1–8 s, step 0.5, default 3), `StarPowerPathChipHold` (0–3 s, step
+  0.25, default 0.75) and `StarPowerPathFretGlow` (default on, still overridden by
+  `ReduceFlashingLights`), all read once per path so pause-menu changes land next song.
+  **Next: the user tests the redesigned visuals.** Highest risks, in order: the runtime-cloned quad
+  geometry (rotation convention, z-fighting), `RemovePointOffset = 2f` on a band centred on the
+  activation, the ring lining up with the notes under lefty flip, the code-built uGUI chip rendering
+  inside `Top Elements` with a borrowed font, and the strike line glow reading as a glow. Unison bonuses are now modelled by the
+  optimizer (design doc: "Unison bonuses, modelled"), so the markers land where the meter really
+  fills; harness stays green (49 tests, `dotnet test tools/SpPathTests/SpPathTests.csproj`). Manual test steps are in
+  `docs/sp-path-design.md` → "Manual test steps (redesigned visuals)".
 - **Feature 2, delete songs — risk 1 stays open by nature.** If `SongCacheDirty` fails to persist,
   a deleted song can come back unplayable after a quick scan on the next launch. Only a
   delete-then-restart test exercises it; the UI cannot show it.

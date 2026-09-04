@@ -123,10 +123,10 @@ Details, the risk list and the file map are in `docs/delete-song-design.md`. Ris
 if `SongCacheDirty` fails to persist) is mitigated, not eliminated; it can only be tested by
 deleting, restarting the game, and checking the library — not by watching the UI.
 
-### Feature 3 — Star Power path: computing correctly in the editor, **markers still unseen**
+### Feature 3 — Star Power path: computing correctly in the editor, **visuals redesigned 2026-09-04**
 
 All six slices are implemented. `dotnet build Assembly-CSharp.csproj` is green and the harness is
-green: **35 tests**, run with
+green: **49 tests**, run with
 
 ```
 dotnet test tools/SpPathTests/SpPathTests.csproj
@@ -134,61 +134,99 @@ dotnet test tools/SpPathTests/SpPathTests.csproj
 
 CI runs the same suite via `.github/workflows/sp-path-tests.yml`. `Assets/Script/Gameplay/SpPath/`
 is deliberately Unity-free so the harness can compile it; keep it that way (one stray
-`using UnityEngine` breaks the test project).
+`using UnityEngine` breaks the test project). The 2026-09-04 redesign did not touch it.
 
 **Editor status, end of 2026-09-03.** The user ran a song with a human profile and the setting on.
 The log carried
 `SP path (FiveFretGuitar): 4 activation(s), first at tick 45000 (54.612s ...)` and the divergence
-line, so the optimizer, the plumbing and the gating all work in a real run. **But no marker has yet
-been seen rendering** — the run diverged early, so every band was dimmed, and the first activation
-is 55 s in. Whether markers draw at all is still unverified.
+line, so the optimizer, the plumbing and the gating all work in a real run. **No marker was ever
+seen rendering.** That run drove the dim-rule change in `088d5016`: the path now dims **only when
+the Star Power state diverges** (missed Star Power phrase, off-plan activation, planned activation
+not taken); ordinary missed notes and dropped sustains no longer dim it.
 
-That run drove the dim-rule change in `088d5016`. The path now dims **only when the Star Power state
-diverges**: a missed Star Power phrase, an off-plan activation, or a planned activation not taken.
-Ordinary missed notes and dropped sustains no longer dim it — the evidence was one missed intro note
-at 4.9 s dimming the whole path before the first activation at 54.6 s.
+**Visual redesign, 2026-09-04.** The marker was diagnosed as unidentifiable by construction, not
+merely un-rendered: it was a beatline-thickness band in Star Power orange, sitting next to the Star
+Power notes, the Star Power phrase region and the Star Power bar. A mockup interview settled a
+replacement (Option D), recorded in `docs/sp-path-design.md` → "Visual redesign, 2026-09-04", which
+supersedes the UI rows of that document's §5.1:
 
-**Next session's first task:** the user re-tests with the new dim rule. If bands still do not appear,
-debug `SpPathMarkerElement.CreateRuntimePool` and `TrackPlayer.UpdateStarPowerPathMarkers` — log the
-spawn calls, check the pooled object is active and parented under the track, and check the material
-colour write.
+- **Colour is the drum Star Power activation green** — trim `#52FF00`, body `#005400`, from
+  `Assets/Art/Materials/Gameplay/Track/Effects/DrumSPActivationTrim.mat`. The highway preset's
+  `StarPowerColor` is ignored for the marker now, and the near-black fallback that existed for it is
+  gone.
+- **Highway cue at the activation note**: a bright green ring around the note(s) to hit, a
+  beat-long full-width green band with brighter rail caps at the highway edges, and a tick on the
+  beat before. Beat timing comes from `SyncTrack.Beatlines` in the Unity layer.
+- **A steady green wash over the strike line** while the activation is inside the grace window,
+  skipped entirely when `ReduceFlashingLights` is on.
+- **A code-built `ACTIVATE IN n` / `ACTIVATE` chip** in `TrackView`'s top element container (the
+  solo box's band), visible only through the lead-in and the grace window, hidden whenever the solo
+  box is up. Strings live at `Gameplay.StarPowerPath.*` in `en-US.json`.
+- **Still no prefab, material, scene or shader asset edited.** Every piece is a runtime clone of
+  `Beatline.prefab`'s quad, so the highway curve/fade shaders keep applying. `SpPathChip` is built
+  from code into the existing container.
 
-Beyond that, `dotnet build` only covers `Assembly-CSharp`, so the prefab work, the shaders and the
-settings row remain unproven. Highest-risk unverified items, in order (the full list is in `docs/sp-path-design.md`
-→ "What still needs verifying in the editor"):
+**Amended 2026-09-04, at the user's instruction** (`docs/sp-path-design.md` → "The dim states are
+gone, and the activation note is recoloured"):
 
-1. **The runtime pool.** `Instantiate` under an inactive parent, `DestroyImmediate` of the
-   `BeatlineElement` and `AddComponent` producing a working poolable — and the markers landing at
-   the right place on the highway from a copy of the beatline pool's local transform.
-2. **`GetComponentInParent<TrackPlayer>()` in `TrackElement.GameplayAwake`.** Prewarmed clones are
-   inactive, so `Awake` is deferred to the first `EnableFromPool`; watch for a null `Player` on the
-   very first marker.
-3. **The z-fight lift** — marker mesh local `y = 0.003` against the beatline quad's `0.002`; does
-   1 mm read as "on top" or as a gap?
-4. **The colour** reading as Star Power orange (`#FF9800`) through the highway curve/fade shaders,
-   and the dimmed `0.25` alpha still being visible.
-5. **The settings row** rendering with its new copy, and the toggle surviving a settings save/load.
+- **Nothing dims, ever.** The dimmed marker state, the grey ring and the `OFF PLAN` chip text are
+  removed, and the strike line glow now depends on the activation window alone. The path is shown
+  at full brightness for the whole song whatever the player does, because it is information for
+  the *next* run.
+- **Divergence detection survives as a log-only diagnostic.** `SpPathDiverged` is still set and the
+  detailed divergence/phrase-strip log lines are unchanged; nothing visual reads the flag.
+- **The activation note itself is recoloured** to the same `#52FF00` green with an emission boost,
+  via `INoteElement.IsStarPowerPathActivation` (set for the whole chord in `TrackPlayer.SpawnNote`)
+  and `FiveFretGuitarNoteElement.TryApplyStarPowerPathColor()`. It is the one part of the cue that
+  is guaranteed to be on screen, since everything else is built at runtime. The green releases when
+  the note is hit or missed.
+- **The two temporary `SP path: TEMPORARY ...` log families are gone (2026-09-04).** The user
+  confirmed the band, the green note and the chip all render, so `LogSpawnDiagnostics` and the
+  per-glow-show line were deleted; the compute-time, spawn and divergence lines stay.
+- **The false-positive divergence is fixed, and unison bonuses are modelled (2026-09-04).** A
+  stripped Star Power phrase is now recorded and logged, never acted on; the verdict moved to a
+  meter check at each planned activation (`TrackPlayer.CheckStarPowerPathMeter`, third cursor
+  `_spPlanMeterIndex`). The root cause was the model not counting unison bonuses, which
+  `BaseEngine.AwardUnisonBonus` pays on every unison phrase and which a single-player run is
+  awarded in full. `SpScoreModel` now takes an optional `IReadOnlyList<SpUnisonPhrase>`
+  (`FiveFretGuitarPlayer.GetUnisonPhrases()` reads `EngineContainer.UnisonPhrases`, the very list
+  the engine awards against; a null container costs the plan its bonuses, not the overlay), so
+  a unison phrase end banks two quarter bars and extends an open window twice. See
+  `docs/sp-path-design.md` → "Divergence, corrected" and "Unison bonuses, modelled".
+- **The cue is now player-configurable (2026-09-04).** Four settings in Graphics → HUD after
+  `ShowStarPowerPath`, greyed out with it via `EditableWhen`: `StarPowerPathColor` (`ColorSetting`,
+  default `#52FF00`, drives every surface including the derived band body and the chip),
+  `StarPowerPathChipLeadIn` (slider, 1–8 s, step 0.5, default 3), `StarPowerPathChipHold` (slider,
+  0–3 s, step 0.25, default 0.75) and `StarPowerPathFretGlow` (toggle, default on;
+  `ReduceFlashingLights` still overrides it). Read once per path in
+  `TrackPlayer.ReadStarPowerPathSettings()`, so pause-menu changes land on the next song. See
+  `docs/sp-path-design.md` → "Player settings (2026-09-04)".
 
-Manual test steps (from `docs/sp-path-design.md`):
+Files: `Assets/Script/Gameplay/Visuals/TrackElements/SpPathMarkerElement.cs` (rewritten),
+`Assets/Script/Gameplay/HUD/SpPathChip.cs` (new), `Assets/Script/Gameplay/HUD/TrackView.cs`,
+`Assets/Script/Gameplay/Player/TrackPlayer.cs`,
+`Assets/Script/Gameplay/Player/FiveFretGuitarPlayer.cs`,
+`Assets/Script/Gameplay/Visuals/TrackElements/NoteElement.cs`,
+`Assets/Script/Gameplay/Visuals/TrackElements/NoteGroup.cs`,
+`Assets/Script/Gameplay/Visuals/TrackElements/Guitar/FiveFretGuitarNoteElement.cs`,
+`Assets/StreamingAssets/lang/en-US.json`.
 
-1. Settings → Graphics → HUD: **Show Star Power Path** exists right after **Show Section Strip**,
-   defaults to off, description mentions full combo, no whammy, single player. Turn it on.
-2. Play a 5-fret guitar or bass song alone. The log carries one
-   `SP path (FiveFretGuitar): N activation(s), first at tick … projected …` line, and orange bands
-   appear on the highway at those notes.
-3. Miss a Star Power phrase → `SP path: diverged — a Star Power phrase was missed`, and every marker
-   on screen drops to a faint orange for the rest of the song.
-4. Restart, activate Star Power somewhere unmarked → `Star Power was activated off-plan`.
-5. Restart, let a marker go by → after ~0.25 s, `a planned activation was not taken`.
-6. Restart, miss an ordinary note and drop a sustain without failing a Star Power phrase → **no**
-   divergence line and the markers stay bright. Since `088d5016` only the Star Power state dims the
-   path; missed notes and dropped sustains leave the meter where the plan predicts.
-7. Same song with a second **human** player: no markers,
-   `SP path: skipped, 2 human player(s) in this run`. A **bot** second player instead: markers
-   return.
-8. Drums or vocals with the setting on: no markers and no log line at all.
-9. Practice mode: `SP path: skipped, practice mode`, no markers in any section.
-10. Replay playback: `SP path: skipped, replay playback`, no markers.
+**Next session's first task:** the user tests the redesigned visuals. `dotnet build` only covers
+`Assembly-CSharp`, so none of the new geometry, the chip or the settings row has been through a
+Unity compile or a real frame. Highest-risk unverified items, in order (the full list is in
+`docs/sp-path-design.md` → "What still needs verifying in the editor"):
+
+1. **The runtime-cloned geometry** — 24 quads per pooled marker; the `X+90` rotation convention
+   read the wrong way round would draw the band across the highway instead of along it.
+2. **`RemovePointOffset = 2f`** on a band centred on the activation instant.
+3. **The ring lining up with the notes**, especially under lefty flip.
+4. **The code-built uGUI chip** rendering inside `Top Elements` with a font borrowed from another
+   `TextMeshProUGUI` in the view, and really hiding for the whole solo.
+5. **The strike line glow** reading as a glow rather than a grey slab, and the colours surviving
+   the curve/fade shaders.
+6. **The settings row** rendering with its reworded copy.
+
+Manual test steps: `docs/sp-path-design.md` → "Manual test steps (redesigned visuals)".
 
 **Exclusions are deliberate**, not bugs: no path in practice mode, none during replay playback, and
 none in a band run with more than one human player (bots do not count). Only 5-fret guitar and bass
@@ -197,8 +235,9 @@ compute a path; drums and vocals do not override `RecomputeStarPowerPath`. The p
 
 ### Suggested next steps, in order
 
-1. **SP path editor verification** — re-test with the new dim rule and confirm markers render; debug
-   the pool if they do not (above).
+1. **SP path editor verification** — test the redesigned visuals (green ring + band + rail caps,
+   strike line glow, `ACTIVATE IN n` chip); debug the runtime geometry or the chip if they do not
+   appear (above).
 2. **Push the branch** — ten commits plus this doc update have never left the machine.
 3. **Score import** — run `tools/import-scores.ps1` once the user's `scores.db` and `profiles.json`
    arrive.

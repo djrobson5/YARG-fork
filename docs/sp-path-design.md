@@ -148,6 +148,7 @@ distinct child tick (`Guitar/GuitarEngine.cs:424-439`).
 ### 1.5 Star Power gain, drain and window
 
 - **Gain:** completing a phrase awards exactly `TicksPerQuarterSpBar` — `AwardStarPower` (`BaseEngine.Generic.cs:1158-1163`) → `GainStarPower` (`BaseEngine.cs:522`). Four phrases fill the bar. Clamped to `TicksPerFullSpBar` at `BaseEngine.cs:532-535`.
+- **Unison bonus:** a phrase that is part of a *unison* pays a **second** `TicksPerQuarterSpBar`. `AwardStarPower` raises `OnStarPowerPhraseHit` right after gaining the first quarter (`BaseEngine.Generic.cs:1158-1163`); `EngineManager.OnStarPowerPhraseHit` (`EngineManager.UnisonEvent.cs:336-360`) finds the matching `UnisonEvent`, and once every participant has cleared it sends `AwardUnisonBonus` to each (`BaseEngine.cs:637-641`), which is another `GainStarPower(TicksPerQuarterSpBar)`. So the order is *phrase, clamp, unison, clamp* — two clamped quarter-bar gains, which lands on the same number as one clamped half-bar gain, and while Star Power is active it runs the window-extension line twice. Modelled since 2026-09-04; see "Unison bonuses, modelled" below.
 - **Credited at the note carrying `IsStarPowerEnd`** (`Guitar/GuitarEngine.cs:263-267`), *not* at `Phrase.TickEnd`. `PhraseType.StarPower` is documented as visual-only; the authority is `NoteFlags.StarPower` on the note.
 - **Overlap:** with `NoStarPowerOverlap == true`, a phrase hit while SP is already active is stripped instead of awarded (`Guitar/GuitarEngine.cs:259-261`). Default false.
 - **Drain:** `CalculateStarPowerDrain(measureTick, lastMeasureTick) => measureTick - lastMeasureTick` (`BaseEngine.Generic.cs:1073-1076`) — 1:1 with measure ticks. A full bar always lasts exactly 8 measures of chart time, tempo-independent and **meter-aware**. CHOpt's flat-beat model diverges on any chart with a time-signature change, so CHOpt is a cross-check, never an oracle.
@@ -481,6 +482,13 @@ the mechanical shape they imply.
 - **The section strip is the wrong rendering precedent** (`Assets/Script/Gameplay/HUD/SectionStrip.cs` is runtime uGUI under a `HorizontalLayoutGroup`) but the right data-flow precedent, as used throughout §4.
 
 ### 5.1 Locked UI decisions
+
+> **Superseded 2026-09-04.** Everything in this subsection about how the overlay *looks* — a
+> single Star Power orange band, "point only", "always drawn", the whole-run alpha dim — was
+> replaced by "Visual redesign, 2026-09-04" at the end of this document. The rows about the
+> *setting* (placement, scope, copy), the band-run gate and the section strip coexisting still
+> stand. The text is kept as the record of what was decided and why it did not survive first
+> contact with the editor.
 
 The mockup interview §5 deferred is **done (2026-09-03)**. These are locked; the trailing "open
 questions" list below is kept only as the record of what was asked.
@@ -1037,3 +1045,417 @@ Nothing here has been through a Unity compile or a real frame; `dotnet build` co
    override `RecomputeStarPowerPath`).
 9. Enter practice mode: `SP path: skipped, practice mode`, and no markers appear for any section.
 10. Play back a replay of the same song: `SP path: skipped, replay playback`, no markers.
+
+---
+
+## Visual redesign, 2026-09-04
+
+**Supersedes the UI rows of "5.1 Locked UI decisions".** The slice-5 marker — a thin
+beatline-thickness band in Star Power orange — was never visually identifiable in the editor.
+Two reasons, and only one of them is a bug: it is the same thickness as a beat line, and it is
+the same colour as the Star Power notes, the Star Power phrase region and the Star Power bar it
+sits next to. A mockup interview (four options, Option D chosen) settled the replacement.
+
+### The decisions
+
+| # | Decision |
+|---|---|
+| 1 | **Direction D — split the cue in two.** A *spatial* cue on the highway at the activation note, and a *temporal* cue in the HUD. Neither alone is enough: the highway cue is useless while the note is beyond the spawn horizon, and the HUD cue cannot say "on *that* note". |
+| 2 | **Colour: the drum Star Power activation green upstream already ships** — trim `#52FF00`, body `#005400`, the `_Color` and `_EmissionColor` of `Assets/Art/Materials/Gameplay/Track/Effects/DrumSPActivationTrim.mat`. **Not** Star Power orange, and the highway preset's `StarPowerColor` is now ignored for the marker outright. The colour is the substantive change: it is the one thing that makes the marker distinguishable from the four orange things beside it, and it borrows a hue the game already means "activate here" with. |
+| 3 | **Extent: the activation instant plus a short lead-in of one to two beats**, taken from the chart's own beatlines — **not** the whole Star Power window. A region spanning the window competes with the SP fill and with solo/unison regions for the same highway. |
+| 4 | **Highway cue.** The activation note(s) get a bright green ring; a short full-width band about one beat long (body green at `0.17` alpha) sits under them with brighter trim-green rail caps at the highway edges, so the marker has a footprint wider than one lane; a lead-in tick sits on the beat before. Louder than a beat line by construction — a beat line is one 0.05-thick quad, this is a beat-long band plus rails plus a ring. |
+| 5 | **Fret glow.** When the activation moment arrives (inside the activation grace window) a **steady** green wash is drawn over the strike line. Steady, never strobing, and **skipped entirely** when `ReduceFlashingLights` is on. |
+| 6 | **HUD chip.** A compact green-outlined chip in the top band — the same band as the solo box and the text notifications, above the far end of the highway and off the lanes — reading `ACTIVATE IN {n}` with a countdown in whole beats, `ACTIVATE` inside the grace window. **Its lead-in is decoupled from the highway tick's one beat** (revised 2026-09-04: the first editor test found a one-beat chip "comes and goes so quickly it's almost imperceptible"): the chip appears at the *earlier* of the measure line before the activation and 3.0 s before it, capped at 6.0 s so a slow chart cannot leave it up indefinitely; if the previous activation's window would overlap, the nearer activation takes over. It then holds past the grace window — `ACTIVATE` for 0.75 s on plan, `OFF PLAN` for 1.5 s once diverged — and hides. Visible at no other time; hidden whenever the solo box is showing. Localised. |
+| 7 | **Diverged state** (the rule from `088d5016` is unchanged — only Star Power state divergence dims): band, rails, lead-in tick and fret glow all **off**; the ring desaturates to grey at `0.22` alpha; the chip switches to `OFF PLAN`. |
+| 8 | **Settings: the same `ShowStarPowerPath` toggle**, Graphics → HUD. Its description was reworded (it said "markers … dim"; it now says the cue rings notes and counts down, and "fades"). Every exclusion stands: practice, replay, more than one human, non-5-fret. |
+
+### How it is built
+
+Still **no prefab, material, scene or shader asset touched.** Everything is cloned at runtime
+from `Beatline.prefab`'s quad, which is the one piece of highway geometry the code can reach
+without an editor pass and which already carries a material the curve/fade shaders understand.
+
+| Piece | Where |
+|---|---|
+| Band, rails, lead-in tick, ring | `SpPathMarkerElement` (`Assets/Script/Gameplay/Visuals/TrackElements/SpPathMarkerElement.cs`). `BuildGeometry()` clones the beatline quad once per pooled object — the template quad becomes the band, plus two rails, a lead-in tick and `5 x 4` ring edges. `InitializeElement()` sizes and places them per spawn; `SetQuad` encodes the prefab's convention that a quad rotated `X+90` has its local Y along the highway and its local X across it. |
+| Colours | `SpPathMarkerElement.ActivationTrimColor` / `ActivationBodyColor`, copied from the drum activation material. `ApplyColors()` is called every frame but writes only when the divergence flag moves. |
+| Ring lanes | `TrackPlayer.GetActivationLaneXPositions(noteIndex, list)`, `virtual` and empty by default, overridden in `FiveFretGuitarPlayer`. Full-width and open-without-a-lane notes contribute nothing — the band already spans everything a ring could. |
+| Lead-in and band length | `TrackPlayer.BuildStarPowerPathMarkerInfos()` + `FindLastBeatlineBefore()`, computed once when the path arrives, from `SyncTrack.Beatlines`. Deliberately in the Unity layer: `Assets/Script/Gameplay/SpPath/` stays Unity-free and knows nothing about rendering. |
+| Fret glow | `SpPathMarkerElement.CreateStrikeLineGlow()` builds one quad at `STRIKE_LINE_POS`; `TrackPlayer.ShowStarPowerPathGlow()` toggles it. Built only when `ReduceFlashingLights` is off, so the setting is read once per song rather than per frame. |
+| HUD chip | `SpPathChip` (`Assets/Script/Gameplay/HUD/SpPathChip.cs`), built from code by `SpPathChip.Create()` into `TrackView`'s `_topElementContainer` — so it inherits `ScaleContainer`'s scaling and the container's placement at the highway's far end with no `TrackView.prefab` edit. The font is borrowed from any `TextMeshProUGUI` already in the view (the solo box and the section strip both have one). The green border is a second, inset `Image` rather than an `Outline` component, which on a solid rect reads as a drop shadow. |
+| Chip driving | `TrackView.SetStarPowerPathChip(show, text, diverged)`, re-evaluated from `UpdateTextNotificationStatus()` so a solo starting or ending always re-decides it; and `TrackPlayer.UpdateStarPowerPathHud()`, run per frame off the `_spHudIndex` cursor against `GameManager.SongTime`. |
+| Strings | `Gameplay.StarPowerPath.{ActivateIn, ActivateNow, OffPlan}` in `Assets/StreamingAssets/lang/en-US.json`. |
+
+The temporary diagnostic logging from the visibility investigation is gone. What remains is one
+`SP path: N activation(s) to draw ...` line per path and one `SP path: spawned marker N/M at t=...`
+line per spawn.
+
+The near-black preset-colour fallback is **gone with it**: decision 2 ignores
+`HighwayPreset.StarPowerColor` entirely, so there is no preset colour left to fall back from.
+`SpPathMarkerElement.DefaultMarkerColor` survives as an alias of the trim green.
+
+### What still needs verifying in the editor
+
+Nothing below has been through a Unity compile or a real frame; `dotnet build` covers only
+`Assembly-CSharp`. In rough order of risk:
+
+1. **The runtime geometry.** That cloning the beatline quad 24 times per pooled marker produces
+   the intended band + rails + ring + tick, that the `X+90` rotation convention is read the right
+   way round (a band that comes out running *across* the highway instead of along it is the
+   failure mode), and that the pieces do not z-fight with each other or with the beat lines they
+   overlap. Heights are staged `0.0030 / 0.0034 / 0.0040` above the beatline quad's own `0.002`.
+2. **`RemovePointOffset = 2f`.** The band is centred on the activation, so half of it is behind
+   the strike line when the note lands. If the offset is too small the marker pops; too large and
+   it lingers under the frets.
+3. **The ring lining up with the notes.** `GetActivationLaneXPositions` duplicates
+   `TrackElement.GetElementX`'s arithmetic; a lefty-flip run is the case to check, since the ring
+   goes through `GetLanePosition` (which already accounts for highway ordering) and the note
+   element does the same, but neither applies `LeftyFlipMultiplier`.
+4. **The HUD chip.** That a code-built uGUI chip renders at all inside `Top Elements`, that the
+   borrowed font asset is usable, that it does not collide with the streak text, and that it
+   really disappears for the whole solo.
+5. **The strike line glow** reading as a glow and not as a grey slab, given it is an unlit quad
+   with no bloom of its own.
+6. **The colour** surviving the curve/fade shaders, and the diverged grey ring still being
+   visible at `0.22` alpha.
+7. **The settings row** rendering with its new copy.
+
+### Manual test steps (redesigned visuals)
+
+1. Settings → Graphics → HUD: **Show Star Power Path** exists right after **Show Section Strip**,
+   defaults to off, and its description mentions full combo, no whammy, and single player. Turn it
+   on.
+2. Play a 5-fret guitar or bass song alone. The log carries one
+   `SP path (FiveFretGuitar): N activation(s) ...` line, one `SP path: N activation(s) to draw ...`
+   line, and one `SP path: spawned marker k/N at t=...` line per marker as it comes over the horizon.
+3. At each activation: a **green** band about one beat long crosses the highway with bright green
+   rail caps at both edges, the note(s) to hit are ringed in the same green, and a tick sits on the
+   beat before. Nothing about it is orange.
+4. Several seconds out — at the measure line before the activation, or three seconds before it,
+   whichever is earlier, and never more than six — a green-outlined **ACTIVATE IN 4** chip appears
+   in the top band above the highway, counts down a whole beat at a time to **ACTIVATE IN 1**, and
+   switches to **ACTIVATE** as the note arrives. On plan it holds **ACTIVATE** for 0.75 s past the
+   grace window and hides; off plan it holds **OFF PLAN** for 1.5 s and hides. It is invisible at
+   every other moment of the song.
+5. As the activation note reaches the strike line, a steady green wash sits over the strike line.
+   It does not blink. Turn **Reduce Flashing Lights** on and replay: the wash is gone, everything
+   else is unchanged.
+6. Trigger an activation whose lead-in overlaps a solo: the chip does not appear while the solo box
+   is up, and comes back if the lead-in outlasts the solo.
+7. Miss a note that is **not** inside a Star Power phrase, and drop a sustain. Nothing changes.
+8. Miss a note **inside** a Star Power phrase. `SP path: diverged - a Star Power phrase was missed`
+   is logged; every marker — the ones on screen included — loses its band, rails and tick, the ring
+   goes faint grey, the strike line glow stops firing, and the chip reads **OFF PLAN**.
+9. Restart and activate Star Power somewhere the plan does not mark ->
+   `Star Power was activated off-plan`. Restart and let a marker go by -> after ~0.25 s,
+   `a planned activation was not taken`.
+10. The band-run, drums/vocals, practice and replay exclusions are unchanged; re-run steps 7-10 of
+    the 2026-09-03 list above.
+
+---
+
+## Divergence, corrected — the phrase-missed false positive (2026-09-04)
+
+**Symptom.** Two consecutive editor runs of *I Just Might (Rhythm Version)* (Expert 5-fret guitar,
+single human player, 4 planned activations, first at 54.612 s) both logged
+
+```
+SP path: diverged — a Star Power phrase was missed. (FiveFretGuitar, 37.243s)
+```
+
+at ~37.2 s, seventeen seconds before the first marker, and the HUD chip sat on OFF PLAN for the
+rest of the song. The player had lost no Star Power phrase they were aware of, and their bar was
+*full* before 54.6 s — full enough that a further phrase was collected and wasted.
+
+**Where the check lived.** `TrackPlayer.OnStarPowerPhraseMissed(TNote)` called
+`SetStarPowerPathDiverged` directly, off the engine's `OnStarPowerPhraseMissed` event. That event
+is raised from exactly one place, `BaseEngine.Generic.StripStarPower` (`:1155`), which is reached
+from three:
+
+| Site | Trigger |
+|---|---|
+| `Guitar/GuitarEngine.cs:322` | `MissNote` on a note carrying `NoteFlags.StarPower` |
+| `Guitar/GuitarEngine.cs:193` | `Overstrum()`, when `Notes[NoteIndex]` is mid-phrase (phrase-start notes are exempted) |
+| `Guitar/GuitarEngine.cs:261` | `HitNote` under `NoStarPowerOverlap`; no shipped preset sets the flag |
+
+So the check was **event-driven, not tick-driven**. None of the classic false-positive causes
+applied: it never evaluated a phrase at its tick end, never raced the back-end hit window, never
+compared a model phrase count against `StarPowerPhrasesHit`, and never read `StarPowerAmount` with
+a tolerance. The engine had already made its decision when the callback fired, and the third site
+is unreachable here — the two count rules would have dimmed at the off-plan activation first, and
+no activation had happened by 37.2 s.
+
+**The actual defect is the inference, not the timing.** "A phrase was stripped" was treated as
+"the plan is now unfundable". It is not, because the player's real meter is fed by a source the
+optimizer does not model: **unison bonuses**. `BaseEngine.AwardUnisonBonus` (`BaseEngine.cs:637`)
+hands out a free `TicksPerQuarterSpBar` whenever every participant clears a unison phrase, and
+`EngineManager.UnisonEvent.OnStarPowerPhraseHit` fires it in single-player runs too — the same log
+shows three of them (7.14 s, 18.64 s, 102.52 s) before and around the window in question. Each one
+doubles that phrase's yield. That is also the whole explanation for the second symptom: the bar
+being full and overflowing well before the first planned activation is what a plan that counts one
+quarter bar per phrase looks like when the engine is paying two. The plan was not wrong about the
+chart; it was funded more generously than it assumed.
+
+**The fix.** The phrase-strip event is now *recorded and logged*, never acted on. The verdict moved
+to §4.4's third bullet, which had never been implemented: at each activation's own note,
+
+```
+BaseStats.StarPowerTickAmount < Activation.MeterAtActivation × StarPowerPath.TicksPerQuarterSpBar
+```
+
+dims the overlay. `TrackPlayer.CheckStarPowerPathMeter` runs it off a third cursor
+(`_spPlanMeterIndex`), at `ActivationTime` rather than at the edge of the grace window — the latest
+moment a verdict is still useful, so a phrase landing in the final quarter-second still counts. It
+is skipped while `IsStarPowerActive`, because the amount is then a draining window rather than a
+bank (which is what it looks like when the player took this very activation early inside its grace
+window). The two count rules — off-plan activation, planned activation not taken — are unchanged
+and still evaluated first.
+
+`StarPowerPath` gained two fields to make this possible without duplicating a constant a third
+time: `TicksPerQuarterSpBar`, and `PhraseEndTicks` (diagnostics).
+
+**Logging.** Every divergence line now carries the engine's phrase counters, meter in ticks and in
+quarter bars, activation count, whammy ticks and total ticks earned, plus the plan's activation
+count, modelled phrase count, all three cursors, and the next activation's note index, tick, time,
+meter and measure-tick window. Phrase strips log their own line with the note's tick and time and
+whether the engine reached `StripStarPower` through a missed note or an overstrum
+(`note.WasMissed` separates them — `MissNote` sets the miss state before stripping, `Overstrum`
+does not). `FiveFretGuitarPlayer.LogStarPowerPathPhrases` logs the model's phrase count and
+phrase-end ticks next to the engine's `TotalStarPowerPhrases` at path-compute time.
+
+**Audit of the model against the engine, for the record:**
+
+- *Phrase set.* Both sides read `IsStarPowerEnd` off the same post-modifier note track — the model
+  in `ScoreModel.Build`, the engine at `Guitar/GuitarEngine.cs:263-267` — so they agree by
+  construction. `SpPathDivergenceTests.PhraseEndTicks_MatchTheEnginesPhraseCountAndTheChart` pins
+  it against a live engine's `TotalStarPowerPhrases`.
+- *Meter cap.* `SpScoreModel.MeterAfter` clamps at `MaxQuarterBars = 4`, so a phrase collected on a
+  full bar is modelled as wasted, exactly as `GainStarPower`'s clamp (`BaseEngine.cs:532-535`)
+  does it.
+- *Activation points.* The DP's outer loop runs over **every** scoring note index, so it can
+  activate anywhere; nothing quantises it or forces it past a phrase.
+- *Award timing.* `MeterAtActivation × TicksPerQuarterSpBar` is asserted to equal the engine's
+  banked `StarPowerTickAmount` at every activation of a scripted run following the path
+  (`MeterAtActivation_IsTheAmountTheEngineHasBankedAtThatActivation`).
+
+So the model is faithful to what it models. **The gap was the unison bonus, which it did not model
+at all.** That gap is closed below; the meter rule this section introduced is what made the gap
+harmless in the meantime, because a surplus meter can never fall short.
+
+Harness: 39 tests (was 35), `dotnet test tools/SpPathTests/SpPathTests.csproj`.
+
+---
+
+## Unison bonuses, modelled (2026-09-04)
+
+Closes the open item this fork carried since the divergence investigation above.
+
+### What the engine does
+
+| Step | Where |
+|---|---|
+| Hitting a phrase-end note gains a quarter bar and raises `OnStarPowerPhraseHit` | `AwardStarPower`, `BaseEngine.Generic.cs:1158-1163` |
+| The container forwards it to the manager | `EngineContainer.OnStarPowerPhraseHit`, `EngineManager.cs:98-101` |
+| The manager finds the `UnisonEvent` whose *own* phrase for this engine contains the hit time (`phrase.Time <= time <= phrase.TimeEnd`) and counts a success | `EngineManager.UnisonEvent.cs:336-360` |
+| When `SuccessCount == ParticipantToPhrase.Count` every participant is sent `AwardUnisonBonus`, once (`unison.Awarded`) | `AwardStarPowerBonus`, `:362-380`; `UnisonEvent.Success`, `:122-140` |
+| Which is a second `GainStarPower(TicksPerQuarterSpBar)` | `BaseEngine.cs:637-641` |
+
+Two consequences the model depends on:
+
+- **A single-player run is awarded every unison.** `ParticipantToPhrase` holds only the *registered*
+  engines (`AddPlayerToUnisons`, `:158-200`), so with one player the one success is all of them. The
+  unison *phrases* themselves come from the chart, not from who is playing
+  (`GetUnisonPhrases`, `:232-330`: the player's Star Power sections that coincide, within a
+  sixteenth minus a tick, with a section on a track from another instrument group). Pinned by
+  `SpUnisonTests.ASinglePlayerRunReallyIsAwardedTheUnisonBonus`, which drives one registered engine
+  and finds `TotalStarPowerTicks == (phrases + unisons) × quarter`.
+- **Under `NoStarPowerOverlap` a phrase hit while active is stripped, not awarded**
+  (`Guitar/GuitarEngine.cs:259-261`), so `OnStarPowerPhraseHit` never fires and there is no unison
+  bonus either. The model's existing overlap branch already covers this.
+
+### What the model does
+
+`SpScoreModel` takes an optional `IReadOnlyList<SpUnisonPhrase>` — plain quarter-tick ranges, no
+Unity and no `YARG.Core.Engine` types on the boundary. In the constructor it precomputes
+`_quarterBarsGained[scoringNote]`: 0, 1 for a phrase end, 2 when that note's tick falls inside one
+of the ranges (ends included, mirroring the engine's time test). Everything downstream reads that
+array instead of `IsPhraseEnd`:
+
+- `MeterAfter` adds `gained` and clamps once at `MaxQuarterBars`. Exact, because the engine's clamp
+  is applied on *every* `GainStarPower` call and `min(min(m+1,4)+1,4) == min(m+2,4)`.
+- `WalkWindowEnd` runs its extension step `gained` times, each step
+  `E ← min(E + quarter, m + full)` with the same `m` (the phrase note), which is what the engine's
+  `end = position + amount` gives when `GainStarPower` runs twice from the same position.
+
+Nothing else changes: with no list (or an empty one) every gain is 1 and the model is bit-for-bit
+what it was, which `SpUnisonTests.NoUnisonPhrases_LeavesThePathExactlyWhereItWas` asserts against
+the existing golden.
+
+`StarPowerPath` gained `UnisonPhraseEndTicks`, the subset of `PhraseEndTicks` the plan expects a
+bonus on — diagnostics, and the compute-time log's unison count.
+
+### Plumbing
+
+`FiveFretGuitarPlayer.GetUnisonPhrases()` reads `EngineContainer.UnisonPhrases` — the very list the
+award path matches against — and hands it to `SpPathOptimizer.Optimize`. The container is built in
+`CreateEngine`, which runs before every `RecomputeStarPowerPath` call site, and a null container
+costs the plan its bonuses rather than the whole overlay. **No change to `GameManager` or to
+`YARG.Core` was needed.**
+
+The compute-time log lines now carry the unison count, and `LogStarPowerPathPhrases` prints the
+model's unison count next to the container's.
+
+### Goldens
+
+`drawntotheflame` **does have unisons** — 11 of its 20 guitar phrases coincide with bass phrases —
+so the fixture now carries two optima, and both are exact:
+
+| Golden | Value | Engine it is the optimum for |
+|---|---|---|
+| `SpPathOptimizerTests.DrawnToTheFlameGuitarOptimalScore` | 392,750 | An engine with **no** `EngineManager`, which awards no unison bonuses. Unchanged; every pre-existing test drives this engine. |
+| `SpUnisonTests.DrawnToTheFlameGuitarUnisonOptimalScore` | **427,954** | An engine registered with an `EngineManager`, i.e. the game. 10 activations instead of 7, the first moving from 38.25 s to 24.0 s. |
+| `GoldenScoreTests.DrawnToTheFlameGuitarGreedyBotScore` | 376,558 | Stock greedy bot, no `EngineManager`. Unchanged. |
+
+The unison-aware plan is reproduced on a live engine *exactly* — meter at activation, both window
+bounds and `TotalScore`, for all ten windows
+(`SpUnisonTests.UnisonAwarePlan_MatchesALiveEngineThatAwardsUnisons`, which is the unison extension
+of `SpPathDivergenceTests.MeterAtActivation_IsTheAmountTheEngineHasBankedAtThatActivation`; the
+latter keeps testing the no-`EngineManager` engine).
+
+### The fixture
+
+`SyntheticChart.Dense.Load(withUnisons: true)` adds a `PART BASS` track carrying Star Power phrases
+over the **first phrase of each block only**. It has to be a subset: a bass track mirroring *every*
+guitar phrase produces no unisons at all, because `ChartExtensions.SpListIsDuplicate` drops a
+candidate track whose section list matches an accepted one tick for tick. On that fixture the plan's
+first activation moves from 16.0 s to 12.0 s and the projection from 30,750 to 31,550 — the
+"markers are late" symptom, reproduced and fixed in miniature.
+
+Harness: 49 tests (was 39), `dotnet test tools/SpPathTests/SpPathTests.csproj`.
+
+### Still not modelled
+
+Whammy (§1.6, deliberate) and coda/BRE bonuses. Both can only make the player's meter *exceed* the
+plan's, never fall short.
+
+---
+
+## The dim states are gone, and the activation note is recoloured (2026-09-04)
+
+**Locked by the user, superseding decision 7 of "Visual redesign, 2026-09-04" and the "Behaviour on
+deviation" row of §5.1.**
+
+### The path is always shown at full brightness
+
+The overlay is *information about the next run*, not a live scoreboard. A plan that fades out the
+moment the player drops a phrase is a plan they cannot read for the rest of the song, which is
+exactly when they most want to see where the good activations were. So:
+
+- `SpPathMarkerElement.ApplyColors()` has one state. The dimmed band/rail/tick removal, the grey
+  ring (`DivergedRingColor`) and `DIVERGED_ALPHA` are deleted, and `UpdateElement()` no longer
+  repaints per frame — the colours are written once per spawn.
+- The strike line glow depends on the activation window only:
+  `TrackPlayer.UpdateStarPowerPathHud()` calls `ShowStarPowerPathGlow(atActivation)`.
+- The HUD chip has one state too: `ACTIVATE IN n`, then `ACTIVATE`, held `SP_CHIP_HOLD_ON_PLAN`
+  (0.75 s) past the grace window. `SpPathChip.SetState(bool, string)` and
+  `TrackView.SetStarPowerPathChip(bool, string)` lost their `diverged` parameter, and
+  `SP_CHIP_HOLD_DIVERGED` and the `Gameplay.StarPowerPath.OffPlan` string are gone.
+
+**The divergence detection stays, as a log-only diagnostic.** `UpdateStarPowerPathDivergence`,
+`CheckStarPowerPathMeter`, `NoteStarPowerPhraseLost`, `SetStarPowerPathDiverged` and their detailed
+log lines are unchanged — they are the cheapest way to check the model against the live engine, and
+the meter rule from "Divergence, corrected" is worth keeping honest. `BasePlayer.SpPathDiverged` is
+still set; **nothing visual reads it any more.**
+
+### The activation note itself is green
+
+The band, rails, ring, tick, glow and chip are all built at runtime out of cloned quads and
+code-built uGUI, and none of them had been seen rendering. The note model, by contrast, is
+unquestionably on screen. So the cue now also recolours the note it is about:
+
+- `INoteElement.IsStarPowerPathActivation` (`NoteElement.cs`), implemented as an auto-property on
+  `NoteElement<TNote, TPlayer>` so every instrument compiles.
+- `TrackPlayer.SpawnNote` **always** assigns it — elements are pooled, so a stale `true` would leave
+  an ordinary note green. The value comes from `TrackPlayer.SpawningActivationNote`, set by
+  `UpdateNotes` for the whole chord from `IsStarPowerPathActivationNote(noteIndex)`, which reads the
+  `_spActivationNoteIndices` set built alongside `_spMarkers`.
+- `FiveFretGuitarNoteElement.TryApplyStarPowerPathColor()` short-circuits `UpdateColor()` to
+  `SpPathMarkerElement.ActivationTrimColor` with `NoteGroup.BoostEmission(2.5f)` (a new method on
+  `NoteGroup` that scales the emission colour `SetColorWithEmission` just wrote). Because it runs
+  from `UpdateColor`, it is honoured on every repaint path — spawn, Star Power toggle, hit and miss
+  — and it releases the colour as soon as `NoteRef.WasHit || NoteRef.WasMissed`, after which the
+  normal colours apply.
+
+### Temporary diagnostics — removed 2026-09-04
+
+The two `SP path: TEMPORARY` log families added for the runtime-geometry visibility investigation
+(`SpPathMarkerElement.LogSpawnDiagnostics()`, one line per spawned marker; and one line per glow
+show in `TrackPlayer.ShowStarPowerPathGlow()`) are **gone.** The user confirmed the highway band,
+the recoloured note and the chip all render, which is the question they existed to answer. The
+permanent log lines stay: the optimizer's compute-time line, the per-marker spawn line, and the
+whole divergence/phrase-strip family.
+
+### Manual test steps (amended)
+
+Steps 1-6 of "Manual test steps (redesigned visuals)" stand, with two additions and two rewrites:
+
+- **3a.** The activation note(s) themselves are drawn in the same bright green as the ring and bloom
+  slightly, from the moment they spawn until they are hit or missed. Every note of an activation
+  chord is green, not just the lowest.
+- **4a.** The chip only ever reads `ACTIVATE IN n` and `ACTIVATE`. There is no `OFF PLAN`.
+- **8 (rewritten).** Miss a note **inside** a Star Power phrase.
+  `SP path: Star Power phrase stripped ...` appears in the log, and possibly
+  `SP path: diverged — ...` later. **Nothing on screen changes:** the markers, the green notes, the
+  glow and the chip all stay at full brightness for the rest of the song.
+- **9 (rewritten).** Activate Star Power somewhere the plan does not mark, or let a marker go by.
+  The divergence line is logged; again, the cues stay bright and keep marking every remaining
+  activation.
+
+
+---
+
+## Player settings (2026-09-04)
+
+The cue's colour and the chip's timing are the two things a mockup cannot settle for everyone —
+colour because the default green collides with some highway presets and with some kinds of colour
+blindness, timing because how much warning is useful scales with the player. Both are now the
+player's, along with a separate switch for the strike line glow, which is the one piece of the cue
+that moves.
+
+All four live in **Settings → Graphics → HUD**, immediately after `ShowStarPowerPath`, and all four
+are wired to `EditableWhen = () => ShowStarPowerPath.Value`, so they grey out as a group whenever
+the path itself is off (`MetadataTab.OnSettingChanged` re-applies `SetEditable` on every change, so
+this happens live). Like every other Star Power path setting they are read once per path, in
+`TrackPlayer.ReadStarPowerPathSettings()` called from `OnStarPowerPathSet`; a change made from the
+pause menu takes effect on the next song, which the localised descriptions say outright.
+
+| Setting | Type | Range / default | Consumed by |
+| --- | --- | --- | --- |
+| `StarPowerPathColor` | `ColorSetting` (the existing colour-picker row, no transparency) | default `#52FF00` | `SpPathMarkerElement.SetCueColor()` → `ActivationTrimColor` / `ActivationBodyColor`, read by the band, rails, ring, lead-in tick, strike line glow, `FiveFretGuitarNoteElement.TryApplyStarPowerPathColor()` and `SpPathChip`'s border, label and body |
+| `StarPowerPathChipLeadIn` | `SliderSetting`, seconds | 1.0 – 8.0, step 0.5, default 3.0 | `TrackPlayer._spChipMinLeadIn` in `BuildStarPowerPathMarkerInfos()` |
+| `StarPowerPathChipHold` | `SliderSetting`, seconds | 0.0 – 3.0, step 0.25, default 0.75 | `TrackPlayer._spChipHold`, behind `ChipHoldDuration` |
+| `StarPowerPathFretGlow` | `ToggleSetting` | default on | the `CreateStrikeLineGlow` guard in `OnStarPowerPathSet` |
+
+Details worth keeping straight:
+
+- **The body tint is derived, not configured.** `SpPathMarkerElement.DeriveBodyColor()` takes the
+  cue colour's hue and saturation at `BODY_VALUE_SCALE = 0.33` of its value, which reproduces the
+  `#005400`-to-`#52FF00` relationship the redesign locked while working for any hue. The chip's
+  label and body are derived the same way — a desaturated full-value tint and a near-black wash —
+  so one colour drives eight surfaces.
+- **The measure-line rule is unchanged.** The chip still appears at whichever is *earlier*, the
+  measure line before the activation or the lead-in seconds, and the 6 s cap still applies —
+  except that the cap becomes `max(6, lead-in)` when the player asks for more than six seconds,
+  since capping below an explicit request would silently ignore the setting.
+  (`SP_CHIP_DEFAULT_MAX_LEAD_IN`, `_spChipMaxLeadIn`.)
+- **`ReduceFlashingLights` still wins.** The glow is never built when it is on, whatever
+  `StarPowerPathFretGlow` says: an accessibility setting outranks a cosmetic one.
+- **Slider stepping is new plumbing.** `SliderSetting` gained an optional `step` constructor
+  parameter that snaps in `SetValue`, relative to `Min`, so the snap applies to the handle, the
+  numeric field, the navigation-scheme increase/decrease entries and a value loaded from disk
+  alike. `step` defaults to `0` (continuous), so every existing slider is untouched.
+- **Serialisation round-trips with no new work.** `AbstractSettingConverter` writes
+  `ISettingType.ValueAsObject` against `ValueType`, so the two sliders are floats, the toggle a
+  bool and the colour a `Color` — exactly what `GraphicalSongProgressTint` already stores. A
+  settings file written before these existed simply lacks the keys, and the property initialisers
+  supply the defaults.
