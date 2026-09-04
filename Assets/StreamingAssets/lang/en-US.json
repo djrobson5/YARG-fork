@@ -775,6 +775,10 @@
             "Dropped": "DROPPED",
             "Preview": "SECTION"
         },
+        "StarPowerPath": {
+            "ActivateIn": "ACTIVATE IN {0}",
+            "ActivateNow": "ACTIVATE"
+        },
         "Solo": {
             "Performance": {
                 "Awesome": "AWESOME\nSOLO!",
@@ -1650,7 +1654,23 @@
             },
             "ShowStarPowerPath": {
                 "Name": "Show Star Power Path",
-                "Description": "Marks the notes where a perfect run should activate Star Power to score the most points. 5-fret guitar and bass only, and only when you are playing alone. The path assumes a full combo with no whammy, so it is a target rather than a promise. The markers dim once your Star Power stops matching the plan."
+                "Description": "Rings the notes where a perfect run should activate Star Power to score the most points, and counts down to them in a chip above your track. 5-fret guitar and bass only, and only when you are playing alone. The path assumes a full combo with no whammy, so it is a target rather than a promise."
+            },
+            "StarPowerPathColor": {
+                "Name": "Star Power Path Color",
+                "Description": "The color the whole Star Power path cue is drawn in: the marked notes, the band and ring on the highway, the glow at the strike line, and the countdown chip. Defaults to the bright activation green. Takes effect on the next song."
+            },
+            "StarPowerPathChipLeadIn": {
+                "Name": "Star Power Path Chip Lead-In",
+                "Description": "How many seconds before a planned activation the countdown chip appears, at the latest. The chip actually appears at whichever comes first, this or the measure line before the activation. Takes effect on the next song."
+            },
+            "StarPowerPathChipHold": {
+                "Name": "Star Power Path Chip Hold",
+                "Description": "How many seconds the countdown chip stays up after the moment to activate has passed, as confirmation. Set to zero to have it disappear immediately. Takes effect on the next song."
+            },
+            "StarPowerPathFretGlow": {
+                "Name": "Star Power Path Strike Line Glow",
+                "Description": "Washes the strike line in the path color while a planned activation is due. Always off when \"Reduce Flashing Lights\" is on. Takes effect on the next song."
             },
             "SongTimeOnScoreBox": {
                 "Name": "Song Time On Score Box",

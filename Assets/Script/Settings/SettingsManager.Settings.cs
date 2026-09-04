@@ -648,6 +648,13 @@ namespace YARG.Settings
             {
                 AutomaticPlaybackBuffer = new(true, AutomaticPlaybackBufferChanged);
                 PlaybackBufferLength.EditableWhen = () => !AutomaticPlaybackBuffer.Value;
+
+                // The four Star Power path customisations only mean anything while the path is
+                // being drawn at all, so they grey out with the master toggle.
+                StarPowerPathColor.EditableWhen = () => ShowStarPowerPath.Value;
+                StarPowerPathChipLeadIn.EditableWhen = () => ShowStarPowerPath.Value;
+                StarPowerPathChipHold.EditableWhen = () => ShowStarPowerPath.Value;
+                StarPowerPathFretGlow.EditableWhen = () => ShowStarPowerPath.Value;
             }
 
             public SliderSetting MicrophoneSensitivity { get; } = new(2f, -50f, 50f);
@@ -859,6 +866,44 @@ namespace YARG.Settings
             /// Read at song start, so flipping it mid-song does nothing until the next run.
             /// </remarks>
             public ToggleSetting ShowStarPowerPath { get; } = new(false);
+
+            /// <summary>
+            /// The colour the whole Star Power path cue is drawn in: the recoloured activation
+            /// note, the highway band, rails, ring and lead-in tick, the strike line glow, and
+            /// the HUD chip's border and label.
+            /// </summary>
+            /// <remarks>
+            /// The band's darker body tint is derived from this by dropping the value to about a
+            /// third, the way <c>#005400</c> relates to the default <c>#52FF00</c>. Read at song
+            /// start, so changing it mid-song does nothing until the next run.
+            /// </remarks>
+            public ColorSetting StarPowerPathColor { get; }
+                = new ColorSetting(new Color(0.32132697f, 1f, 0f, 1f), false);
+
+            /// <summary>
+            /// How many seconds before a planned activation the HUD chip appears, at the latest.
+            /// </summary>
+            /// <remarks>
+            /// The chip actually appears at the <i>earlier</i> of the measure line before the
+            /// activation and this many seconds before it, capped so a very slow chart cannot
+            /// leave it up half the song. Read at song start.
+            /// </remarks>
+            public SliderSetting StarPowerPathChipLeadIn { get; } = new(3f, 1f, 8f, step: 0.5f);
+
+            /// <summary>
+            /// How many seconds the HUD chip lingers past the activation window — a short beat of
+            /// confirmation. Read at song start.
+            /// </summary>
+            public SliderSetting StarPowerPathChipHold { get; } = new(0.75f, 0f, 3f, step: 0.25f);
+
+            /// <summary>
+            /// Draws a steady wash over the strike line while a planned activation is due.
+            /// </summary>
+            /// <remarks>
+            /// Never built when <see cref="ReduceFlashingLights"/> is on, whatever this says.
+            /// Read at song start.
+            /// </remarks>
+            public ToggleSetting StarPowerPathFretGlow { get; } = new(true);
 
             #endregion
 
