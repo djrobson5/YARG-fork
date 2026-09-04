@@ -8,16 +8,16 @@ Feature research lives in `docs/roadmap.md`; the state of each feature is in
 ## Branch state and next steps
 
 The branch is fully pushed to `fork/feature/section-fc` as of 2026-09-04 (head `c4441462` plus
-this commit). Next steps in order: (1) score import once the user's `scores.db` and
-`profiles.json` arrive, (2) cut a release build to exercise updater slices 2-3, then updater slice
-4 (apply), (3) periodic merge of upstream `dev`.
+this commit). Next steps in order: (1) cut a release build to exercise updater slices 2-3, then
+updater slice 4 (apply), (2) periodic merge of upstream `dev`.
 
-## Blocked
+## Parked
 
-- **Feature 1, score import.** `tools/import-scores.ps1` is ready and needs nothing further.
-  Waiting on the user to bring `scores.db` and `profiles.json` over from the other machine.
-  Decided: copy/overwrite rather than merge, import into both the nightly and the dev folders, and
-  the source `profiles.json` replaces the local one.
+- **Feature 1, score import.** The user's other machine runs the official nightly, and the fork's
+  CI build defines `YARG_NIGHTLY_BUILD`, so it reads the same
+  `%USERPROFILE%\AppData\LocalLow\YARC\YARG\nightly` folder; installing the fork there picks up
+  scores and profiles automatically, so no import is needed. `tools/import-scores.ps1` stays for
+  the stable-install (release folder) case.
 
 ## Unfinished features
 

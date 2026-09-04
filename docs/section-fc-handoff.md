@@ -74,12 +74,14 @@ would naturally belong there are done from the main repo instead — see the `Pr
 mixer leak in `docs/delete-song-design.md`, worked around by calling `Dispose()` from
 `StopPreviewAsync`.
 
-### Feature 1 — import scores from an official install: blocked on the user
+### Feature 1 — import scores from an official install: parked
 
 `tools/import-scores.ps1` is written and ready. Nothing else is needed; there is no Unity code.
 
-**Blocked on the user producing `scores.db` and `profiles.json` from the other machine.** Until
-those files exist there is nothing to run it against and nothing to verify.
+**Parked.** The user's other machine runs the official nightly, and the fork's CI build defines
+`YARG_NIGHTLY_BUILD`, so it reads the same `%USERPROFILE%\AppData\LocalLow\YARC\YARG\nightly`
+folder; installing the fork there picks up scores and profiles automatically, so no import is
+needed. `tools/import-scores.ps1` stays for the stable-install (release folder) case.
 
 Decisions already locked, so the next session does not re-litigate them:
 
@@ -224,9 +226,7 @@ compute a path; drums and vocals do not override `RecomputeStarPowerPath`. The p
 
 ### Suggested next steps, in order
 
-1. **Score import** — run `tools/import-scores.ps1` once the user's `scores.db` and `profiles.json`
-   arrive.
-2. **Cut a release build** to exercise updater slices 2-3 against a packaged `.exe`, then implement
+1. **Cut a release build** to exercise updater slices 2-3 against a packaged `.exe`, then implement
    updater slice 4 (apply).
 
 ## Workflow that worked
