@@ -252,9 +252,11 @@ namespace YARG.Gameplay.Player
         /// Power state stops matching the plan (<c>docs/sp-path-design.md</c> §4.4).
         /// </summary>
         /// <remarks>
-        /// Three ways to go off-plan: the full-combo assumption breaks (any missed note), an
-        /// activation happens that the plan does not call for yet, or a planned activation goes
-        /// by without one. The last two are counted rather than compared tick by tick, because
+        /// Only Star Power state counts, not score. An ordinary missed note costs points but
+        /// leaves the plan followable, so it does not dim anything; what does is the meter
+        /// diverging — a Star Power phrase failed (handled in <c>OnStarPowerPhraseMissed</c>),
+        /// an activation the plan does not call for yet, or a planned activation going by
+        /// without one. The last two are counted rather than compared tick by tick, because
         /// <c>StarPowerActivationCount</c> is the only thing that says an activation happened at
         /// all. Never un-set — only a rebuilt path clears it.
         /// </remarks>
@@ -262,12 +264,6 @@ namespace YARG.Gameplay.Player
         {
             if (StarPowerPath is null || SpPathDiverged)
             {
-                return;
-            }
-
-            if (!IsFc)
-            {
-                SetStarPowerPathDiverged("a note was missed");
                 return;
             }
 
@@ -1407,6 +1403,17 @@ namespace YARG.Gameplay.Player
 
         protected virtual void OnStarPowerPhraseMissed(TNote note)
         {
+            // A failed phrase is the one miss that actually invalidates the plan: the meter never
+            // gets that quarter bar, so every activation the plan schedules after it is funded by
+            // Star Power the player no longer has. Ordinary misses only cost points and are left
+            // alone (docs/sp-path-design.md §4.4).
+            //
+            // Known false positive, unreachable with the presets this fork ships: with
+            // NoStarPowerOverlap the engine strips (and so reports as missed) a phrase collected
+            // while Star Power is already active (Guitar/GuitarEngine.cs:259-261), which the
+            // optimizer models rather than treats as a deviation. No preset sets the flag.
+            SetStarPowerPathDiverged("a Star Power phrase was missed");
+
             OnStarPowerPhraseMissed();
         }
 

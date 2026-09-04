@@ -429,9 +429,14 @@ Divergence rule: the plan is stale from the first moment the player's meter at a
 activation cannot match `Activation.MeterAtActivation`. Cheapest sufficient check, evaluated
 per frame against the next pending activation:
 
+- a Star Power phrase is failed (`BaseEngine.OnStarPowerPhraseMissed`, raised from `StripStarPower`, `BaseEngine.Generic.cs:1155`) → the meter never gets that quarter bar, so every later activation the plan schedules is funded by Star Power the player no longer has; dim everything from here.
 - `BaseStats.StarPowerActivationCount` exceeds the number of plan activations already passed → the player activated off-plan; dim everything from here.
 - at the activation's note, `StarPowerTickAmount / TicksPerQuarterSpBar < MeterAtActivation` → the player cannot follow it; dim.
-- any missed note (`TrackPlayer.OnNoteMissed`, already hooked for the section strip per `docs/section-fc-design.md` slice 4) → full-combo assumption broken; dim everything.
+
+**Ordinary misses do not dim** (changed 2026-09-03, see "Divergence is Star Power state only" below).
+The full-combo assumption is a *scoring* assumption — it makes the projected score an upper bound —
+not a claim about which markers are still followable. A player who drops a note still has exactly
+the Star Power the plan expects, so the markers are still the right places to activate.
 
 Dim, never recompute — locked decision.
 
@@ -486,7 +491,7 @@ questions" list below is kept only as the record of what was asked.
 | Marker colour | **Star Power orange, `#FF9800`** — `HighwayPreset.StarPowerColor`, `Color.FromArgb(255, 255, 152, 0)` at `YARG.Core/YARG.Core/Game/Presets/HighwayPreset.cs:10`. Read from the preset, never hardcoded a second time. |
 | Region or point | **Point only.** No shaded region spanning the window, and **no end marker** — the player acts at one instant, and a region competes visually with the SP fill on the highway. |
 | Score-gain labels | **None.** The overlay stays purely spatial; `Activation.ScoreGain` is still computed and logged, but nothing is drawn. |
-| Behaviour on deviation | Once the player deviates from the plan — a dropped note, an early or late activation, or actual SP state differing from the plan's — **all remaining markers fade to a low alpha for the rest of the song** and stay that way. Never recomputed (locked decision, §"Decisions"). |
+| Behaviour on deviation | Once the player's **Star Power state** leaves the plan — a failed Star Power phrase, an activation the plan does not call for, or a planned activation not taken — **all markers fade to a low alpha for the rest of the song** (the ones already on the highway included) and stay that way. Never recomputed (locked decision, §"Decisions"). An ordinary missed note is *not* a deviation: it costs points, not Star Power. **Revised 2026-09-03**, replacing "a dropped note, an early or late activation, or actual SP state differing from the plan's" — see "Divergence is Star Power state only". |
 | Visibility window | **Always drawn.** Markers spawn from the pool exactly like beatlines, on the same `SpawnTimeOffset` cursor. |
 | Setting | A single `ToggleSetting` in **Settings → Graphics → HUD, immediately after `ShowSectionStrip`**. |
 | Setting scope | **Global, not per-instrument.** |
@@ -514,7 +519,7 @@ Each ends at a state that can be verified without the next one.
 | **1** | **Harness skeleton.** `Tools/SpPathTests/` (net8.0, NUnit) building against `YARG.Core.csproj`; one test that loads `drawntotheflame.mid`, runs a bot engine with the *stock* policy, and asserts a known `TotalScore`. No optimizer yet. | `dotnet test` green locally; the golden number recorded in the test. Proves the whole verification story before any model is written. | **S** |
 | **2** | **Scoring model, no SP.** `Assets/Script/Gameplay/SpPath/` (Unity-free): duplicate constants, prefix-sum score table, `ProjectPerfectScore()` with no activations. | Test asserts the projection equals a bot run with SP suppressed (`AllowStarPower(false)`, `BaseEngine.Generic.cs:424`), exactly. This is where every rounding rule in §1 gets pinned. | **M** |
 | **3** | **SP model + DP.** Window arithmetic, the five-state meter, the DP, `StarPowerPath`. | Test asserts a scripted-activation bot run reproduces `ProjectedScore` exactly for the optimizer's own path, **and** for three hand-picked suboptimal paths (so the model is right, not just self-consistent). Second test: optimizer ≥ stock greedy bot. Add `dotnet test` to CI. | **L** |
-| **4** | **Plumbing, log-only.** `InitializeStarPowerPaths()` after `CreatePlayers()`, `BasePlayer.SetStarPowerPath` + `OnStarPowerPathSet()`, the four cursor-reset sites, the practice-section recompute and the `AllowStarPower(false)` clear, the band-run gate (§4.5), and the divergence check that flips the dim flag (§4.4). **No visuals at all** — the plan and every dim transition go to the log. | Play a song, read the log: plan present in single-player, absent in a band run, recomputed on a practice-section change, dim flag flips on a dropped note or an off-plan activation. | **M** |
+| **4** | **Plumbing, log-only.** `InitializeStarPowerPaths()` after `CreatePlayers()`, `BasePlayer.SetStarPowerPath` + `OnStarPowerPathSet()`, the four cursor-reset sites, the practice-section recompute and the `AllowStarPower(false)` clear, the band-run gate (§4.5), and the divergence check that flips the dim flag (§4.4). **No visuals at all** — the plan and every dim transition go to the log. | Play a song, read the log: plan present in single-player, absent in a band run, recomputed on a practice-section change, dim flag flips on a failed Star Power phrase or an off-plan activation. | **M** |
 | **5** | **Rendering.** A pooled `TrackElement<TrackPlayer>` modelled on `BeatlineElement` + `Beatline.prefab`: one full-width quad at the activation note, tinted the `HighwayPreset` Star Power orange (`#FF9800`), spawned off the `_spPathIndex` cursor exactly as beatlines are, and dropped to low alpha once slice 4's dim flag is set. No region, no end marker, no label — see "Locked UI decisions". | Markers on the highway, at the right notes, fading as one when the run goes off-plan. | **M** |
 | **6** | **Settings toggle + copy.** The `ToggleSetting` in `SettingsManager.Settings.cs` immediately after `ShowSectionStrip`, its `nameof(...)` entry in the HUD `MetadataTab`, and the `en-US.json` strings — description stating the path assumes a full combo and no whammy. Global, not per-instrument. | Toggle works; the band-run case stays silently hidden with the toggle on. | **S** |
 
@@ -856,7 +861,7 @@ sibling branches.
 2. **The Unity-free constraint on the optimizer** is load-bearing for §3. One stray `UnityEngine` using and the test project stops compiling. Worth a comment at the top of every file in `Assets/Script/Gameplay/SpPath/`.
 3. **The `net10.0` / SDK 8 mismatch** means the fork cannot run the existing YARG.Core tests. If upstream retargets, revisit whether the harness should just live there after all — but that would still modify the submodule.
 4. **Sustain burst boundary** (§1.4) and the **SP-end boundary** (§1.5) are the two places the model will first be wrong. Slice 3's suboptimal-path tests should be chosen to straddle both.
-5. **"Optimal" is a claim** that assumes full combo and no whammy. Dimming handles the first; the second needs UI copy.
+5. **"Optimal" is a claim** that assumes full combo and no whammy. Both are disclosed in the setting copy. Dimming does *not* handle the first — it tracks Star Power state, not score (see "Divergence is Star Power state only").
 6. **CHOpt disagreement is not evidence of a bug** — YARG's bar is 8 measures, CHOpt's is 32 flat beats.
 
 ### Open questions for the mockup interview — answered 2026-09-03
@@ -890,26 +895,57 @@ is green and `dotnet test tools/SpPathTests/SpPathTests.csproj` still passes all
 | Logging | Info level, at every path build: activation count, the first activation's tick/time/note index, `ProjectedScore`, `ScoreGainOverNoActivations` and the solve time. Divergence logs its reason and the song time once. |
 
 **Divergence detection** is `TrackPlayer.UpdateStarPowerPathDivergence()`, run every frame from
-`UpdateVisuals`. It reads live stats rather than subscribing to engine events, because the one
-number that says an activation happened at all — `BaseStats.StarPowerActivationCount` — has no
-event of its own, and `IsFc` aggregates the *combo-breaking* paths (missed note, overstrum) that
-the per-instrument code maintains. It does **not** cover a dropped sustain: releasing a sustain
-early keeps the combo, so `IsFc` stays true, but the projection assumed the full sustain points
-(and the Star Power ticks a whammy-free sustain feeds). That one is caught by its own hook.
-Four ways to go off-plan:
+`UpdateVisuals`, plus one engine-event hook. The per-frame part reads live stats rather than
+subscribing to engine events, because the one number that says an activation happened at all —
+`BaseStats.StarPowerActivationCount` — has no event of its own. **Three** ways to go off-plan:
 
-1. `!IsFc` — the full-combo assumption is broken.
+1. A Star Power phrase was failed — `BaseEngine.OnStarPowerPhraseMissed`, raised from
+   `StripStarPower` (`BaseEngine.Generic.cs:1155`) whenever a note inside a phrase is missed or
+   overstrummed. Hooked in `TrackPlayer<TEngine, TNote>.OnStarPowerPhraseMissed(TNote)`, which the
+   per-instrument players already subscribe to the engine (`FiveFretGuitarPlayer.cs:282`), so no
+   new subscription is needed and drums/keys get it for free once they have paths. This is an event
+   rather than a per-frame read because nothing in `BaseStats` says a phrase was *lost* —
+   `StarPowerPhrasesHit` only counts the ones that landed, and the meter it would be compared
+   against is spent by activations.
 2. `StarPowerActivationCount` exceeds the number of plan activations whose grace window the song
    has *entered* → the player activated something the plan does not call for.
 3. `StarPowerActivationCount` falls short of the number whose grace window the song has *left* →
    a planned activation went by untaken.
-4. `FiveFretGuitarPlayer.OnSustainEnd` firing with `finished == false` → a sustain was dropped.
-   This one is an engine event rather than a per-frame read, since nothing in `BaseStats`
-   distinguishes a dropped sustain from a short one.
 
-The three per-frame checks compare against `GameManager.SongTime`, not `InputTime`: the plan's
+The two per-frame checks compare against `GameManager.SongTime`, not `InputTime`: the plan's
 activation times are chart times on the same clock, and `InputTime` leads it by the calibration
 offset, which would shift both grace windows by that offset.
+
+##### Divergence is Star Power state only (revised 2026-09-03)
+
+Slices 4–5 shipped two further triggers that are now **removed**: `!IsFc` (any missed note or
+overstrum) and `FiveFretGuitarPlayer.OnSustainEnd` with `finished == false` (a dropped sustain).
+
+The first editor run showed why. On the test song the optimizer's first activation is at
+**54.6 s**, and a single missed note in the intro flipped the flag at **4.9 s** — so the overlay
+was dim for fifty seconds before it had told the player anything, and for the whole rest of the
+song. Every marker on a run with one early mistake is dim, which is every real run.
+
+The distinction the old rule missed: the full-combo assumption is a **scoring** assumption. It is
+what makes `ProjectedScore` an upper bound and what makes the DP's arithmetic exact. It is *not* a
+statement about whether the marked notes are still the right places to activate. A player who drops
+a note (or a sustain — sustains feed Star Power only through whammy, which is out of the model
+entirely, §1.6) still arrives at every marker with exactly the meter the plan predicted, so the
+plan is still followable and the markers still mean what they say. What genuinely invalidates them
+is the **meter** diverging: a failed phrase removes a quarter bar the plan spent, an off-plan
+activation spends one early, and a skipped activation leaves the meter high and the later windows
+mis-timed. Those three are what remain.
+
+The setting copy changed with it: it still discloses that the path assumes a full combo with no
+whammy (that is the scoring caveat, and §1.6's whammy disclosure), but no longer says a miss dims
+the markers.
+
+**Considered and skipped:** a stronger per-frame check comparing the engine's meter
+(`StarPowerTickAmount / TicksPerQuarterSpBar`) against the plan's `MeterAtActivation` at each
+upcoming activation. It is strictly implied by the three triggers above under the modelled subset,
+and getting it right means reproducing the window-extension arithmetic (§1.5) live against a meter
+that moves mid-window, so it is neither cheap nor obviously correct. The three-trigger version is
+what ships.
 
 Two cursors (`_spPlanEarlyIndex`, `_spPlanLateIndex`) walk the activation list against
 `ActivationTime -/+ SP_PATH_ACTIVATION_GRACE` (0.25 s), so a human tap near the marker is not read
@@ -985,14 +1021,15 @@ Nothing here has been through a Unity compile or a real frame; `dotnet build` co
 2. Play a 5-fret guitar or bass song alone. The log carries one
    `SP path (FiveFretGuitar): N activation(s), first at tick ... projected ...` line. Orange bands
    appear on the highway at those notes.
-3. Miss a note. The log carries `SP path: diverged — a note was missed`, and every marker — the ones
-   on screen included — drops to a faint orange for the rest of the song.
-4. Restart and instead activate Star Power somewhere the plan does not mark. The reason logged is
+3. Miss a note that is **not** inside a Star Power phrase, and drop a sustain. Nothing dims, and
+   nothing is logged — the plan is still followable.
+4. Miss a note **inside** a Star Power phrase. The log carries
+   `SP path: diverged — a Star Power phrase was missed`, and every marker — the ones on screen
+   included — drops to a faint orange for the rest of the song.
+5. Restart and instead activate Star Power somewhere the plan does not mark. The reason logged is
    `Star Power was activated off-plan`.
-5. Restart and instead let a marker go by without activating. After ~0.25 s the reason logged is
+6. Restart and instead let a marker go by without activating. After ~0.25 s the reason logged is
    `a planned activation was not taken`.
-6. Restart and instead drop a sustain (release it early) without breaking the combo. The reason
-   logged is `a sustain was dropped`, and the combo meter still shows a full combo.
 7. Play the same song with a second **human** player: no markers, and the log says
    `SP path: skipped, 2 human player(s) in this run`. Add a **bot** instead of a human: markers come
    back.

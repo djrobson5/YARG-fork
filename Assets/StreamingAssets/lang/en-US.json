@@ -1650,7 +1650,7 @@
             },
             "ShowStarPowerPath": {
                 "Name": "Show Star Power Path",
-                "Description": "Marks the notes where a perfect run should activate Star Power to score the most points. 5-fret guitar and bass only, and only when you are playing alone. The path assumes a full combo with no whammy, so the markers dim once your run leaves it."
+                "Description": "Marks the notes where a perfect run should activate Star Power to score the most points. 5-fret guitar and bass only, and only when you are playing alone. The path assumes a full combo with no whammy, so it is a target rather than a promise. The markers dim once your Star Power stops matching the plan."
             },
             "SongTimeOnScoreBox": {
                 "Name": "Song Time On Score Box",

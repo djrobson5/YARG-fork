@@ -767,14 +767,6 @@ namespace YARG.Gameplay.Player
 
         private void OnSustainEnd(GuitarNote parent, double timeEnded, bool finished)
         {
-            // A dropped sustain does not break the combo, so IsFc never sees it, but the
-            // projection assumed every sustain point was collected — including the Star Power
-            // ticks whammy-free sustains feed. The plan is stale from here on.
-            if (!finished)
-            {
-                SetStarPowerPathDiverged("a sustain was dropped");
-            }
-
             foreach (var note in parent.AllNotes)
             {
                 // If the note is disjoint, only iterate the parent as sustains are added separately
