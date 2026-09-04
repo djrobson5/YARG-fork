@@ -114,6 +114,42 @@ namespace YARG.Gameplay.Visuals
             }
         }
 
+        /// <summary>
+        /// Multiplies the emission colour already on every coloured material by an extra factor,
+        /// on top of the prefab's own <c>EmissionMultiplier</c>. Call straight after
+        /// <see cref="SetColorWithEmission"/> — it reads back what that wrote, so calling it twice
+        /// without an intervening colour set compounds.
+        /// </summary>
+        /// <remarks>
+        /// Used by the Star Power path overlay to make the activation note bloom. A material whose
+        /// emission multiplier is zero (the dark strips on tap and ghost notes) stays dark, which
+        /// is the right answer: those strips are meant to read as holes.
+        /// </remarks>
+        public void BoostEmission(float boost)
+        {
+            BoostEmission(_coloredMaterialCache, boost);
+            BoostEmission(_coloredMaterialNoStarPowerCache, boost);
+        }
+
+        private static void BoostEmission(MaterialInfo[] cache, float boost)
+        {
+            if (cache == null)
+            {
+                return;
+            }
+
+            foreach (var info in cache)
+            {
+                var material = info.MaterialCache;
+                if (material == null || !material.HasColor(_emissionColor))
+                {
+                    continue;
+                }
+
+                material.SetColor(_emissionColor, material.GetColor(_emissionColor) * boost);
+            }
+        }
+
         public void SetMetalColor(Color metalColor)
         {
             if (_coloredMetalMaterialCache.Length == 0) return;

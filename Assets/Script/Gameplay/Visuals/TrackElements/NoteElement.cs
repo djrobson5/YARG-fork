@@ -19,6 +19,19 @@ namespace YARG.Gameplay.Visuals
     public interface INoteElement
     {
         void OnRewind();
+
+        /// <summary>
+        /// Whether the optimal Star Power path activates on this note, so it should be drawn in
+        /// the activation green instead of its own colour
+        /// (<c>docs/sp-path-design.md</c> → "Visual redesign, 2026-09-04").
+        /// </summary>
+        /// <remarks>
+        /// Lives on the interface so <c>TrackPlayer.SpawnNote</c> can set it without knowing the
+        /// instrument. Set on every spawn — note elements are pooled, so leaving it alone would
+        /// carry a previous activation's green onto an ordinary note. Only instruments that draw
+        /// a path (five-fret) act on it; everything else compiles and ignores it.
+        /// </remarks>
+        bool IsStarPowerPathActivation { get; set; }
     }
 
     public abstract class NoteElement<TNote, TPlayer> : TrackElement<TPlayer>, IThemeNoteCreator, INoteElement
@@ -26,6 +39,9 @@ namespace YARG.Gameplay.Visuals
         where TPlayer : TrackPlayer
     {
         public TNote NoteRef { get; set; }
+
+        /// <inheritdoc cref="INoteElement.IsStarPowerPathActivation"/>
+        public bool IsStarPowerPathActivation { get; set; }
 
         protected SustainState SustainState { get; private set; }
 

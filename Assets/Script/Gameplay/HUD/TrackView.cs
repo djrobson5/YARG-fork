@@ -81,6 +81,14 @@ namespace YARG.Gameplay.HUD
         private bool _isUnisonActive;
         private bool _isCodaActive;
 
+        // Built the first time a Star Power path asks for it, so a run with the overlay off never
+        // creates it. Lives inside the top element container, so it scales and follows the
+        // highway's far end exactly as the solo box does.
+        private SpPathChip _spPathChip;
+        private bool       _spPathChipUnavailable;
+        private bool       _spPathChipWanted;
+        private string     _spPathChipText;
+
         private readonly Vector3 _hiddenPosition = new(-10000f, -10000f, 0f);
         private float ExtraTopElementOffset => 8f * Screen.height / 1000f;
 
@@ -352,6 +360,45 @@ namespace YARG.Gameplay.HUD
             _sectionStrip.SetState(state);
         }
 
+        /// <summary>
+        /// Shows or hides the Star Power path chip, and sets its copy.
+        /// </summary>
+        /// <remarks>
+        /// The chip shares the top element container with the solo box, so a running solo always
+        /// wins — the request is remembered and re-applied when the solo ends.
+        /// </remarks>
+        public void SetStarPowerPathChip(bool show, string text)
+        {
+            _spPathChipWanted = show;
+            _spPathChipText = text;
+            UpdateStarPowerPathChip();
+        }
+
+        private void UpdateStarPowerPathChip()
+        {
+            bool show = _spPathChipWanted && !_isSoloActive;
+
+            if (_spPathChip == null)
+            {
+                if (!show || _spPathChipUnavailable)
+                {
+                    return;
+                }
+
+                // Any TMP text already in this view will do for the font; the solo box and the
+                // section strip both carry one, and neither is optional.
+                var font = GetComponentInChildren<TMPro.TextMeshProUGUI>(true)?.font;
+                _spPathChip = SpPathChip.Create(_topElementContainer, font);
+                if (_spPathChip == null)
+                {
+                    _spPathChipUnavailable = true;
+                    return;
+                }
+            }
+
+            _spPathChip.SetState(show, _spPathChipText);
+        }
+
         public void StartSolo(SoloSection solo)
         {
             _soloBox.StartSolo(solo);
@@ -397,6 +444,10 @@ namespace YARG.Gameplay.HUD
         private void UpdateTextNotificationStatus()
         {
             _textNotifications.SetActive(!_isSoloActive && !_isUnisonActive && !_isCodaActive);
+
+            // The chip is hidden for the whole solo, so it has to be re-evaluated whenever the
+            // solo state moves — this is the one place that always happens.
+            UpdateStarPowerPathChip();
         }
 
         public void UpdateNoteStreak(int streak)
@@ -442,6 +493,8 @@ namespace YARG.Gameplay.HUD
         public void ForceReset()
         {
             _textNotifications.SetActive(true);
+
+            SetStarPowerPathChip(false, null);
 
             _soloBox.ForceReset();
             _textNotifications.ForceReset();

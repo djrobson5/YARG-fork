@@ -11,7 +11,9 @@ using YARG.Core.Chart;
 using YARG.Core.Engine;
 using YARG.Core.Logging;
 using YARG.Gameplay.HUD;
+using YARG.Gameplay.SpPath;
 using YARG.Gameplay.Visuals;
+using YARG.Localization;
 using YARG.Helpers;
 using YARG.Helpers.Extensions;
 using YARG.Playback;
@@ -36,6 +38,32 @@ namespace YARG.Gameplay.Player
         /// granularity, narrow enough that a deliberately different activation is caught.
         /// </summary>
         private const double SP_PATH_ACTIVATION_GRACE = 0.25;
+
+        /// <summary>
+        /// The cap on the HUD chip's lead-in, so a very slow chart cannot leave the chip up half
+        /// the song. Raised to the player's own lead-in whenever they ask for a longer one.
+        /// </summary>
+        private const double SP_CHIP_DEFAULT_MAX_LEAD_IN = 6.0;
+
+        /// <summary>
+        /// The HUD chip's lead-in, which is deliberately much longer than the highway tick's one
+        /// beat: the chip is the only cue while the activation note is still beyond the spawn
+        /// horizon, and a sub-second chip is imperceptible (editor test, 2026-09-04). The chip
+        /// appears at the *earlier* of the previous measure line and this many seconds before the
+        /// activation, but never more than <see cref="_spChipMaxLeadIn"/> seconds before it.
+        /// </summary>
+        /// <remarks>
+        /// These three come from <c>Settings.StarPowerPathChipLeadIn</c> and
+        /// <c>Settings.StarPowerPathChipHold</c>, read once in <see cref="OnStarPowerPathSet"/>
+        /// like every other Star Power path setting — so a change made from the pause menu takes
+        /// effect on the next song.
+        /// </remarks>
+        private double _spChipMinLeadIn = 3.0;
+
+        private double _spChipMaxLeadIn = SP_CHIP_DEFAULT_MAX_LEAD_IN;
+
+        /// How long the chip stays up past the grace window: a short beat of confirmation.
+        private double _spChipHold = 0.75;
 
         public static int HighwayCount = 1;
 
@@ -101,10 +129,75 @@ namespace YARG.Gameplay.Player
         private int _spPlanEarlyIndex;
         private int _spPlanLateIndex;
 
+        /// Activations whose note the song has reached, and whose meter has therefore been checked
+        /// against the plan's. Separate from the two above because it fires at the note itself, not
+        /// at either edge of the grace window.
+        private int _spPlanMeterIndex;
+
+        /// How many Star Power phrases the engine has stripped this run, and when the last one
+        /// went. Bookkeeping for the logs only - a stripped phrase is not itself a divergence
+        /// (see <see cref="UpdateStarPowerPathDivergence"/>).
+        private int    _spPhrasesLost;
+        private double _spLastPhraseLostTime = double.NaN;
+
         /// Built on demand the first time a path arrives; null when the overlay is off.
         private Pool _spPathMarkerPool;
 
-        private Color _spMarkerColor = Color.white;
+        /// <summary>
+        /// Everything the highway and the HUD need to draw one activation, worked out once when
+        /// the path arrives rather than per spawn: the beat the lead-in tick sits on, how long
+        /// the band is, and which lanes the activation note occupies.
+        /// </summary>
+        protected readonly struct SpPathMarkerInfo
+        {
+            public readonly Activation Activation;
+            public readonly double     LeadInTime;
+            public readonly double     ChipLeadInTime;
+            public readonly double     BandDuration;
+            public readonly float[]    LaneXPositions;
+
+            public SpPathMarkerInfo(Activation activation, double leadInTime, double chipLeadInTime,
+                double bandDuration, float[] laneXPositions)
+            {
+                Activation = activation;
+                LeadInTime = leadInTime;
+                ChipLeadInTime = chipLeadInTime;
+                BandDuration = bandDuration;
+                LaneXPositions = laneXPositions;
+            }
+        }
+
+        private readonly List<SpPathMarkerInfo> _spMarkers = new();
+
+        /// <summary>
+        /// Note indices the plan activates on, for the guaranteed-visible half of the cue: the
+        /// activation note itself is recoloured green (2026-09-04). A set rather than a cursor
+        /// because the spawn loop is re-entered after every seek and practice-section rebuild.
+        /// </summary>
+        private readonly HashSet<int> _spActivationNoteIndices = new();
+
+        /// <summary>
+        /// True while the note spawn loop is spawning the notes of an activation chord, so
+        /// <c>SpawnNote</c> can flag every child of the chord, not just the parent.
+        /// </summary>
+        protected bool SpawningActivationNote;
+
+        /// Cursor over <see cref="_spMarkers"/> for the HUD chip and the strike line glow. Unlike
+        /// the spawn cursor this one tracks the *song* clock, not the highway's spawn horizon.
+        private int _spHudIndex;
+
+        /// The last countdown the chip was given, and the string it was formatted into, so the
+        /// per-frame HUD update only allocates when the beat count moves.
+        private int    _spCountdownBeats = -1;
+        private string _spCountdownText;
+
+        /// The steady green wash over the strike line while an activation is due. Built with the
+        /// marker pool; null when the overlay is off or flashing reduction is on.
+        private MeshRenderer _spFretGlow;
+
+        /// How long the strike line glow is, in track units, and how strongly it is tinted.
+        private const float SP_FRET_GLOW_LENGTH = 0.55f;
+        private const float SP_FRET_GLOW_ALPHA  = 0.32f;
 
         protected bool IsBass { get; private set; }
 
@@ -182,6 +275,10 @@ namespace YARG.Gameplay.Player
             SpPathIndex = 0;
             _spPlanEarlyIndex = 0;
             _spPlanLateIndex = 0;
+            _spPlanMeterIndex = 0;
+            _spHudIndex = 0;
+            _spPhrasesLost = 0;
+            _spLastPhraseLostTime = double.NaN;
             SpPathDiverged = false;
         }
 
@@ -196,17 +293,184 @@ namespace YARG.Gameplay.Player
                 _spPathMarkerPool.ReturnAllObjects();
             }
 
+            _spMarkers.Clear();
+            _spActivationNoteIndices.Clear();
+            SpawningActivationNote = false;
+            if (TrackView != null)
+            {
+                TrackView.SetStarPowerPathChip(false, null);
+            }
+
+            ShowStarPowerPathGlow(false);
+
             if (StarPowerPath is null || StarPowerPath.Activations.Count == 0)
             {
                 return;
             }
 
-            _spMarkerColor = Player.HighwayPreset.StarPowerColor.ToUnityColor();
+            ReadStarPowerPathSettings();
+
+            BuildStarPowerPathMarkerInfos();
 
             if (_spPathMarkerPool == null)
             {
                 _spPathMarkerPool = SpPathMarkerElement.CreateRuntimePool(BeatlinePool);
             }
+
+            // A steady wash, not a strobe, skipped when the player has turned it off, and never
+            // built at all when they have asked for less flashing — the accessibility setting
+            // wins over the cue's own toggle. Built once and toggled, so both are read here only.
+            if (_spFretGlow == null &&
+                SettingsManager.Settings.StarPowerPathFretGlow.Value &&
+                !SettingsManager.Settings.ReduceFlashingLights.Value)
+            {
+                _spFretGlow = SpPathMarkerElement.CreateStrikeLineGlow(BeatlinePool,
+                    SP_FRET_GLOW_LENGTH, SP_FRET_GLOW_ALPHA);
+            }
+
+            YargLogger.LogInfo(
+                $"SP path: {_spMarkers.Count} activation(s) to draw, " +
+                $"pool {(_spPathMarkerPool != null ? "ready" : "MISSING")}, " +
+                $"glow {(_spFretGlow != null ? "ready" : "off")}, " +
+                $"spawn offset {SpawnTimeOffset:0.000}s");
+        }
+
+        /// <summary>
+        /// Pulls the player's Star Power path customisations in, once per path.
+        /// </summary>
+        /// <remarks>
+        /// The colour goes into <see cref="SpPathMarkerElement"/>, which every part of the cue
+        /// reads — the highway geometry, the recoloured activation note and the HUD chip — and
+        /// the two chip timings into the fields the HUD update runs on. The 6 s cap holds unless
+        /// the player has asked for a longer lead-in than that, in which case their value is the
+        /// cap: capping a lead-in below what was explicitly asked for would silently ignore the
+        /// setting.
+        /// </remarks>
+        private void ReadStarPowerPathSettings()
+        {
+            var settings = SettingsManager.Settings;
+
+            SpPathMarkerElement.SetCueColor(settings.StarPowerPathColor.Value);
+
+            _spChipMinLeadIn = settings.StarPowerPathChipLeadIn.Value;
+            _spChipMaxLeadIn = Math.Max(SP_CHIP_DEFAULT_MAX_LEAD_IN, _spChipMinLeadIn);
+            _spChipHold = settings.StarPowerPathChipHold.Value;
+        }
+
+        /// <summary>
+        /// Works out the lead-in beat, the band length and the lanes to ring for every
+        /// activation, once.
+        /// </summary>
+        /// <remarks>
+        /// The lead-in is the last beatline strictly before the activation, so it is one beat on
+        /// a chart whose activation lands on a beat and up to two on one where it does not — the
+        /// short lead-in the redesign locks, not the whole Star Power window. Beat timing comes
+        /// from the chart's own beatlines rather than from the optimizer, which is deliberately
+        /// Unity-free and has no business in the rendering layer.
+        /// </remarks>
+        private void BuildStarPowerPathMarkerInfos()
+        {
+            var lanes = new List<float>(5);
+
+            foreach (var activation in StarPowerPath.Activations)
+            {
+                double time = activation.ActivationTime;
+
+                // Last beat strictly before the activation, with a small epsilon so a beat the
+                // activation sits exactly on is not mistaken for the lead-in.
+                int index = FindLastBeatlineBefore(time - 0.01);
+                double leadIn = index >= 0 ? Beatlines[index].Time : time - 0.5;
+
+                // One beat, measured at the activation, so the band is a beat long on any tempo.
+                double beat = 0.5;
+                if (index >= 0 && index + 1 < Beatlines.Count)
+                {
+                    beat = Beatlines[index + 1].Time - Beatlines[index].Time;
+                }
+
+                // The chip's own lead-in is decoupled from the highway tick's: whichever of the
+                // measure line before the activation and the player's chosen lead-in is
+                // *earlier*, then capped so a slow chart cannot leave the chip up indefinitely.
+                int measureIndex = FindLastMeasureLineBefore(time - 0.01);
+                double measureLeadIn = measureIndex >= 0
+                    ? Beatlines[measureIndex].Time
+                    : time - _spChipMinLeadIn;
+                double chipLeadIn = Math.Max(time - _spChipMaxLeadIn,
+                    Math.Min(measureLeadIn, time - _spChipMinLeadIn));
+
+                lanes.Clear();
+                GetActivationLaneXPositions(activation.NoteIndex, lanes);
+
+                _spMarkers.Add(new SpPathMarkerInfo(activation, leadIn, chipLeadIn,
+                    Math.Clamp(beat, 0.1, 2.0), lanes.ToArray()));
+
+                _spActivationNoteIndices.Add(activation.NoteIndex);
+            }
+        }
+
+        /// <summary>
+        /// Whether the plan activates on the note at <paramref name="noteIndex"/> — the note the
+        /// spawn loop recolours to the activation green.
+        /// </summary>
+        protected bool IsStarPowerPathActivationNote(int noteIndex)
+        {
+            return _spActivationNoteIndices.Count != 0 &&
+                _spActivationNoteIndices.Contains(noteIndex);
+        }
+
+        /// <summary>
+        /// Index of the last beatline at or before <paramref name="time"/>, or <c>-1</c>.
+        /// </summary>
+        private int FindLastBeatlineBefore(double time)
+        {
+            if (Beatlines is null || Beatlines.Count == 0 || Beatlines[0].Time > time)
+            {
+                return -1;
+            }
+
+            int low = 0;
+            int high = Beatlines.Count - 1;
+            while (low < high)
+            {
+                int mid = (low + high + 1) / 2;
+                if (Beatlines[mid].Time <= time)
+                {
+                    low = mid;
+                }
+                else
+                {
+                    high = mid - 1;
+                }
+            }
+
+            return low;
+        }
+
+        /// <summary>
+        /// Index of the last <see cref="BeatlineType.Measure"/> line at or before
+        /// <paramref name="time"/>, or <c>-1</c> if the activation is in the song's first measure.
+        /// </summary>
+        private int FindLastMeasureLineBefore(double time)
+        {
+            for (int i = FindLastBeatlineBefore(time); i >= 0; i--)
+            {
+                if (Beatlines[i].Type == BeatlineType.Measure)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        /// <summary>
+        /// Fills <paramref name="xPositions"/> with the highway X of every lane the activation
+        /// note occupies. The default is empty — only instruments with a Star Power path override
+        /// it, and a full-width or open note contributes nothing, because the band already spans
+        /// everything a ring could.
+        /// </summary>
+        protected virtual void GetActivationLaneXPositions(int noteIndex, List<float> xPositions)
+        {
         }
 
         /// <summary>
@@ -215,14 +479,13 @@ namespace YARG.Gameplay.Player
         /// </summary>
         protected void UpdateStarPowerPathMarkers(double time)
         {
-            if (StarPowerPath is null || _spPathMarkerPool == null)
+            if (_spPathMarkerPool == null || _spMarkers.Count == 0)
             {
                 return;
             }
 
-            var activations = StarPowerPath.Activations;
-            while (SpPathIndex < activations.Count &&
-                activations[SpPathIndex].ActivationTime <= time + SpawnTimeOffset)
+            while (SpPathIndex < _spMarkers.Count &&
+                _spMarkers[SpPathIndex].Activation.ActivationTime <= time + SpawnTimeOffset)
             {
                 // Skip this frame if the pool is full
                 if (!_spPathMarkerPool.CanSpawnAmount(1))
@@ -238,13 +501,141 @@ namespace YARG.Gameplay.Player
                     break;
                 }
 
+                var info = _spMarkers[SpPathIndex];
+
                 var marker = (SpPathMarkerElement) poolable;
-                marker.ActivationRef = activations[SpPathIndex];
-                marker.MarkerColor = _spMarkerColor;
+                marker.ActivationRef = info.Activation;
+                marker.LeadInTime = info.LeadInTime;
+                marker.BandDuration = info.BandDuration;
+                marker.RingLaneXPositions = info.LaneXPositions;
                 marker.EnableFromPool();
+
+                YargLogger.LogInfo(
+                    $"SP path: spawned marker {SpPathIndex + 1}/{_spMarkers.Count} at " +
+                    $"t={info.Activation.ActivationTime:0.000}s " +
+                    $"(lead-in {info.LeadInTime:0.000}s, band {info.BandDuration:0.000}s, " +
+                    $"{info.LaneXPositions.Length} lane(s))");
 
                 SpPathIndex++;
             }
+        }
+
+        /// <summary>
+        /// Drives the temporal half of the cue: the HUD chip through the lead-in, and the steady
+        /// strike line glow while the activation itself is due.
+        /// </summary>
+        protected void UpdateStarPowerPathHud()
+        {
+            // TrackView is guarded here for the same reason OnStarPowerPathSet guards it: the
+            // markers exist whether or not there is a view to put a chip in, and this runs every
+            // frame.
+            if (_spMarkers.Count == 0 || TrackView == null)
+            {
+                return;
+            }
+
+            double time = GameManager.SongTime;
+
+            // The cursor holds on to an activation past its grace window so the chip can sit on
+            // ACTIVATE for a moment, and lets go early if the next activation's own
+            // chip lead-in has already started — overlapping windows are rare, and the nearer
+            // activation is the useful one.
+            while (_spHudIndex < _spMarkers.Count)
+            {
+                var current = _spMarkers[_spHudIndex];
+                double graceEnd = current.Activation.ActivationTime + SP_PATH_ACTIVATION_GRACE;
+                if (time <= graceEnd)
+                {
+                    break;
+                }
+
+                bool held = time <= graceEnd + ChipHoldDuration;
+                bool nextIsDue = _spHudIndex + 1 < _spMarkers.Count &&
+                    time >= _spMarkers[_spHudIndex + 1].ChipLeadInTime;
+                if (held && !nextIsDue)
+                {
+                    break;
+                }
+
+                _spHudIndex++;
+            }
+
+            if (_spHudIndex >= _spMarkers.Count)
+            {
+                TrackView.SetStarPowerPathChip(false, null);
+                ShowStarPowerPathGlow(false);
+                return;
+            }
+
+            var info = _spMarkers[_spHudIndex];
+            double activationTime = info.Activation.ActivationTime;
+            bool atActivation = time >= activationTime - SP_PATH_ACTIVATION_GRACE &&
+                time <= activationTime + SP_PATH_ACTIVATION_GRACE;
+
+            // Steady, never strobing, and on exactly the window it always was — activation
+            // through grace. Deliberately independent of SpPathDiverged (2026-09-04): the cue
+            // stays at full strength for the whole song whatever the player does.
+            ShowStarPowerPathGlow(atActivation);
+
+            // The chip runs on its own, much longer window: from its lead-in through the grace
+            // window and a short hold past it.
+            if (time < info.ChipLeadInTime ||
+                time > activationTime + SP_PATH_ACTIVATION_GRACE + ChipHoldDuration)
+            {
+                TrackView.SetStarPowerPathChip(false, null);
+                return;
+            }
+
+            string text;
+            if (time >= activationTime - SP_PATH_ACTIVATION_GRACE)
+            {
+                text = Localize.Key("Gameplay.StarPowerPath.ActivateNow");
+            }
+            else
+            {
+                // Formatted only when the count actually moves: this runs every frame, and
+                // KeyFormat allocates a string on every call.
+                int beats = BeatsUntil(time, info.Activation.ActivationTime);
+                if (beats != _spCountdownBeats || _spCountdownText is null)
+                {
+                    _spCountdownBeats = beats;
+                    _spCountdownText = Localize.KeyFormat("Gameplay.StarPowerPath.ActivateIn", beats);
+                }
+
+                text = _spCountdownText;
+            }
+
+            TrackView.SetStarPowerPathChip(true, text);
+        }
+
+        /// <summary>
+        /// How long the chip lingers past the grace window — just long enough to confirm the
+        /// activation. There used to be a longer, OFF PLAN hold; the off-plan state is gone
+        /// (2026-09-04), so there is one duration left, and the player sets it.
+        /// </summary>
+        private double ChipHoldDuration => _spChipHold;
+
+        /// <summary>Whole beats left between <paramref name="from"/> and <paramref name="to"/>.</summary>
+        private int BeatsUntil(double from, double to)
+        {
+            int start = FindLastBeatlineBefore(from);
+            int end = FindLastBeatlineBefore(to - 0.01);
+            if (start < 0 || end < 0)
+            {
+                return 1;
+            }
+
+            return Math.Max(1, end - start + 1);
+        }
+
+        private void ShowStarPowerPathGlow(bool show)
+        {
+            if (_spFretGlow == null || _spFretGlow.gameObject.activeSelf == show)
+            {
+                return;
+            }
+
+            _spFretGlow.gameObject.SetActive(show);
         }
 
         /// <summary>
@@ -252,13 +643,32 @@ namespace YARG.Gameplay.Player
         /// Power state stops matching the plan (<c>docs/sp-path-design.md</c> §4.4).
         /// </summary>
         /// <remarks>
+        /// <b>Log-only since 2026-09-04.</b> The flag is still computed and every transition is
+        /// still logged, because it is the cheapest check of the Star Power model against the live
+        /// engine — but nothing visual reads it any more. At the user's instruction the whole cue
+        /// is shown at full brightness for the entire song whatever the player does: the path is
+        /// information about where the *next* run should activate, so it is worth the same after a
+        /// dropped phrase as before one.
+        /// <para/>
         /// Only Star Power state counts, not score. An ordinary missed note costs points but
-        /// leaves the plan followable, so it does not dim anything; what does is the meter
-        /// diverging — a Star Power phrase failed (handled in <c>OnStarPowerPhraseMissed</c>),
-        /// an activation the plan does not call for yet, or a planned activation going by
-        /// without one. The last two are counted rather than compared tick by tick, because
-        /// <c>StarPowerActivationCount</c> is the only thing that says an activation happened at
-        /// all. Never un-set — only a rebuilt path clears it.
+        /// leaves the plan followable, so it does not dim anything. Three things do: an activation
+        /// the plan does not call for yet, a planned activation going by without one, and the
+        /// player's meter being short of what the plan spends at an activation. The first two are
+        /// counted rather than compared tick by tick, because <c>StarPowerActivationCount</c> is
+        /// the only thing that says an activation happened at all. Never un-set — only a rebuilt
+        /// path clears it.
+        /// <para/>
+        /// <b>A stripped Star Power phrase is deliberately not one of them (2026-09-04).</b> It
+        /// used to dim on the spot, straight off <c>OnStarPowerPhraseMissed</c>. The event itself
+        /// is engine truth — <c>StripStarPower</c> only runs on a real miss, a real overstrum, or
+        /// the unused <c>NoStarPowerOverlap</c> rule — but the inference drawn from it was not.
+        /// The plan is only dead if the meter it spends is no longer there, and the player's real
+        /// meter is fed by sources the model does not carry. Unison bonuses are the big one
+        /// (<c>BaseEngine.AwardUnisonBonus</c>, a free quarter bar for every unison phrase all
+        /// participants clear), and on a chart with several of them the player can be a whole bar
+        /// ahead of the plan and lose a phrase for free. So the loss is logged and the verdict is
+        /// left to the meter check at the activation itself, which measures the thing that
+        /// actually decides whether the marker can be followed.
         /// </remarks>
         protected void UpdateStarPowerPathDivergence()
         {
@@ -291,11 +701,83 @@ namespace YARG.Gameplay.Player
             if (activated > _spPlanEarlyIndex)
             {
                 SetStarPowerPathDiverged("Star Power was activated off-plan");
+                return;
             }
-            else if (activated < _spPlanLateIndex)
+
+            if (activated < _spPlanLateIndex)
             {
                 SetStarPowerPathDiverged("a planned activation was not taken");
+                return;
             }
+
+            CheckStarPowerPathMeter(time, activations);
+        }
+
+        /// <summary>
+        /// The meter half of the divergence rule (<c>docs/sp-path-design.md</c> §4.4, third
+        /// bullet): at each activation's own note, the engine's banked Star Power has to be at
+        /// least what the plan spends there.
+        /// </summary>
+        /// <remarks>
+        /// Evaluated at <c>ActivationTime</c> rather than at the start of the grace window, so a
+        /// phrase landing in the last quarter second before the marker still counts — that is the
+        /// latest moment at which the verdict is still worth anything, and the one the design doc
+        /// names. Skipped entirely while Star Power is running: the amount is then a draining
+        /// window rather than a bank, which is exactly what it looks like when the player took
+        /// this very activation early inside its grace window, or when a previous window is still
+        /// open (a case the two count rules above already own).
+        /// </remarks>
+        private void CheckStarPowerPathMeter(double time, IReadOnlyList<Activation> activations)
+        {
+            uint ticksPerQuarter = StarPowerPath.TicksPerQuarterSpBar;
+
+            while (_spPlanMeterIndex < activations.Count &&
+                time >= activations[_spPlanMeterIndex].ActivationTime)
+            {
+                var activation = activations[_spPlanMeterIndex];
+                _spPlanMeterIndex++;
+
+                if (ticksPerQuarter == 0 || BaseStats.IsStarPowerActive)
+                {
+                    continue;
+                }
+
+                uint needed = (uint) activation.MeterAtActivation * ticksPerQuarter;
+                if (BaseStats.StarPowerTickAmount >= needed)
+                {
+                    continue;
+                }
+
+                SetStarPowerPathDiverged(
+                    $"the meter is short at planned activation {_spPlanMeterIndex} — " +
+                    $"{BaseStats.StarPowerTickAmount} tick(s) banked, {needed} needed " +
+                    $"({activation.MeterAtActivation}/4 bar)");
+                return;
+            }
+        }
+
+        /// <summary>
+        /// Records a Star Power phrase the engine stripped. Not a divergence on its own — see the
+        /// remarks on <see cref="UpdateStarPowerPathDivergence"/> — but the single most useful
+        /// thing to have in the log when a later meter shortfall has to be explained.
+        /// </summary>
+        protected void NoteStarPowerPhraseLost(uint noteTick, double noteTime, bool noteWasMissed)
+        {
+            _spPhrasesLost++;
+            _spLastPhraseLostTime = GameManager.SongTime;
+
+            if (StarPowerPath is null)
+            {
+                return;
+            }
+
+            YargLogger.LogInfo(
+                $"SP path: Star Power phrase stripped at note tick {noteTick} " +
+                $"({noteTime:0.000}s) by {(noteWasMissed ? "a missed note" : "an overstrum")} — " +
+                $"{_spPhrasesLost} lost this run. Not a divergence on its own; the plan only dims " +
+                $"if the meter is short at an activation. " +
+                $"({Player.Profile.CurrentInstrument}, {GameManager.SongTime:0.000}s; " +
+                $"{DescribeStarPowerState()})");
         }
 
         /// <summary>
@@ -310,9 +792,53 @@ namespace YARG.Gameplay.Player
             }
 
             SpPathDiverged = true;
-            YargLogger.LogFormatInfo("SP path: diverged — {0}. Remaining markers dim for the rest " +
-                "of the run. ({1}, {2:0.000}s)",
-                reason, Player.Profile.CurrentInstrument, GameManager.SongTime);
+            YargLogger.LogInfo(
+                $"SP path: diverged — {reason}. Diagnostic only: nothing on screen changes, the " +
+                $"cue stays at full brightness for the rest of the run. " +
+                $"({Player.Profile.CurrentInstrument}, {GameManager.SongTime:0.000}s; " +
+                $"{DescribeStarPowerState()}; {DescribeStarPowerPlanState()})");
+        }
+
+        /// <summary>The engine's live Star Power state, for the divergence and phrase-loss logs.</summary>
+        private string DescribeStarPowerState()
+        {
+            uint ticksPerQuarter = StarPowerPath?.TicksPerQuarterSpBar ?? 0;
+            double quarterBars = ticksPerQuarter == 0
+                ? 0
+                : BaseStats.StarPowerTickAmount / (double) ticksPerQuarter;
+
+            string lastLoss = double.IsNaN(_spLastPhraseLostTime)
+                ? string.Empty
+                : $", last at {_spLastPhraseLostTime:0.000}s";
+
+            return $"engine: phrases hit {BaseStats.StarPowerPhrasesHit}/" +
+                $"{BaseStats.TotalStarPowerPhrases} (missed {BaseStats.StarPowerPhrasesMissed}, " +
+                $"stripped this run {_spPhrasesLost}{lastLoss}), " +
+                $"meter {BaseStats.StarPowerTickAmount} tick(s) = {quarterBars:0.00}/4 bar, " +
+                $"active {BaseStats.IsStarPowerActive}, " +
+                $"activations {BaseStats.StarPowerActivationCount}, " +
+                $"whammy ticks {BaseStats.StarPowerWhammyTicks}, " +
+                $"total earned {BaseStats.TotalStarPowerTicks} tick(s)";
+        }
+
+        /// <summary>Where the plan thinks the run is, for the divergence log.</summary>
+        private string DescribeStarPowerPlanState()
+        {
+            var activations = StarPowerPath.Activations;
+            string next = "none left";
+            if (_spPlanLateIndex < activations.Count)
+            {
+                var activation = activations[_spPlanLateIndex];
+                next = $"#{_spPlanLateIndex + 1} on note {activation.NoteIndex} at " +
+                    $"tick {activation.ActivationTick} ({activation.ActivationTime:0.000}s) " +
+                    $"spending {activation.MeterAtActivation}/4 bar, window " +
+                    $"[{activation.ActivationMeasureTick}, {activation.EndMeasureTick})";
+            }
+
+            return $"plan: {activations.Count} activation(s), " +
+                $"{StarPowerPath.PhraseEndTicks.Count} modelled phrase(s), cursors early " +
+                $"{_spPlanEarlyIndex} / late {_spPlanLateIndex} / meter {_spPlanMeterIndex}, " +
+                $"next {next}";
         }
 
         protected override void ResetVisuals()
@@ -333,6 +859,8 @@ namespace YARG.Gameplay.Player
             {
                 _spPathMarkerPool.ReturnAllObjects();
             }
+
+            ShowStarPowerPathGlow(false);
 
             HitWindowDisplay.SetHitWindowSize();
         }
@@ -618,6 +1146,7 @@ namespace YARG.Gameplay.Player
             UpdateBeatlines(visualTime);
             UpdateStarPowerPathMarkers(visualTime);
             UpdateStarPowerPathDivergence();
+            UpdateStarPowerPathHud();
             UpdateTrackEffects(visualTime);
             UpdateCodaEvents(visualTime);
             UpdateUnisonEvents(visualTime);
@@ -714,6 +1243,7 @@ namespace YARG.Gameplay.Player
                     break;
                 }
 
+                int spawnedNoteIndex = NoteIndex;
                 NoteIndex++;
 
                 // Don't spawn the note if it is under a BRE
@@ -730,11 +1260,17 @@ namespace YARG.Gameplay.Player
                     continue;
                 }
 
+                // Every note of an activation chord is recoloured, so the flag is set for the
+                // whole chord rather than per child.
+                SpawningActivationNote = IsStarPowerPathActivationNote(spawnedNoteIndex);
+
                 // Spawn all of the notes and child notes
                 foreach (var child in note.AllNotes)
                 {
                     SpawnNote(child);
                 }
+
+                SpawningActivationNote = false;
             }
         }
 
@@ -1215,6 +1751,16 @@ namespace YARG.Gameplay.Player
             }
 
             InitializeSpawnedNote(poolable, note);
+
+            // Always assigned, never only when true: note elements are pooled, so a stale flag
+            // from a previous activation would leave an ordinary note green. Set after
+            // InitializeSpawnedNote and before EnableFromPool, because EnableFromPool is what
+            // runs InitializeElement (and with it the colour pass that reads the flag).
+            if (poolable is INoteElement noteElement)
+            {
+                noteElement.IsStarPowerPathActivation = SpawningActivationNote;
+            }
+
             poolable.EnableFromPool();
         }
 
@@ -1403,16 +1949,19 @@ namespace YARG.Gameplay.Player
 
         protected virtual void OnStarPowerPhraseMissed(TNote note)
         {
-            // A failed phrase is the one miss that actually invalidates the plan: the meter never
-            // gets that quarter bar, so every activation the plan schedules after it is funded by
-            // Star Power the player no longer has. Ordinary misses only cost points and are left
-            // alone (docs/sp-path-design.md §4.4).
-            //
-            // Known false positive, unreachable with the presets this fork ships: with
-            // NoStarPowerOverlap the engine strips (and so reports as missed) a phrase collected
-            // while Star Power is already active (Guitar/GuitarEngine.cs:259-261), which the
-            // optimizer models rather than treats as a deviation. No preset sets the flag.
-            SetStarPowerPathDiverged("a Star Power phrase was missed");
+            // Recorded, not acted on. This used to dim the whole path on the spot, which produced
+            // a real false positive: the engine strips a phrase on a missed note, on an overstrum
+            // whose next note happens to sit inside a phrase, or under the unused
+            // NoStarPowerOverlap rule (Guitar/GuitarEngine.cs:193, :261, :322), and none of those
+            // means the plan has stopped being followable. The player's meter is fed by sources
+            // the model does not carry - unison bonuses above all (BaseEngine.AwardUnisonBonus, a
+            // free quarter bar for every unison phrase all participants clear) - so a lost phrase
+            // is routinely free. The verdict belongs to the meter check at each planned activation
+            // (CheckStarPowerPathMeter, docs/sp-path-design.md §4.4).
+            if (note is not null)
+            {
+                NoteStarPowerPhraseLost(note.Tick, note.Time, note.WasMissed);
+            }
 
             OnStarPowerPhraseMissed();
         }
