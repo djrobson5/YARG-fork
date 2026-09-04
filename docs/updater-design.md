@@ -415,3 +415,16 @@ deleted, the build relaunches), and with a staged build missing `YARG_Data` plus
 (post-copy check fails → restore purges the half-copied build and puts the old one back). All
 five self-deleted. What that cannot cover is the game actually quitting on cue, the relaunch of
 a real `YARG.exe`, and the hidden-window `Process.Start` from a packaged player.
+
+## 2026-09-04: verified end to end on packaged builds
+
+The user ran the full check → download → stage → install flow on real CI-built `.exe`s. Starting
+from `v0.15.0-sectionfc.2` (built before the apply step existed): Check for Updates found the
+latest release, and Download Update staged it. `v0.15.0-sectionfc.3` was then installed by hand,
+and from there Check for Updates found `v0.15.0-sectionfc.4`; Install and Restart updated the
+running install to it. Releases `.2`, `.3` and `.4` came from CI runs 33913612079, 33915794938 and
+33917288074 respectively; `.3` and `.4` were built from commit `6bf7e105`.
+
+Slices 1-4 are done and user-verified on packaged builds. Slice 5 (optional automatic check
+behind a toggle, plus a "latest build" line by the version watermark) remains unimplemented and
+is optional.

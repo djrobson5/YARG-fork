@@ -91,7 +91,7 @@ Decisions already locked, so the next session does not re-litigate them:
 - **Source profiles replace local profiles.** `profiles.json` comes over wholesale, because the
   score rows key off the source machine's profile GUIDs and would otherwise orphan.
 
-### Feature 4 — in-game updater: slices 1-4 done, 5 remains
+### Feature 4 — in-game updater: slices 1-4 done and user-verified on packaged builds 2026-09-04; slice 5 optional
 
 Done:
 
@@ -113,15 +113,15 @@ Remaining:
 5. **Optional automatic check** behind a toggle, plus a "latest build" line by the version
    watermark.
 
-**Verification gap.** In the editor `Application.version` is `0.1.0`, so the in-game pieces hide
-themselves and cannot be exercised — none of slices 2, 3 and 4 has been seen working in the game.
-They need a CI release build (`.github/workflows/build-windows.yml`; the pipeline is proven, see
-`docs/release-build.md`) and then a run of the packaged `.exe`; slice 4 needs **two** releases, one
-to install and one to update to. The slice 4 helper script itself *was* tested outside Unity (dead
-PID, live PID, and a forced copy failure exercising the restore path, all with spaces in the
-paths). `tools/update-yarg.ps1`'s copy-over-and-relaunch step is still **untested** — it has never
-been pointed at a real install; writing the helper did expose one bug in it, since fixed (it kept a
-backup per tag rather than exactly one).
+**Verified end to end on packaged builds, 2026-09-04.** The user ran the full check → download →
+stage → install flow on real CI-built `.exe`s: `v0.15.0-sectionfc.2` (no apply step yet) found and
+staged the latest release; `v0.15.0-sectionfc.3` was installed by hand, then Install and Restart
+updated it to `v0.15.0-sectionfc.4`. Releases `.2`/`.3`/`.4` came from CI runs 33913612079,
+33915794938 and 33917288074; `.3` and `.4` were built from commit `6bf7e105`. Full record in
+`docs/updater-design.md` → "2026-09-04: verified end to end on packaged builds". The slice 4
+helper script itself was separately tested outside Unity (dead PID, live PID, and a forced copy
+failure exercising the restore path, all with spaces in the paths); `tools/update-yarg.ps1`'s own
+copy-over-and-relaunch step is still untested against a real install, if that remains true.
 
 ### Feature 2 — delete songs: done and verified
 
@@ -235,9 +235,10 @@ compute a path; drums and vocals do not override `RecomputeStarPowerPath`. The p
 
 ### Suggested next steps, in order
 
-1. **Cut two release builds** (`v0.15.0-sectionfc.N` and `N+1`) and exercise updater slices 2-4
-   against the packaged `.exe`, following `docs/updater-design.md` → "Slice 4 implemented" →
-   "Manual test procedure". Slice 5 (automatic check behind a toggle) only after that.
+1. Install `v0.15.0-sectionfc.4` on the user's other (nightly) machine and confirm scores appear.
+2. Periodic merge of upstream `dev`.
+3. Optional updater slice 5 (automatic check behind a toggle, plus a "latest build" line by the
+   version watermark).
 
 ## Workflow that worked
 
