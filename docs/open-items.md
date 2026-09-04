@@ -5,6 +5,13 @@ Running list of known issues and possible follow-ups for the fork. Last updated 
 Feature research lives in `docs/roadmap.md`; the state of each feature is in
 `docs/section-fc-handoff.md` → "Roadmap work, 2026-09-03".
 
+## Branch state and next steps
+
+`feature/section-fc` is **ten commits ahead of `fork/feature/section-fc` and nothing is pushed**
+(the commit carrying this update makes eleven). In order: (1) SP path editor verification,
+(2) push the branch, (3) score import once the user's files arrive, (4) cut a release build to
+exercise updater slices 2-3, then updater slice 4 (apply).
+
 ## Blocked
 
 - **Feature 1, score import.** `tools/import-scores.ps1` is ready and needs nothing further.
@@ -26,16 +33,28 @@ Feature research lives in `docs/roadmap.md`; the state of each feature is in
   themselves. Cut a CI release build and exercise slices 2 and 3 against the packaged `.exe`.
 - **`tools/update-yarg.ps1`'s copy-over-and-relaunch step is untested** — it has never been pointed
   at a real install.
-- **Feature 3, SP path — not editor-verified.** All six slices are implemented and 35 harness tests
-  pass (`dotnet test tools/SpPathTests/SpPathTests.csproj`, also run by
-  `.github/workflows/sp-path-tests.yml`), but no Unity compile and no real frame. Highest risks:
-  the hand-built runtime pool, `GetComponentInParent<TrackPlayer>()` on a prewarmed clone, the
-  0.003 z-lift over the beatline quad, the orange reading correctly through the highway shaders,
-  and the settings row. The ten manual test steps are in
+- **Feature 3, SP path — computes in the editor, but no marker has been seen rendering.** A real run
+  logged `SP path (FiveFretGuitar): 4 activation(s), first at tick 45000 (54.612s ...)` plus the
+  divergence line, so the optimizer, plumbing and gating work. The run diverged early and the first
+  activation is 55 s in, so every band was dim and nothing was seen. `088d5016` narrowed the dim
+  rule to Star Power state only (missed SP phrase / off-plan activation / planned activation not
+  taken); ordinary misses and dropped sustains no longer dim.
+  **Next: the user re-tests with the new rule.** If bands still do not appear, debug
+  `SpPathMarkerElement.CreateRuntimePool` and `TrackPlayer.UpdateStarPowerPathMarkers` — log spawn
+  calls, check the pooled object is active and parented under the track, check the material colour
+  write. Still unproven besides: the 0.003 z-lift over the beatline quad, the orange reading through
+  the highway shaders, and the settings row. Harness stays green (35 tests,
+  `dotnet test tools/SpPathTests/SpPathTests.csproj`). Manual test steps are in
   `docs/section-fc-handoff.md` and `docs/sp-path-design.md`.
 - **Feature 2, delete songs — risk 1 stays open by nature.** If `SongCacheDirty` fails to persist,
   a deleted song can come back unplayable after a quick scan on the next launch. Only a
   delete-then-restart test exercises it; the UI cannot show it.
+
+## Not a bug
+
+- **Three caught `NullReferenceException`s at settings load** (`SettingContainer` setters →
+  `RefreshSongs` → `RequestContainerRefresh` → `GetSongLengthSort`) are stock upstream behaviour,
+  confirmed by blame. Caught and harmless; ignore them in editor logs.
 
 ## Policy
 

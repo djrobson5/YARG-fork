@@ -65,8 +65,11 @@ oldest first:
 | `2d1c7759` | SP path slices 1-2: design doc, harness, scoring model |
 | `dd49dab2` | SP path slice 3: the optimizer |
 | `c11ad2d2` | SP path slices 4-6: plumbing, rendering, settings |
+| `e7a1da7e` | This handoff, updated for the roadmap work |
+| `088d5016` | Dim the SP path only when the Star Power state diverges |
 
-Nothing here is pushed. **Policy: the fork never modifies the `YARG.Core` submodule.** Fixes that
+Nothing here is pushed: ten commits ahead of `fork/feature/section-fc`, and the commit carrying this
+doc update will be the eleventh. **Policy: the fork never modifies the `YARG.Core` submodule.** Fixes that
 would naturally belong there are done from the main repo instead — see the `PreviewContext.Loop`
 mixer leak in `docs/delete-song-design.md`, worked around by calling `Dispose()` from
 `StopPreviewAsync`.
@@ -120,7 +123,7 @@ Details, the risk list and the file map are in `docs/delete-song-design.md`. Ris
 if `SongCacheDirty` fails to persist) is mitigated, not eliminated; it can only be tested by
 deleting, restarting the game, and checking the library — not by watching the UI.
 
-### Feature 3 — Star Power path: done in code, **not yet editor-verified**
+### Feature 3 — Star Power path: computing correctly in the editor, **markers still unseen**
 
 All six slices are implemented. `dotnet build Assembly-CSharp.csproj` is green and the harness is
 green: **35 tests**, run with
@@ -133,9 +136,25 @@ CI runs the same suite via `.github/workflows/sp-path-tests.yml`. `Assets/Script
 is deliberately Unity-free so the harness can compile it; keep it that way (one stray
 `using UnityEngine` breaks the test project).
 
-**Nothing Unity-side has been through a real Unity compile or a real frame** — `dotnet build` only
-covers `Assembly-CSharp`, so the runtime pool, the prefab work, the shaders and the settings row are
-all unproven. Highest-risk unverified items, in order (the full list is in `docs/sp-path-design.md`
+**Editor status, end of 2026-09-03.** The user ran a song with a human profile and the setting on.
+The log carried
+`SP path (FiveFretGuitar): 4 activation(s), first at tick 45000 (54.612s ...)` and the divergence
+line, so the optimizer, the plumbing and the gating all work in a real run. **But no marker has yet
+been seen rendering** — the run diverged early, so every band was dimmed, and the first activation
+is 55 s in. Whether markers draw at all is still unverified.
+
+That run drove the dim-rule change in `088d5016`. The path now dims **only when the Star Power state
+diverges**: a missed Star Power phrase, an off-plan activation, or a planned activation not taken.
+Ordinary missed notes and dropped sustains no longer dim it — the evidence was one missed intro note
+at 4.9 s dimming the whole path before the first activation at 54.6 s.
+
+**Next session's first task:** the user re-tests with the new dim rule. If bands still do not appear,
+debug `SpPathMarkerElement.CreateRuntimePool` and `TrackPlayer.UpdateStarPowerPathMarkers` — log the
+spawn calls, check the pooled object is active and parented under the track, and check the material
+colour write.
+
+Beyond that, `dotnet build` only covers `Assembly-CSharp`, so the prefab work, the shaders and the
+settings row remain unproven. Highest-risk unverified items, in order (the full list is in `docs/sp-path-design.md`
 → "What still needs verifying in the editor"):
 
 1. **The runtime pool.** `Instantiate` under an inactive parent, `DestroyImmediate` of the
@@ -157,11 +176,13 @@ Manual test steps (from `docs/sp-path-design.md`):
 2. Play a 5-fret guitar or bass song alone. The log carries one
    `SP path (FiveFretGuitar): N activation(s), first at tick … projected …` line, and orange bands
    appear on the highway at those notes.
-3. Miss a note → `SP path: diverged — a note was missed`, and every marker on screen drops to a
-   faint orange for the rest of the song.
+3. Miss a Star Power phrase → `SP path: diverged — a Star Power phrase was missed`, and every marker
+   on screen drops to a faint orange for the rest of the song.
 4. Restart, activate Star Power somewhere unmarked → `Star Power was activated off-plan`.
 5. Restart, let a marker go by → after ~0.25 s, `a planned activation was not taken`.
-6. Restart, drop a sustain without breaking combo → `a sustain was dropped`, combo meter still full.
+6. Restart, miss an ordinary note and drop a sustain without failing a Star Power phrase → **no**
+   divergence line and the markers stay bright. Since `088d5016` only the Star Power state dims the
+   path; missed notes and dropped sustains leave the meter where the plan predicts.
 7. Same song with a second **human** player: no markers,
    `SP path: skipped, 2 human player(s) in this run`. A **bot** second player instead: markers
    return.
@@ -173,6 +194,16 @@ Manual test steps (from `docs/sp-path-design.md`):
 none in a band run with more than one human player (bots do not count). Only 5-fret guitar and bass
 compute a path; drums and vocals do not override `RecomputeStarPowerPath`. The path also assumes a
 **full combo and no whammy** — that disclaimer is in the setting's description.
+
+### Suggested next steps, in order
+
+1. **SP path editor verification** — re-test with the new dim rule and confirm markers render; debug
+   the pool if they do not (above).
+2. **Push the branch** — ten commits plus this doc update have never left the machine.
+3. **Score import** — run `tools/import-scores.ps1` once the user's `scores.db` and `profiles.json`
+   arrive.
+4. **Cut a release build** to exercise updater slices 2-3 against a packaged `.exe`, then implement
+   updater slice 4 (apply).
 
 ## Workflow that worked
 
@@ -188,6 +219,10 @@ compute a path; drums and vocals do not override `RecomputeStarPowerPath`. The p
 - Unity may rewrite hand-authored prefab YAML on save (trailing spaces, `m_EditorClassIdentifier`). Expect diff noise, not breakage.
 - Section rows and summary rows only exist for runs made after their slice landed. Songs played earlier show no fraction until the next valid run.
 - Scratchpad artifacts from this session (research reports and the three mockups) live under the session's temp directory and may be gone; the mockup artifacts are linked from the design doc.
+- **Three caught `NullReferenceException`s at settings load are stock upstream behaviour, not a fork
+  bug.** The chain is `SettingContainer` setters → `RefreshSongs` → `RequestContainerRefresh` →
+  `GetSongLengthSort`, firing before the song container exists. Verified with `git blame`; they are
+  caught and harmless. Ignore them when reading editor logs.
 - Make sure no song or library preview is playing before focusing the editor to trigger a recompile after a large pull, since a BASS audio callback firing during the domain unload can deadlock the editor (recovery: kill Unity and relaunch, nothing on disk is affected).
 
 ## Nightly tracking
