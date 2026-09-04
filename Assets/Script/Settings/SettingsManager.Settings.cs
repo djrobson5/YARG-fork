@@ -349,12 +349,7 @@ namespace YARG.Settings
 
                     if (stage.Status == UpdateDownloader.StageStatus.Staged)
                     {
-                        var readyDialog = DialogManager.Instance.ShowMessage(
-                            Localize.Key("Menu.Dialog.Updates.Ready.Title"),
-                            Localize.KeyFormat("Menu.Dialog.Updates.Ready.Description",
-                                result.LatestTag, stage.StagingPath));
-
-                        AddOpenReleasePageButton(readyDialog, result.ReleaseUrl);
+                        ShowUpdateReadyDialog(result, stage.StagingPath);
                         return;
                     }
 
@@ -383,6 +378,99 @@ namespace YARG.Settings
                 {
                     // Nothing here may throw out of an async void.
                     YargLogger.LogException(e, "Failed to download and stage the update.");
+                }
+            }
+
+            /// <summary>
+            /// The dialog shown once a build is staged: what was downloaded, where it is, and —
+            /// when this build can actually replace itself — the button that does it.
+            /// </summary>
+            private static void ShowUpdateReadyDialog(UpdateChecker.UpdateCheckResult result, string stagingPath)
+            {
+                // Without an installable install (the editor, a non-packaged build), the dialog
+                // degrades to the slice 3 wording: here is the staged build, install it yourself.
+                bool canInstall = UpdateInstaller.IsSupported;
+
+                var dialog = DialogManager.Instance.ShowMessage(
+                    Localize.Key("Menu.Dialog.Updates.Ready.Title"),
+                    Localize.KeyFormat(
+                        canInstall
+                            ? "Menu.Dialog.Updates.Ready.Description"
+                            : "Menu.Dialog.Updates.Ready.DescriptionManual",
+                        result.LatestTag, stagingPath));
+
+                AddOpenReleasePageButton(dialog, result.ReleaseUrl);
+
+                if (!canInstall)
+                {
+                    return;
+                }
+
+                string tag = result.LatestTag;
+                dialog.AddDialogButton(
+                    "Menu.Dialog.Updates.InstallAndRestart",
+                    MenuData.Colors.ConfirmButton,
+                    () => InstallUpdate(tag, stagingPath));
+            }
+
+            /// <summary>
+            /// Hands the staged build to <see cref="UpdateInstaller"/> and quits so its helper can
+            /// replace the install. Nothing here writes to the install directory itself.
+            /// </summary>
+            private static async void InstallUpdate(string tag, string stagingPath)
+            {
+                try
+                {
+                    // The writability probe happens inside Apply(), but it is worth doing first so
+                    // that the "move your install" dialog replaces the Update Ready one rather than
+                    // appearing after an "Installing…" flash.
+                    DialogManager.Instance.ClearDialog();
+
+                    if (!UpdateInstaller.IsInstallWritable())
+                    {
+                        DialogManager.Instance.ShowMessage(
+                            Localize.Key("Menu.Dialog.Updates.InstallFailed.Title"),
+                            Localize.KeyFormat("Menu.Dialog.Updates.InstallFailed.NotWritable",
+                                UpdateInstaller.InstallDirectory));
+                        return;
+                    }
+
+                    DialogManager.Instance.ShowMessage(
+                        Localize.Key("Menu.Dialog.Updates.Installing.Title"),
+                        Localize.KeyFormat("Menu.Dialog.Updates.Installing.Description", tag));
+
+                    // Give the dialog a frame to actually paint before the process goes away.
+                    await UniTask.NextFrame();
+
+                    var status = UpdateInstaller.Apply(tag, stagingPath);
+                    if (status != UpdateInstaller.InstallStatus.Launched)
+                    {
+                        string key = status switch
+                        {
+                            UpdateInstaller.InstallStatus.NotWritable => "Menu.Dialog.Updates.InstallFailed.NotWritable",
+                            UpdateInstaller.InstallStatus.NotStaged   => "Menu.Dialog.Updates.InstallFailed.NotStaged",
+                            _                                        => "Menu.Dialog.Updates.InstallFailed.Description",
+                        };
+
+                        DialogManager.Instance.ClearDialog();
+                        DialogManager.Instance.ShowMessage(
+                            Localize.Key("Menu.Dialog.Updates.InstallFailed.Title"),
+                            Localize.KeyFormat(key,
+                                status == UpdateInstaller.InstallStatus.NotStaged
+                                    ? stagingPath
+                                    : UpdateInstaller.InstallDirectory));
+                        return;
+                    }
+
+                    // The helper is already polling for this PID, so the sooner this happens the
+                    // sooner the user is back in the game.
+                    YargLogger.LogFormatInfo("Quitting to install {0}.", tag);
+                    Application.Quit();
+                }
+                catch (Exception e)
+                {
+                    // Nothing here may throw out of an async void.
+                    YargLogger.LogException(e, "Failed to install the staged update.");
                 }
             }
 #endif

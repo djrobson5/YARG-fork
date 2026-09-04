@@ -4,7 +4,7 @@
 
 The fork ships as a bare `.zip` on GitHub Releases and is invisible to the YARC Launcher.
 The updater lets a running build notice that a newer `-sectionfc` release exists, tell the
-user about it, and (eventually) download and apply it.
+user about it, download it and apply it.
 
 Background research, the API shape, and the risk list live in
 `docs/roadmap.md` → "Feature 4 — In-game updater from the fork's GitHub Releases".
@@ -47,6 +47,25 @@ This document records only the decisions that are now locked, and the plan they 
 | Asset selection | `^YARG-SectionFC_.*-Windows-x64\.zip$`, falling back to the release's **single** `.zip` if there is exactly one. The PowerShell script's fallback takes the first of any number of zips; requiring exactly one is stricter and avoids silently grabbing a macOS build. |
 | Non-Windows | The asset fields are only populated under `#if UNITY_STANDALONE_WIN`, so the Download Update button never appears elsewhere and the dialog degrades to Open Release Page — matching how slice 4's apply step will be gated. |
 | Where "installing isn't available yet" is said | On the **Update Ready** dialog, in plain wording pointing at `tools\update-yarg.ps1` and the release page. There is no point staging a build and saying nothing about what to do with it. |
+
+### Slice 4 decisions (2026-09-04)
+
+| Question | Decision |
+|---|---|
+| Where the helper script lives | A **C# `const` string** in `UpdateInstaller`, not a StreamingAssets file. It is one screen long, it is only meaningful next to the C# that fills in its paths, and as a constant it cannot go missing from — or be edited inside — a shipped install. |
+| Helper's own location on disk | `<PersistentDataPath>/updates/apply-<tag>.cmd`, i.e. **outside the install directory**, so the step that moves the install cannot move the running script. Its working directory is the updates folder for the same reason: a working directory inside the install would hold a handle on the folder being moved. |
+| Waiting for the game | Poll `tasklist /FI "PID eq <pid>"` once a second for **two minutes**, then give up **without touching anything**. |
+| Sleep primitive | `ping -n 2 127.0.0.1`, not `timeout`. `timeout` refuses to run when there is no console to read from, and the helper is started with `CreateNoWindow`. |
+| External tools | `tasklist`, `find`, `ping`, `xcopy` and `robocopy` are called by **absolute path** (`%SystemRoot%\System32\…`). A `find` earlier on `PATH` (git's, for one) has different exit codes, and mistaking "still running" for "exited" would move an install out from under a live game. This was caught in testing, not theory. |
+| Backup location and retention | `<install>/../backup/<old-tag>`, a **sibling** of the install so replacing the install cannot touch it. Exactly one backup: the helper deletes the whole `backup` folder before creating the new one. |
+| Old tag | `Application.version` — the release tag in a CI build, which is exactly what `tools/update-yarg.ps1` reads back out of `YARG_Data\globalgamemanagers`. Sanitized to one path component; `unknown` when empty. |
+| Rollback | If the copy fails or the copied tree has no `YARG.exe`/`YARG_Data`, the helper moves the backup's contents back, deletes the backup folder and relaunches the old build. Same guarantee as the PowerShell script's `Restore-Backup`. |
+| Marker file | The helper writes `.yarg-update-tag` into the install, the same marker `tools/update-yarg.ps1` writes and reads, so the two updaters agree about what is installed. |
+| Staged tree vs the `.zip` | Slice 3 leaves an **already-extracted tree** at `staging/<tag>` and keeps the `.zip` beside it in `updates/`. The apply step installs from the extracted tree and never re-reads the archive; it deletes `staging/<tag>` on success and leaves the `.zip` alone, so a re-run does not re-download 130 MB. |
+| Writability | Probed at the moment the button is pressed by creating and deleting `.yarg-update-write-probe-<guid>` in the install directory — ACL inspection lies (virtualisation, inherited denies, read-only media). A failure shows the "move your install" dialog and **nothing is written**. **The updater never elevates.** |
+| Where the button lives | On the **Update Ready** dialog, as a third button: `[Close] [Open Release Page] [Install and Restart]`. It only appears when `UpdateInstaller.IsSupported` — Windows, and **not** the editor, where `PathHelper.ExecutablePath` is the Unity project folder. Otherwise the dialog keeps slice 3's wording pointing at `tools\update-yarg.ps1`. |
+| Dialog before quitting | Pressing Install and Restart shows a short **Installing Update** dialog, yields a frame so it actually paints, then starts the helper and calls `Application.Quit()`. There is no second confirmation: the Update Ready dialog already says exactly what the button will do. |
+| If the helper cannot start | The game does **not** quit. The dialog is replaced with "Could Not Install", and nothing on disk has been touched. |
 
 ## UI
 
@@ -101,13 +120,41 @@ Closing this dialog cancels the download.
 ```
 The update has been downloaded and verified.
 
-Installing from inside the game is not available
-yet; run tools\update-yarg.ps1 or open the release
-page to install it.
+Install and Restart will close YARG, replace this
+install with v0.15.0-sectionfc.2 and reopen it.
+Your current build is kept in a backup folder next
+to the install until the next update.
 
 Staged  v0.15.0-sectionfc.2
         <staging path>
-                 [Close] [Open Release Page]
+ [Close] [Open Release Page] [Install and Restart]
+```
+
+On a build that cannot replace itself (non-Windows, or the editor) the middle paragraph is
+slice 3's instead — "run tools\update-yarg.ps1 or open the release page" — and the third
+button is absent.
+
+**Installing Update** (the dialog shown for the frame before the game quits)
+```
+Installing v0.15.0-sectionfc.2.
+
+YARG will close now and reopen once the new build
+is in place. This takes a few seconds; do not close
+the window that appears.
+                                    [Close]
+```
+
+**Could Not Install** — the install directory is not writable, or the helper would not start.
+Nothing has been changed in either case.
+```
+YARG cannot write to its own install folder, and
+this updater never asks for administrator rights.
+
+Move the install somewhere under your user profile
+(for example %LOCALAPPDATA%\YARG-SectionFC) and try
+again, or run tools\update-yarg.ps1 from an account
+that can write to <install path>.
+                                    [Close]
 ```
 
 **Could Not Download**
@@ -227,7 +274,7 @@ dangling over an empty section.
 4. **Apply.** Writability probe on `PathHelper.ExecutablePath` first; **no elevation, ever**.
    Helper `.cmd` that waits for the PID, moves the install into `backup/<old-tag>`, copies
    staging over, relaunches, deletes itself. `Application.Quit()`. Windows only
-   (`#if UNITY_STANDALONE_WIN`); other platforms degrade to "Open Release Page".
+   (`#if UNITY_STANDALONE_WIN`); other platforms degrade to "Open Release Page". *(Done.)*
 5. **Optional automatic check** behind a `ToggleSetting`, plus a "latest build" line near the
    version watermark.
 
@@ -237,7 +284,134 @@ dangling over an empty section.
 |---|---|
 | Fetch + compare + asset info | `Assets/Script/Song/UpdateChecker.cs` |
 | Download + verify + stage | `Assets/Script/Song/UpdateDownloader.cs` |
+| Writability probe, helper script, quit | `Assets/Script/Song/UpdateInstaller.cs` |
 | Button methods and dialogs | `Assets/Script/Settings/SettingsManager.Settings.cs` |
 | Tab wiring | `Assets/Script/Settings/SettingsManager.cs` (General tab) |
 | Header visibility | `Assets/Script/Settings/Metadata/HeaderMetadata.cs` |
 | Strings | `Assets/StreamingAssets/lang/en-US.json` |
+
+---
+
+## Slice 4 implemented (2026-09-04)
+
+Apply is in. The Update Ready dialog can now replace the running install with the staged
+build and restart into it, on Windows packaged builds only.
+
+### File map
+
+| File | Change |
+|---|---|
+| `Assets/Script/Song/UpdateInstaller.cs` | **New.** `IsSupported`, `InstallDirectory`, `BackupRoot`, `IsInstallWritable()`, `IsStagedBuildValid()`, `Apply(newTag, stagingPath)`, and the helper script as the `HELPER_TEMPLATE` constant. |
+| `Assets/Script/Settings/SettingsManager.Settings.cs` | `ShowUpdateReadyDialog()` (extracted from `DownloadUpdate`, now adds the Install and Restart button) and `InstallUpdate()`. Both inside the existing `#if UNITY_STANDALONE_WIN` block. |
+| `Assets/StreamingAssets/lang/en-US.json` | `Updates.InstallAndRestart`, `Updates.Ready.DescriptionManual`, `Updates.Installing.*`, `Updates.InstallFailed.*`; `Updates.Ready.Description` rewritten now that installing works. |
+| `tools/update-yarg.ps1` | `Move-InstallToBackup` now clears the whole `backup` root rather than only `backup\<old-tag>`. See "Bug found in the PowerShell script" below. |
+
+Nothing under `YARG.Core/` is touched.
+
+### What the helper does
+
+Written to `<PersistentDataPath>/updates/apply-<tag>.cmd` and started as
+`cmd.exe /c ""<path>""` with `CreateNoWindow`, `UseShellExecute = false`, and the updates
+folder as its working directory. It logs every step to `apply-<tag>.log` beside itself.
+
+1. Poll `%SystemRoot%\System32\tasklist.exe /FI "PID eq <pid>" /NH` once a second until the
+   game's PID is gone. After 120 tries it logs a timeout, deletes itself and stops **without
+   having changed anything** — and, unlike every other exit, without relaunching, because the
+   game it gave up waiting for is still running.
+2. `rd /s /q` the whole `<install>/../backup` folder, then `md` `<install>/../backup/<old-tag>`.
+   Exactly one backup is kept. If the old backup cannot be cleared, or the folder cannot be
+   created, it aborts here, still having changed nothing.
+3. `robocopy "<install>" "<backup>" /E /MOVE` the whole install into the backup, then recreates
+   the (now deleted) install folder. Moving rather than copying is both cheap and leaves a
+   complete working build behind. A robocopy exit code of 8 or more jumps to the restore path.
+   **Not** a `dir /b /a` + `move` loop: `move` refuses hidden and system files ("The system
+   cannot find the file specified.") and `for /f` over `dir /b` silently skips any name starting
+   with `;`, so either one could leave part of the old build in the install — where step 4 would
+   then bury it and the restore path delete it. This was caught in testing.
+4. `xcopy "<staging>\*" "<install>\" /E /I /H /Y`.
+5. Re-check that `YARG.exe` and `YARG_Data` are in the install directory *after* the copy — a
+   half-succeeded copy that did not set an exit code would otherwise go unnoticed. Failure
+   jumps to the restore path.
+6. Write `<install>\.yarg-update-tag` with the new tag, matching the marker
+   `tools/update-yarg.ps1` writes and reads.
+7. `rd /s /q` the staging folder. The downloaded `.zip` in `updates/` is kept.
+8. `start "" /D "<install>" "<install>\YARG.exe"`.
+9. Delete itself with `(goto) 2>nul & del "%~f0"`.
+
+**Restore path** (steps 3–5 failing): `robocopy "<backup>" "<install>" /E /MOVE` the backup's
+contents back, delete the backup folder, relaunch the restored build, delete itself. The log
+survives, so a failure is diagnosable afterwards.
+
+`/PURGE` is added — so that a half-copied new build is cleared rather than mixed into the old
+one — **only** when step 3 completed, which is the only case in which the backup is known to
+hold the whole old install. If step 3 failed part way, the install still holds originals that
+were never copied anywhere and purging would destroy them outright; the restore then merely
+overwrites, and any leftover new file is preferred to a lost old one.
+
+Every path is written as `set "VAR=value"` and used quoted, so install directories with spaces,
+parentheses and ampersands work — `C:\...\Program Files (x86) & Co\YARG Install` was the fixture
+the helper was tested against. The release tag is path-sanitized before it is substituted into
+the script for the same reason: only the `-sectionfc.<n>` suffix of a tag is checked, so
+everything before it is whatever GitHub said. `ping` is the sleep because `timeout` refuses to
+run without a console, and the external tools are called by absolute path because a `find` or
+`tasklist` earlier on `PATH` reports different exit codes — with git's `find` on `PATH` the wait
+loop concluded "exited" for a PID that was still running.
+
+### Writability, and what happens when the install is not writable
+
+`UpdateInstaller.IsInstallWritable()` creates and deletes
+`<install>\.yarg-update-write-probe-<guid>`. It is called twice: once by `InstallUpdate()`
+before any dialog changes, so the failure message replaces the Update Ready dialog cleanly,
+and once inside `Apply()` before the helper is written, so no caller can skip it.
+
+On failure the Could Not Install dialog says to move the install under the user's profile or
+to run `tools/update-yarg.ps1` from an account that can write there. **The updater never
+elevates** — no `runas`, no `Verb = "runas"`, no manifest. Nothing is written, nothing is
+moved, and the game does not quit.
+
+### Bug found in the PowerShell script
+
+Writing the helper's single-backup step exposed the equivalent step in
+`tools/update-yarg.ps1` as wrong: `Move-InstallToBackup` deleted only `backup\<old-tag>`, so
+updating v1 → v2 → v3 left `backup\v1` *and* `backup\v2` behind — one ~130 MB copy per tag
+ever updated from, against the locked "keep exactly one backup" decision. It now clears the
+backup root. That is the only change to the script.
+
+### Manual test procedure (needs a packaged build)
+
+None of this can be exercised in the editor: `UpdateChecker.IsReleaseBuild` hides the whole
+Updates section when `Application.version` is not a release tag (it is `0.1.0` there), and
+`UpdateInstaller.IsSupported` is false under `UNITY_EDITOR` regardless.
+
+1. Cut `v0.15.0-sectionfc.N` and `v0.15.0-sectionfc.N+1` from CI
+   (`docs/release-build.md` §2). Two releases are needed: one to install, one to update to.
+2. Unzip `N` into a folder **under your profile** with a space in its path — e.g.
+   `%LOCALAPPDATA%\YARG SectionFC\YARG` — to exercise the quoting.
+3. Run `YARG.exe`. Settings → General → Updates → **Check for Updates** → "Update Available",
+   `N` → `N+1`.
+4. **Download Update.** Watch the percentage climb, then "Extracting…", then Update Ready.
+5. **Install and Restart.** The Installing Update dialog appears, the game quits, and after a
+   few seconds it relaunches by itself.
+6. Verify:
+   - Settings → General → Updates → Check for Updates now reports Up to Date at `N+1`
+     (a fresh process, so nothing is cached from before the restart).
+   - `%LOCALAPPDATA%\YARG SectionFC\backup\v0.15.0-sectionfc.N\` exists and holds the old
+     build, and there is no second folder beside it.
+   - `<install>\.yarg-update-tag` reads `v0.15.0-sectionfc.N+1`.
+   - `<PersistentDataPath>\updates\staging\` is empty; the `.zip` is still in `updates\`.
+   - `<PersistentDataPath>\updates\apply-<tag>.cmd` is **gone**, and
+     `apply-<tag>.log` ends with "Installed v0.15.0-sectionfc.N+1".
+7. **Non-writable case:** copy the same install into `C:\Program Files\YARG-SectionFC`, run it
+   unelevated, and press Install and Restart on a staged build. Expect the Could Not Install
+   dialog, no UAC prompt, no `backup` folder next to the install, and the game still running.
+
+The helper itself was tested outside Unity by rendering `HELPER_TEMPLATE` against a fixture
+install at `…\Program Files (x86) & Co\YARG Install` holding a hidden file, a file whose name
+starts with `;`, and names with `&` and parentheses, and running it five ways: against a dead
+PID (installs), against a live PID killed after 8 s (waits, then installs), against a live PID
+never killed (times out at ~2 minutes, changes nothing, does not relaunch), with the staging
+folder deleted after the render (copy fails → the old build comes back complete, the backup is
+deleted, the build relaunches), and with a staged build missing `YARG_Data` plus an extra file
+(post-copy check fails → restore purges the half-copied build and puts the old one back). All
+five self-deleted. What that cannot cover is the game actually quitting on cue, the relaunch of
+a real `YARG.exe`, and the hidden-window `Process.Start` from a packaged player.

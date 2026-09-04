@@ -274,6 +274,7 @@
             "Updates": {
                 "OpenReleasePage": "Open Release Page",
                 "DownloadUpdate": "Download Update",
+                "InstallAndRestart": "Install and Restart",
                 "UpToDate": {
                     "Title": "Up to Date",
                     "Description": "Installed  <b>{0}</b>\n<alpha=#80>{1}</alpha>\n\nYou are running the latest release."
@@ -295,7 +296,18 @@
                 },
                 "Ready": {
                     "Title": "Update Ready",
-                    "Description": "The update has been downloaded and verified.\n\nInstalling from inside the game is not available yet; run tools\\update-yarg.ps1 or open the release page to install it.\n\nStaged  <b>{0}</b>\n<alpha=#80>{1}</alpha>"
+                    "Description": "The update has been downloaded and verified.\n\n<b>Install and Restart</b> will close YARG, replace this install with <b>{0}</b> and reopen it. Your current build is kept in a <b>backup</b> folder next to the install until the next update.\n\nStaged  <b>{0}</b>\n<alpha=#80>{1}</alpha>",
+                    "DescriptionManual": "The update has been downloaded and verified.\n\nThis build cannot replace itself; run tools\\update-yarg.ps1 or open the release page to install it.\n\nStaged  <b>{0}</b>\n<alpha=#80>{1}</alpha>"
+                },
+                "Installing": {
+                    "Title": "Installing Update",
+                    "Description": "Installing <b>{0}</b>.\n\nYARG will close now and reopen once the new build is in place. This takes a few seconds; do not close the window that appears."
+                },
+                "InstallFailed": {
+                    "Title": "Could Not Install",
+                    "Description": "The updater could not start. Nothing has been changed.\n\nRun tools\\update-yarg.ps1, or unzip the release over <b>{0}</b> yourself.",
+                    "NotWritable": "YARG cannot write to its own install folder, and this updater never asks for administrator rights.\n\nMove the install somewhere under your user profile (for example <b>%LOCALAPPDATA%\\YARG-SectionFC</b>) and try again, or run tools\\update-yarg.ps1 from an account that can write to <b>{0}</b>.",
+                    "NotStaged": "The staged build has gone missing, so there is nothing to install.\n\nCheck for updates and download it again.\n<alpha=#80>{0}</alpha>"
                 },
                 "DownloadFailed": {
                     "Title": "Could Not Download",

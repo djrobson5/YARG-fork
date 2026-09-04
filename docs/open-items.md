@@ -1,6 +1,6 @@
 # Open Items
 
-Running list of known issues and possible follow-ups for the fork. Last updated 2026-09-03. Remove items when done; note the commit.
+Running list of known issues and possible follow-ups for the fork. Last updated 2026-09-04. Remove items when done; note the commit.
 
 Feature research lives in `docs/roadmap.md`; the state of each feature is in
 `docs/section-fc-handoff.md` → "Roadmap work, 2026-09-03".
@@ -8,8 +8,9 @@ Feature research lives in `docs/roadmap.md`; the state of each feature is in
 ## Branch state and next steps
 
 The branch is fully pushed to `fork/feature/section-fc` as of 2026-09-04 (head `c4441462` plus
-this commit). Next steps in order: (1) cut a release build to exercise updater slices 2-3, then
-updater slice 4 (apply), (2) periodic merge of upstream `dev`.
+this commit). Next steps in order: (1) cut two release builds and exercise updater slices 2-4
+against the packaged `.exe` (`docs/updater-design.md` → "Slice 4 implemented" → "Manual test
+procedure"), (2) periodic merge of upstream `dev`.
 
 ## Parked
 
@@ -21,18 +22,23 @@ updater slice 4 (apply), (2) periodic merge of upstream `dev`.
 
 ## Unfinished features
 
-- **Feature 4, updater — slices 4 and 5.** Slice 4 is apply (writability probe, no elevation, a
-  helper `.cmd` that waits on the PID, backs the install up to `backup/<old-tag>`, copies staging
-  over, relaunches, deletes itself; Windows only). Slice 5 is the optional automatic check behind a
-  toggle plus a "latest build" line by the version watermark.
+- **Feature 4, updater — slice 5 only.** Slice 4 (apply) landed on 2026-09-04:
+  `Assets/Script/Song/UpdateInstaller.cs` plus an Install and Restart button on the Update Ready
+  dialog. Slice 5 is the optional automatic check behind a toggle plus a "latest build" line by the
+  version watermark.
 
 ## Needs verification
 
 - **Feature 4, updater — nothing in-game has ever been seen running.** In the editor
-  `Application.version` is `0.1.0`, so the Check for Updates button and the download/stage flow hide
-  themselves. Cut a CI release build and exercise slices 2 and 3 against the packaged `.exe`.
+  `Application.version` is `0.1.0`, so the Check for Updates button, the download/stage flow and the
+  Install and Restart button all hide themselves (`UpdateInstaller.IsSupported` is additionally
+  false under `UNITY_EDITOR`). Cut **two** CI release builds and exercise slices 2-4 against the
+  packaged `.exe`, following `docs/updater-design.md` → "Slice 4 implemented" → "Manual test
+  procedure" — including the non-writable case (an install under `C:\Program Files` must show
+  "Could Not Install", raise no UAC prompt and change nothing).
 - **`tools/update-yarg.ps1`'s copy-over-and-relaunch step is untested** — it has never been pointed
-  at a real install.
+  at a real install. Its backup step was corrected on 2026-09-04 (it kept one backup per tag instead
+  of exactly one); that change is untested for the same reason.
 - **Feature 2, delete songs — risk 1 stays open by nature.** If `SongCacheDirty` fails to persist,
   a deleted song can come back unplayable after a quick scan on the next launch. Only a
   delete-then-restart test exercises it; the UI cannot show it.

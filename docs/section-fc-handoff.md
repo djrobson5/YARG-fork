@@ -91,7 +91,7 @@ Decisions already locked, so the next session does not re-litigate them:
 - **Source profiles replace local profiles.** `profiles.json` comes over wholesale, because the
   score rows key off the source machine's profile GUIDs and would otherwise orphan.
 
-### Feature 4 — in-game updater: slices 1-3 done, 4-5 remain
+### Feature 4 — in-game updater: slices 1-4 done, 5 remains
 
 Done:
 
@@ -99,20 +99,29 @@ Done:
 2. Check-only: `UpdateChecker`, the Settings → General → Updates button, three dialogs, strings.
 3. Download + verify + stage into `PathHelper.PersistentDataPath/updates/staging/<tag>`.
    Nothing is written to the install directory yet.
+4. **Apply** (2026-09-04). `Assets/Script/Song/UpdateInstaller.cs`: writability probe, never any
+   elevation, and a helper `.cmd` (a C# `const`, written to `updates/apply-<tag>.cmd` so it lives
+   outside the install) that waits on the PID, moves the install to `<install>/../backup/<old-tag>`
+   — exactly one backup is kept — copies staging over, relaunches and deletes itself, restoring
+   the old build if the copy fails. The Update Ready dialog gained an **Install and Restart**
+   button; the game shows an Installing dialog and quits. Windows packaged builds only. Full
+   record, including the manual test procedure, in `docs/updater-design.md` → "Slice 4
+   implemented".
 
 Remaining:
 
-4. **Apply.** Writability probe, no elevation ever, a helper `.cmd` that waits on the PID, moves
-   the install to `backup/<old-tag>`, copies staging over, relaunches and deletes itself.
-   Windows only.
 5. **Optional automatic check** behind a toggle, plus a "latest build" line by the version
    watermark.
 
 **Verification gap.** In the editor `Application.version` is `0.1.0`, so the in-game pieces hide
-themselves and cannot be exercised — none of slices 2 and 3 has been seen working. They need a CI
-release build (`.github/workflows/build-windows.yml`; the pipeline is proven, see
-`docs/release-build.md`) and then a run of the packaged `.exe`. `tools/update-yarg.ps1`'s
-copy-over-and-relaunch step is likewise **untested** — it has never been pointed at a real install.
+themselves and cannot be exercised — none of slices 2, 3 and 4 has been seen working in the game.
+They need a CI release build (`.github/workflows/build-windows.yml`; the pipeline is proven, see
+`docs/release-build.md`) and then a run of the packaged `.exe`; slice 4 needs **two** releases, one
+to install and one to update to. The slice 4 helper script itself *was* tested outside Unity (dead
+PID, live PID, and a forced copy failure exercising the restore path, all with spaces in the
+paths). `tools/update-yarg.ps1`'s copy-over-and-relaunch step is still **untested** — it has never
+been pointed at a real install; writing the helper did expose one bug in it, since fixed (it kept a
+backup per tag rather than exactly one).
 
 ### Feature 2 — delete songs: done and verified
 
@@ -226,8 +235,9 @@ compute a path; drums and vocals do not override `RecomputeStarPowerPath`. The p
 
 ### Suggested next steps, in order
 
-1. **Cut a release build** to exercise updater slices 2-3 against a packaged `.exe`, then implement
-   updater slice 4 (apply).
+1. **Cut two release builds** (`v0.15.0-sectionfc.N` and `N+1`) and exercise updater slices 2-4
+   against the packaged `.exe`, following `docs/updater-design.md` → "Slice 4 implemented" →
+   "Manual test procedure". Slice 5 (automatic check behind a toggle) only after that.
 
 ## Workflow that worked
 

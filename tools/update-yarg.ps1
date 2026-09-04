@@ -481,8 +481,16 @@ function Expand-ToStaging {
 function Move-InstallToBackup {
     param([string] $InstallPath, [string] $BackupPath)
 
-    if (Test-Path -LiteralPath $BackupPath) {
-        Remove-Item -LiteralPath $BackupPath -Recurse -Force
+    # Exactly one backup is kept, so the whole backup root goes -- not just the folder for this
+    # tag. Clearing only <backup>\<old-tag> would leave a backup per tag ever updated from, and
+    # a 130 MB build each. The in-game updater's helper does the same (docs/updater-design.md,
+    # "Backup retention").
+    $backupRoot = Split-Path -Parent $BackupPath
+    if ((Split-Path -Leaf $backupRoot) -ne 'backup') {
+        throw "Refusing to clear '$backupRoot': it is not the backup root."
+    }
+    if (Test-Path -LiteralPath $backupRoot) {
+        Remove-Item -LiteralPath $backupRoot -Recurse -Force
     }
     New-Item -ItemType Directory -Path $BackupPath -Force | Out-Null
 
