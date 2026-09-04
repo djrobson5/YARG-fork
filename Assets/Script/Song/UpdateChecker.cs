@@ -12,8 +12,9 @@ namespace YARG.Song
     /// Checks the fork's GitHub Releases for a newer <c>-sectionfc</c> build.
     /// </summary>
     /// <remarks>
-    /// Check only. Nothing here downloads or writes anything; see
-    /// <c>docs/updater-design.md</c> for the full slice plan.
+    /// Nothing here downloads or writes anything — it only reports what the newest release is
+    /// and where its Windows asset lives. <see cref="UpdateDownloader"/> does the fetching.
+    /// See <c>docs/updater-design.md</c> for the full slice plan.
     /// </remarks>
     public static class UpdateChecker
     {
@@ -48,12 +49,35 @@ namespace YARG.Song
             /// <summary>The newest release's GitHub page, or null if the check failed.</summary>
             public readonly string ReleaseUrl;
 
-            public UpdateCheckResult(UpdateStatus status, string installedTag, string latestTag, string releaseUrl)
+            /// <summary>
+            /// The Windows .zip asset's file name, or null when there is nothing downloadable
+            /// (a failed check, or a platform this updater cannot install on).
+            /// </summary>
+            public readonly string AssetName;
+
+            /// <summary>The asset's direct download URL, or null. Redirects to a CDN host.</summary>
+            public readonly string AssetUrl;
+
+            /// <summary>
+            /// The asset's declared byte count. The release publishes no checksum, so this is
+            /// the only integrity signal there is. Zero when there is no asset.
+            /// </summary>
+            public readonly long AssetSize;
+
+            /// <summary>Whether this result carries an asset the downloader could fetch.</summary>
+            public bool HasDownloadableAsset =>
+                !string.IsNullOrEmpty(AssetUrl) && !string.IsNullOrEmpty(AssetName) && AssetSize > 0;
+
+            public UpdateCheckResult(UpdateStatus status, string installedTag, string latestTag, string releaseUrl,
+                string assetName = null, string assetUrl = null, long assetSize = 0)
             {
                 Status = status;
                 InstalledTag = installedTag;
                 LatestTag = latestTag;
                 ReleaseUrl = releaseUrl;
+                AssetName = assetName;
+                AssetUrl = assetUrl;
+                AssetSize = assetSize;
             }
         }
 
@@ -67,6 +91,14 @@ namespace YARG.Song
         /// </summary>
         private static readonly Regex TagPattern =
             new(@"-sectionfc\.(\d+)$", RegexOptions.CultureInvariant);
+
+        /// <summary>
+        /// The name the release workflow gives the Windows build
+        /// (<c>.github/workflows/build-windows.yml</c>, "[Setup] Resolve version").
+        /// </summary>
+        private static readonly Regex WindowsAssetPattern =
+            new(@"^YARG-SectionFC_.*-Windows-x64\.zip$",
+                RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
         // The check is never retried, and a real answer is reused for the rest of the session.
         private static UpdateCheckResult? _cachedResult;
@@ -126,6 +158,7 @@ namespace YARG.Song
             string latestTag = null;
             string releaseUrl = null;
             long highestBuild = -1;
+            JToken latestRelease = null;
 
             try
             {
@@ -156,6 +189,7 @@ namespace YARG.Song
                     highestBuild = build;
                     latestTag = tag;
                     releaseUrl = release["html_url"]?.ToString();
+                    latestRelease = release;
                 }
             }
             catch (UnityWebRequestException e)
@@ -193,7 +227,89 @@ namespace YARG.Song
                 : -1;
 
             var status = highestBuild > installedBuild ? UpdateStatus.UpdateAvailable : UpdateStatus.UpToDate;
-            return new UpdateCheckResult(status, installedTag, latestTag, releaseUrl);
+
+            string assetName = null;
+            string assetUrl = null;
+            long assetSize = 0;
+#if UNITY_STANDALONE_WIN
+            // Only Windows builds have something this updater could ever install, so only
+            // Windows builds bother reading the asset list. Everywhere else the flow degrades
+            // to the Open Release Page button.
+            TryFindWindowsAsset(latestRelease, out assetName, out assetUrl, out assetSize);
+#else
+            // Nothing reads the release body off Windows, and an assigned-but-unread local is
+            // a CS0219 warning.
+            _ = latestRelease;
+#endif
+
+            return new UpdateCheckResult(status, installedTag, latestTag, releaseUrl,
+                assetName, assetUrl, assetSize);
+        }
+
+        /// <summary>
+        /// Picks the Windows .zip out of a release's asset list.
+        /// </summary>
+        /// <remarks>
+        /// Mirrors <c>Get-WindowsAsset</c> in <c>tools/update-yarg.ps1</c>: match the workflow's
+        /// naming first, and fall back to a lone .zip so a rename of the workflow's asset does
+        /// not silently break the updater.
+        /// </remarks>
+        private static bool TryFindWindowsAsset(JToken release, out string name, out string url, out long size)
+        {
+            name = null;
+            url = null;
+            size = 0;
+
+            if (release?["assets"] is not JArray assets)
+            {
+                return false;
+            }
+
+            JToken chosen = null;
+            JToken onlyZip = null;
+            int zipCount = 0;
+
+            foreach (var asset in assets)
+            {
+                string assetName = asset["name"]?.ToString();
+                if (string.IsNullOrEmpty(assetName))
+                {
+                    continue;
+                }
+
+                if (assetName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                {
+                    zipCount++;
+                    onlyZip = asset;
+                }
+
+                if (chosen == null && WindowsAssetPattern.IsMatch(assetName))
+                {
+                    chosen = asset;
+                }
+            }
+
+            chosen ??= zipCount == 1 ? onlyZip : null;
+            if (chosen == null)
+            {
+                YargLogger.LogWarning("The latest release has no Windows .zip asset.");
+                return false;
+            }
+
+            name = chosen["name"]?.ToString();
+            url = chosen["browser_download_url"]?.ToString();
+            size = chosen["size"]?.Value<long>() ?? 0;
+
+            if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(url) || size <= 0)
+            {
+                YargLogger.LogWarning("The latest release's Windows asset is missing a name, URL or size.");
+                name = null;
+                url = null;
+                size = 0;
+                return false;
+            }
+
+            return true;
         }
     }
 }

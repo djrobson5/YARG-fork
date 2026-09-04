@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Threading;
 using System.Threading.Tasks;
+using Cysharp.Threading.Tasks;
 using Newtonsoft.Json;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -18,6 +20,7 @@ using YARG.Integration.StageKit;
 using YARG.Input.Bindings;
 using YARG.Localization;
 using YARG.Menu.Data;
+using YARG.Menu.Dialogs;
 using YARG.Menu.Filters;
 using YARG.Menu.History;
 using YARG.Menu.MusicLibrary;
@@ -194,18 +197,20 @@ namespace YARG.Settings
                                 Localize.KeyFormat("Menu.Dialog.Updates.UpdateAvailable.Description",
                                     result.InstalledTag, result.LatestTag));
 
-                            if (!string.IsNullOrEmpty(result.ReleaseUrl))
+                            AddOpenReleasePageButton(dialog, result.ReleaseUrl);
+
+#if UNITY_STANDALONE_WIN
+                            // Only Windows releases ship an asset this can install. Everywhere
+                            // else the dialog is the release-page link and nothing more.
+                            if (result.HasDownloadableAsset)
                             {
-                                string url = result.ReleaseUrl;
+                                var downloadable = result;
                                 dialog.AddDialogButton(
-                                    "Menu.Dialog.Updates.OpenReleasePage",
+                                    "Menu.Dialog.Updates.DownloadUpdate",
                                     MenuData.Colors.ConfirmButton,
-                                    () =>
-                                    {
-                                        Application.OpenURL(url);
-                                        DialogManager.Instance.ClearDialog();
-                                    });
+                                    () => DownloadUpdate(downloadable));
                             }
+#endif
 
                             break;
                         }
@@ -249,6 +254,128 @@ namespace YARG.Settings
                     YargLogger.LogException(e, "Failed to show the update check result.");
                 }
             }
+
+            private static void AddOpenReleasePageButton(Dialog dialog, string releaseUrl)
+            {
+                if (string.IsNullOrEmpty(releaseUrl))
+                {
+                    return;
+                }
+
+                dialog.AddDialogButton(
+                    "Menu.Dialog.Updates.OpenReleasePage",
+                    MenuData.Colors.ConfirmButton,
+                    () =>
+                    {
+                        Application.OpenURL(releaseUrl);
+                        DialogManager.Instance.ClearDialog();
+                    });
+            }
+
+#if UNITY_STANDALONE_WIN
+            /// <summary>
+            /// Downloads, verifies and stages the release asset, reporting progress in the
+            /// dialog's own message text. Nothing here writes to the install directory.
+            /// </summary>
+            private static async void DownloadUpdate(UpdateChecker.UpdateCheckResult result)
+            {
+                // A download already running owns the dialog and the files on disk. Joining it
+                // here would only mean two progress callbacks fighting over one message field.
+                if (UpdateDownloader.IsDownloading)
+                {
+                    return;
+                }
+
+                using var cancellation = new CancellationTokenSource();
+
+                try
+                {
+                    // Replace the Update Available dialog with the progress one. ShowMessage
+                    // throws if a dialog is already up.
+                    DialogManager.Instance.ClearDialog();
+
+                    var dialog = DialogManager.Instance.ShowMessage(
+                        Localize.Key("Menu.Dialog.Updates.Downloading.Title"),
+                        Localize.KeyFormat("Menu.Dialog.Updates.Downloading.Description", result.LatestTag, 0));
+
+                    // There is no progress dialog type in the project, so the message text is
+                    // rewritten in place. The callback runs on the player loop, so touching TMP
+                    // from it is safe.
+                    int lastPercent = -1;
+                    var progress = Progress.Create<float>(value =>
+                    {
+                        // The forced Close button destroys the dialog. That is the only cancel
+                        // affordance there is, so treat it as one.
+                        if (dialog == null || !dialog.IsOpen)
+                        {
+                            cancellation.Cancel();
+                            return;
+                        }
+
+                        int percent = Mathf.Clamp(Mathf.FloorToInt(value * 100f), 0, 100);
+                        if (percent == lastPercent)
+                        {
+                            return;
+                        }
+
+                        lastPercent = percent;
+                        dialog.Message.text = percent >= 100
+                            ? Localize.KeyFormat("Menu.Dialog.Updates.Downloading.Extracting", result.LatestTag)
+                            : Localize.KeyFormat("Menu.Dialog.Updates.Downloading.Description",
+                                result.LatestTag, percent);
+                    });
+
+                    var stage = await UpdateDownloader.DownloadAndStage(result, progress, cancellation.Token);
+
+                    // The user closed the progress dialog, or something else took the screen
+                    // while the download was in the air. Either way, say nothing.
+                    if (stage.Status == UpdateDownloader.StageStatus.Cancelled ||
+                        dialog == null || !dialog.IsOpen)
+                    {
+                        return;
+                    }
+
+                    DialogManager.Instance.ClearDialog();
+
+                    if (stage.Status == UpdateDownloader.StageStatus.Staged)
+                    {
+                        var readyDialog = DialogManager.Instance.ShowMessage(
+                            Localize.Key("Menu.Dialog.Updates.Ready.Title"),
+                            Localize.KeyFormat("Menu.Dialog.Updates.Ready.Description",
+                                result.LatestTag, stage.StagingPath));
+
+                        AddOpenReleasePageButton(readyDialog, result.ReleaseUrl);
+                        return;
+                    }
+
+                    string messageKey = stage.Status switch
+                    {
+                        UpdateDownloader.StageStatus.NoAsset       => "Menu.Dialog.Updates.DownloadFailed.NoAsset",
+                        UpdateDownloader.StageStatus.SizeMismatch  => "Menu.Dialog.Updates.DownloadFailed.SizeMismatch",
+                        UpdateDownloader.StageStatus.ExtractFailed => "Menu.Dialog.Updates.DownloadFailed.ExtractFailed",
+                        UpdateDownloader.StageStatus.StageIoError  => "Menu.Dialog.Updates.DownloadFailed.StageIoError",
+                        UpdateDownloader.StageStatus.InvalidLayout => "Menu.Dialog.Updates.DownloadFailed.InvalidLayout",
+                        _                                          => "Menu.Dialog.Updates.DownloadFailed.Description",
+                    };
+
+                    // A disk or permission failure is about the folder, not the release, so it
+                    // is the only message that wants a path rather than a tag.
+                    string message = stage.Status == UpdateDownloader.StageStatus.StageIoError
+                        ? Localize.KeyFormat(messageKey, UpdateDownloader.UpdatesRoot)
+                        : Localize.KeyFormat(messageKey, result.LatestTag);
+
+                    var failedDialog = DialogManager.Instance.ShowMessage(
+                        Localize.Key("Menu.Dialog.Updates.DownloadFailed.Title"), message);
+
+                    AddOpenReleasePageButton(failedDialog, result.ReleaseUrl);
+                }
+                catch (Exception e)
+                {
+                    // Nothing here may throw out of an async void.
+                    YargLogger.LogException(e, "Failed to download and stage the update.");
+                }
+            }
+#endif
 
             public static float GetUpscaleRatioFromQualityMode(QualityMode qualityMode)
             {

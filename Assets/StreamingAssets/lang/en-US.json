@@ -256,6 +256,7 @@
             },
             "Updates": {
                 "OpenReleasePage": "Open Release Page",
+                "DownloadUpdate": "Download Update",
                 "UpToDate": {
                     "Title": "Up to Date",
                     "Description": "Installed  <b>{0}</b>\n<alpha=#80>{1}</alpha>\n\nYou are running the latest release."
@@ -269,6 +270,24 @@
                     "Description": "Could not reach GitHub to check for a newer release. Check your internet connection and try again.\n\nInstalled  <b>{0}</b>\n<alpha=#80>{1}</alpha>",
                     "NoReleases": "No fork releases were found on GitHub.\n\nInstalled  <b>{0}</b>\n<alpha=#80>{1}</alpha>",
                     "RateLimited": "GitHub is rate limiting this connection. Try again in an hour.\n\nInstalled  <b>{0}</b>\n<alpha=#80>{1}</alpha>"
+                },
+                "Downloading": {
+                    "Title": "Downloading Update",
+                    "Description": "Downloading <b>{0}</b>\u2026 {1}%",
+                    "Extracting": "Downloaded <b>{0}</b>.\n\nExtracting\u2026"
+                },
+                "Ready": {
+                    "Title": "Update Ready",
+                    "Description": "The update has been downloaded and verified.\n\nInstalling from inside the game is not available yet; run tools\\update-yarg.ps1 or open the release page to install it.\n\nStaged  <b>{0}</b>\n<alpha=#80>{1}</alpha>"
+                },
+                "DownloadFailed": {
+                    "Title": "Could Not Download",
+                    "Description": "The download of <b>{0}</b> did not finish. Check your internet connection and try again.",
+                    "NoAsset": "Release <b>{0}</b> has no Windows download attached to it. Open the release page to see what it does have.",
+                    "SizeMismatch": "The download of <b>{0}</b> is the wrong size, so it is incomplete or corrupt. It has been discarded; try again.",
+                    "ExtractFailed": "The download of <b>{0}</b> could not be unzipped, so it is corrupt. It has been discarded; try again.",
+                    "StageIoError": "Could not write to the updates folder. Check that there is enough disk space and that nothing is locking <b>{0}</b>.",
+                    "InvalidLayout": "The download of <b>{0}</b> does not look like a YARG build, so it was not staged. Install it by hand from the release page."
                 }
             },
             "ShowDialog": {

@@ -32,6 +32,22 @@ This document records only the decisions that are now locked, and the plan they 
 | Backup retention | When the apply step lands (slice 4), the previous install is kept in a backup folder **until the next update replaces it** — not deleted after one successful launch. |
 | Downgrade | Not offered, ever. The score DB is forward-only (see Feature 1 in the roadmap). |
 
+### Slice 3 decisions (2026-09-03)
+
+| Question | Decision |
+|---|---|
+| Progress UI | **No new prefab.** `DialogManager.ShowMessage` returns the `MessageDialog`, and `MessageDialog.Message` is a public `TextMeshProUGUI` — so the progress readout is that one text field rewritten in place from the `IProgress<float>` callback (which UniTask raises on the player loop, so touching TMP from it is safe). A dedicated progress dialog prefab is not worth a scene change for one screen. |
+| Cancelling | The forced red **Close** button is the cancel affordance. The progress callback checks `dialog == null \|\| !dialog.IsOpen` each frame and cancels the `CancellationTokenSource` when the dialog has gone; UniTask's cancellation path calls `UnityWebRequest.Abort()`, and `removeFileOnAbort` deletes the partial file. A cancel shows **no** dialog — the user closed one, they do not want another. |
+| Cancelling *during extraction* | `ZipFile.ExtractToDirectory` cannot be interrupted, so the token is **not** passed to `RunOnThreadPool`. The main thread instead polls (`await UniTask.Yield()`) while the extraction task is pending and returns `Cancelled` the moment the token trips; the extraction is left to run to completion in the background and its output folder is deleted once it lets go of the files. So a cancel is immediate from the user's side but the disk work is not actually stopped. |
+| Concurrency | One download at a time. `UpdateDownloader` keeps a `_inFlight` preserved task, mirroring `UpdateChecker`; a second `DownloadAndStage` joins it (ignoring its own progress/token), and the Settings button early-returns on `UpdateDownloader.IsDownloading` so two progress callbacks never fight over one message field. |
+| "Extracting" wording | The same `IProgress<float>`, reported as exactly `1` before extraction starts. The UI switches wording at 100% rather than needing a second callback or a phase enum. |
+| Download timeout | **None.** `UnityWebRequest.timeout` is a wall clock on the whole transfer rather than an idle timeout, so any finite value fails a slow connection on a 130 MB asset. Slice 2's 10-second timeout stays on the (tiny) API call. |
+| Extraction threading | On a thread pool thread via `UniTask.RunOnThreadPool`. Extracting ~130 MB on the main thread would freeze the menu for seconds and look like a hang. |
+| Reusing a download | A `.zip` already in `updates/` is reused when its length matches the release's `size` — the same check a fresh download gets — and deleted otherwise. Copied from `Save-ReleaseAsset` in `tools/update-yarg.ps1`. The `.zip` is kept after staging so a repeat press does not re-download. |
+| Asset selection | `^YARG-SectionFC_.*-Windows-x64\.zip$`, falling back to the release's **single** `.zip` if there is exactly one. The PowerShell script's fallback takes the first of any number of zips; requiring exactly one is stricter and avoids silently grabbing a macOS build. |
+| Non-Windows | The asset fields are only populated under `#if UNITY_STANDALONE_WIN`, so the Download Update button never appears elsewhere and the dialog degrades to Open Release Page — matching how slice 4's apply step will be gated. |
+| Where "installing isn't available yet" is said | On the **Update Ready** dialog, in plain wording pointing at `tools\update-yarg.ps1` and the release page. There is no point staging a build and saying nothing about what to do with it. |
+
 ## UI
 
 Settings → General, at the very top:
@@ -60,6 +76,43 @@ You are running the latest release.
 Installed   v0.15.0-sectionfc.1
 Latest      v0.15.0-sectionfc.2
 
+ [Close] [Open Release Page] [Download Update]
+```
+
+`Download Update` is Windows-only and only appears when the release actually carries a
+downloadable asset. Pressing it replaces this dialog with the progress one below.
+
+**Downloading Update** (message text rewritten in place, no new prefab)
+```
+Downloading v0.15.0-sectionfc.2… 45%
+                                    [Close]
+```
+then, once the bytes are down and verified:
+```
+Downloaded v0.15.0-sectionfc.2.
+
+Extracting…
+                                    [Close]
+```
+
+Closing this dialog cancels the download.
+
+**Update Ready**
+```
+The update has been downloaded and verified.
+
+Installing from inside the game is not available
+yet; run tools\update-yarg.ps1 or open the release
+page to install it.
+
+Staged  v0.15.0-sectionfc.2
+        <staging path>
+                 [Close] [Open Release Page]
+```
+
+**Could Not Download**
+```
+<per-status message>
                  [Close] [Open Release Page]
 ```
 
@@ -89,6 +142,68 @@ whose fetch it copies.
   check of `request.result`. The exception snapshots the response code and error text.
 - The result is stored in a static field and returned on every subsequent call.
 
+`UpdateDownloader` — a static class beside `UpdateChecker`, the C# port of the download /
+verify / stage half of `tools/update-yarg.ps1`.
+
+- `UpdateChecker` now also returns the latest release's Windows asset: `AssetName`,
+  `AssetUrl` (`browser_download_url`) and `AssetSize` (`size`), picked by
+  `^YARG-SectionFC_.*-Windows-x64\.zip$` with a fallback to the archive's *single* `.zip`
+  if the workflow's naming ever changes. The asset list is only read under
+  `#if UNITY_STANDALONE_WIN`; every other platform gets `HasDownloadableAsset == false`
+  and degrades to the Open Release Page button.
+- `UniTask<UpdateStageResult> DownloadAndStage(UpdateCheckResult, IProgress<float>, CancellationToken)`:
+  1. Reuses an already-downloaded `.zip` whose length matches `AssetSize`; deletes a stale
+     or partial one.
+  2. Otherwise `UnityWebRequest` + `DownloadHandlerFile` (`removeFileOnAbort = true`) with
+     **no timeout** — `UnityWebRequest.timeout` is a wall clock on the whole transfer, not
+     an idle timeout, so any value at all is a size-and-connection-speed lottery on a
+     ~130 MB asset. Progress comes from UniTask's `ToUniTask(progress)`, which reports
+     `UnityWebRequestAsyncOperation.progress` once per frame.
+  3. Verifies the file's length against `AssetSize`. The release publishes no checksum, so
+     this is the only integrity signal there is. A mismatch deletes the file.
+  4. `ZipFile.ExtractToDirectory`s into a temporary sibling folder `staging/<tag>.tmp`, on a
+     thread-pool thread (`UniTask.RunOnThreadPool`) so the menu does not freeze for the
+     several seconds a ~130 MB archive takes.
+  5. Checks that `YARG.exe` and `YARG_Data/` are at the temp root before calling it staged,
+     exactly as `Expand-ToStaging` does in the PowerShell script, and only then deletes the
+     previous `staging/<tag>` and renames the temp into place. A failed or refused extract
+     therefore leaves any previously staged build intact.
+- `AssetName` is reduced to a single path component (`Path.GetFileName` plus invalid-char
+  replacement, refusing `.`/`..`/empty) before it is joined onto `updates/`, so a hostile or
+  malformed GitHub response cannot write outside the updates folder. Tags get the same
+  treatment.
+- `UnityWebRequestException` is caught as slice 2 catches it; `OperationCanceledException`
+  is its own branch. Everything is logged through `YargLogger`.
+
+### Paths
+
+Everything the updater writes lives under `PathHelper.PersistentDataPath` — deliberately
+*not* the install directory, so a failed update cannot corrupt a working install.
+
+| | Path |
+|---|---|
+| Work root | `<PersistentDataPath>/updates` |
+| Downloaded asset | `<PersistentDataPath>/updates/<asset name>` |
+| Staging root | `<PersistentDataPath>/updates/staging` |
+| Staged build | `<PersistentDataPath>/updates/staging/<tag>` |
+
+The tag is path-sanitized before use as a folder name (no release tag needs it today; it is
+belt and braces). The `.zip` is kept after a successful stage so a repeat press does not
+re-download 130 MB.
+
+### `UpdateDownloader.StageStatus`
+
+| Status | Meaning | Dialog |
+|---|---|---|
+| `Staged` | Downloaded, verified, extracted, layout looks like a YARG build. | Update Ready |
+| `NoAsset` | The release carried no Windows `.zip`, or its asset name was not usable as a file name. | Could Not Download |
+| `DownloadFailed` | Offline, 404, or the download could not be read back. | Could Not Download |
+| `SizeMismatch` | Downloaded length ≠ the release's `size`. File deleted. | Could Not Download |
+| `ExtractFailed` | The archive's contents could not be read (`InvalidDataException`); it is corrupt. The `.zip` **is deleted**, so a right-sized-but-broken archive is not reused forever. | Could Not Download |
+| `StageIoError` | The updates folder could not be written to — out of disk, denied, or a handle held on the staging tree. The `.zip` is kept; nothing is wrong with it. | Could Not Download |
+| `InvalidLayout` | No `YARG.exe` and/or no `YARG_Data/` at the staging root. | Could Not Download |
+| `Cancelled` | The user closed the progress dialog. | none — say nothing |
+
 The Settings button is a plain `public async void CheckForUpdates()` on `SettingContainer`,
 following `RemoveRemoteContent()` (`SettingsManager.Settings.cs:664`) and wired with
 `new ButtonRowMetadata(nameof(Settings.CheckForUpdates), visibleWhen)` in
@@ -104,11 +219,11 @@ dangling over an empty section.
    copy-over-and-relaunch dance outside Unity. Ships in the release notes as the interim
    answer. *(Owned separately; not part of this document's implementation.)*
 2. **Check only.** `UpdateChecker`, the Settings button, the three dialogs, localization.
-   No downloading, nothing written to disk. **← this document's slice**
+   No downloading, nothing written to disk. *(Done.)*
 3. **Download + verify + stage.** Download to `PathHelper.PersistentDataPath/updates`,
    verify the length against the asset's `size` field, extract to `updates/staging/<tag>`,
    sanity-check that `YARG.exe` and `YARG_Data/` are at the staging root. Still no writes to
-   the install directory.
+   the install directory. *(Done.)*
 4. **Apply.** Writability probe on `PathHelper.ExecutablePath` first; **no elevation, ever**.
    Helper `.cmd` that waits for the PID, moves the install into `backup/<old-tag>`, copies
    staging over, relaunches, deletes itself. `Application.Quit()`. Windows only
@@ -120,8 +235,9 @@ dangling over an empty section.
 
 | Concern | Touch point |
 |---|---|
-| Fetch + compare | `Assets/Script/Song/UpdateChecker.cs` (new) |
-| Button method | `Assets/Script/Settings/SettingsManager.Settings.cs` |
+| Fetch + compare + asset info | `Assets/Script/Song/UpdateChecker.cs` |
+| Download + verify + stage | `Assets/Script/Song/UpdateDownloader.cs` |
+| Button methods and dialogs | `Assets/Script/Settings/SettingsManager.Settings.cs` |
 | Tab wiring | `Assets/Script/Settings/SettingsManager.cs` (General tab) |
 | Header visibility | `Assets/Script/Settings/Metadata/HeaderMetadata.cs` |
 | Strings | `Assets/StreamingAssets/lang/en-US.json` |
