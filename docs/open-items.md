@@ -7,10 +7,10 @@ Feature research lives in `docs/roadmap.md`; the state of each feature is in
 
 ## Branch state and next steps
 
-`feature/section-fc` is **ten commits ahead of `fork/feature/section-fc` and nothing is pushed**
-(the commit carrying this update makes eleven). In order: (1) SP path editor verification,
-(2) push the branch, (3) score import once the user's files arrive, (4) cut a release build to
-exercise updater slices 2-3, then updater slice 4 (apply).
+The branch is fully pushed to `fork/feature/section-fc` as of 2026-09-04 (head `c4441462` plus
+this commit). Next steps in order: (1) score import once the user's `scores.db` and
+`profiles.json` arrive, (2) cut a release build to exercise updater slices 2-3, then updater slice
+4 (apply), (3) periodic merge of upstream `dev`.
 
 ## Blocked
 
@@ -33,37 +33,18 @@ exercise updater slices 2-3, then updater slice 4 (apply).
   themselves. Cut a CI release build and exercise slices 2 and 3 against the packaged `.exe`.
 - **`tools/update-yarg.ps1`'s copy-over-and-relaunch step is untested** — it has never been pointed
   at a real install.
-- **Feature 3, SP path — computes in the editor; the visuals were redesigned on 2026-09-04 and
-  nothing about the new ones has been seen running.** A real run logged
-  `SP path (FiveFretGuitar): 4 activation(s), first at tick 45000 (54.612s ...)` plus the divergence
-  line, so the optimizer, plumbing and gating work. The original thin orange band was never
-  identifiable — same thickness as a beat line, same colour as everything Star Power around it — so
-  it was replaced (design doc: "Visual redesign, 2026-09-04"): a green ring on the activation note
-  plus a beat-long green band with rail caps and a lead-in tick on the highway, a steady green wash
-  over the strike line at the activation moment (skipped when `ReduceFlashingLights` is on), and a
-  code-built `ACTIVATE IN n` chip in `TrackView`'s top band. Colour is the drum Star Power
-  activation green (`#52FF00` / `#005400`), not Star Power orange; the highway preset's
-  `StarPowerColor` is now ignored. **Amended 2026-09-04 at the user's instruction:** nothing dims
-  any more — the dimmed marker state, grey ring and `OFF PLAN` chip are gone, the glow follows the
-  activation window alone, and the cue stays bright for the whole song; divergence detection is
-  kept as a log-only diagnostic. The activation note itself is now recoloured green as the one
-  guaranteed-visible part of the cue. **The user has since confirmed the band, the green note and
-  the chip all render, so the temporary `SP path: TEMPORARY ...` logs were deleted, and the cue is
-  now player-configurable:** four settings in Graphics → HUD after `ShowStarPowerPath` and greyed
-  out with it — `StarPowerPathColor` (colour picker, default `#52FF00`, drives every surface),
-  `StarPowerPathChipLeadIn` (1–8 s, step 0.5, default 3), `StarPowerPathChipHold` (0–3 s, step
-  0.25, default 0.75) and `StarPowerPathFretGlow` (default on, still overridden by
-  `ReduceFlashingLights`), all read once per path so pause-menu changes land next song.
-  **Next: the user tests the redesigned visuals.** Highest risks, in order: the runtime-cloned quad
-  geometry (rotation convention, z-fighting), `RemovePointOffset = 2f` on a band centred on the
-  activation, the ring lining up with the notes under lefty flip, the code-built uGUI chip rendering
-  inside `Top Elements` with a borrowed font, and the strike line glow reading as a glow. Unison bonuses are now modelled by the
-  optimizer (design doc: "Unison bonuses, modelled"), so the markers land where the meter really
-  fills; harness stays green (49 tests, `dotnet test tools/SpPathTests/SpPathTests.csproj`). Manual test steps are in
-  `docs/sp-path-design.md` → "Manual test steps (redesigned visuals)".
 - **Feature 2, delete songs — risk 1 stays open by nature.** If `SongCacheDirty` fails to persist,
   a deleted song can come back unplayable after a quick scan on the next launch. Only a
   delete-then-restart test exercises it; the UI cannot show it.
+
+## Done, lightly verified
+
+- **Feature 3, SP path — verified by the user in the editor on 2026-09-04.** The green activation
+  notes, the highway band, the countdown chip, and the four Graphics → HUD settings (colour picker,
+  chip lead-in, chip hold, fret glow toggle) all work. Unison bonuses are modelled by the optimizer;
+  harness stays green (49 tests, `dotnet test tools/SpPathTests/SpPathTests.csproj`). Remaining
+  unverified: a second human player, drums/vocals, practice mode and replay exclusions have not been
+  re-checked since the redesign (they are gated in code, not visuals).
 
 ## Not a bug
 

@@ -211,22 +211,11 @@ Files: `Assets/Script/Gameplay/Visuals/TrackElements/SpPathMarkerElement.cs` (re
 `Assets/Script/Gameplay/Visuals/TrackElements/Guitar/FiveFretGuitarNoteElement.cs`,
 `Assets/StreamingAssets/lang/en-US.json`.
 
-**Next session's first task:** the user tests the redesigned visuals. `dotnet build` only covers
-`Assembly-CSharp`, so none of the new geometry, the chip or the settings row has been through a
-Unity compile or a real frame. Highest-risk unverified items, in order (the full list is in
-`docs/sp-path-design.md` → "What still needs verifying in the editor"):
-
-1. **The runtime-cloned geometry** — 24 quads per pooled marker; the `X+90` rotation convention
-   read the wrong way round would draw the band across the highway instead of along it.
-2. **`RemovePointOffset = 2f`** on a band centred on the activation instant.
-3. **The ring lining up with the notes**, especially under lefty flip.
-4. **The code-built uGUI chip** rendering inside `Top Elements` with a font borrowed from another
-   `TextMeshProUGUI` in the view, and really hiding for the whole solo.
-5. **The strike line glow** reading as a glow rather than a grey slab, and the colours surviving
-   the curve/fade shaders.
-6. **The settings row** rendering with its reworded copy.
-
-Manual test steps: `docs/sp-path-design.md` → "Manual test steps (redesigned visuals)".
+**Verified by the user in the editor on 2026-09-04.** The green activation notes, the highway
+band, the countdown chip, and the four Graphics → HUD settings (colour picker, chip lead-in, chip
+hold, fret glow toggle) all work. Unison bonuses are modelled by the optimizer. Remaining
+unverified: a second human player, drums/vocals, practice mode and replay exclusions have not been
+re-checked since the redesign (they are gated in code, not visuals).
 
 **Exclusions are deliberate**, not bugs: no path in practice mode, none during replay playback, and
 none in a band run with more than one human player (bots do not count). Only 5-fret guitar and bass
@@ -235,13 +224,9 @@ compute a path; drums and vocals do not override `RecomputeStarPowerPath`. The p
 
 ### Suggested next steps, in order
 
-1. **SP path editor verification** — test the redesigned visuals (green ring + band + rail caps,
-   strike line glow, `ACTIVATE IN n` chip); debug the runtime geometry or the chip if they do not
-   appear (above).
-2. **Push the branch** — ten commits plus this doc update have never left the machine.
-3. **Score import** — run `tools/import-scores.ps1` once the user's `scores.db` and `profiles.json`
+1. **Score import** — run `tools/import-scores.ps1` once the user's `scores.db` and `profiles.json`
    arrive.
-4. **Cut a release build** to exercise updater slices 2-3 against a packaged `.exe`, then implement
+2. **Cut a release build** to exercise updater slices 2-3 against a packaged `.exe`, then implement
    updater slice 4 (apply).
 
 ## Workflow that worked
