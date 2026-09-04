@@ -163,6 +163,92 @@ namespace YARG.Gameplay.Player
         }
 
         /// <summary>
+        /// Logs the phrases the model is counting on next to the ones the engine says exist, so a
+        /// disagreement between the two shows up in the log rather than as a mysterious plan.
+        /// </summary>
+        /// <remarks>
+        /// Both sides read <c>IsStarPowerEnd</c> off the same post-modifier note track — the model
+        /// at <c>ScoreModel.Build</c>, the engine at <c>Guitar/GuitarEngine.cs:263-267</c> — so the
+        /// counts should always match. Unison bonuses are modelled as of 2026-09-04
+        /// (<see cref="GetUnisonPhrases"/>), so the unison count is logged next to them: it is the
+        /// number of phrases the plan expects the engine to pay <em>twice</em> on. Whammy
+        /// (<c>docs/sp-path-design.md</c> §1.6) is still unmodelled, so the player's meter can
+        /// still run ahead of the plan's — never behind it.
+        /// </remarks>
+        private void LogStarPowerPathPhrases(StarPowerPath path)
+        {
+            var ticks = path.PhraseEndTicks;
+            int preview = Math.Min(ticks.Count, 12);
+            var listed = new System.Text.StringBuilder();
+            for (int i = 0; i < preview; i++)
+            {
+                if (i > 0)
+                {
+                    listed.Append(", ");
+                }
+
+                listed.Append(ticks[i]);
+                listed.Append(" (");
+                listed.Append(SyncTrack.TickToTime(ticks[i]).ToString("0.000"));
+                listed.Append("s)");
+            }
+
+            if (ticks.Count > preview)
+            {
+                listed.Append(", … +");
+                listed.Append(ticks.Count - preview);
+                listed.Append(" more");
+            }
+
+            int engineTotal = Engine is null ? -1 : Engine.EngineStats.TotalStarPowerPhrases;
+            int engineUnisons = EngineContainer?.UnisonPhrases?.Count ?? -1;
+            YargLogger.LogInfo(
+                $"SP path ({Player.Profile.CurrentInstrument}): model counts {ticks.Count} " +
+                $"Star Power phrase(s), engine reports {engineTotal}; " +
+                $"{path.UnisonPhraseEndTicks.Count} of them are unisons paying a second quarter " +
+                $"bar (engine container lists {engineUnisons} unison phrase(s)); quarter bar = " +
+                $"{path.TicksPerQuarterSpBar} tick(s). Phrase-end ticks: {listed}. Whammy is not " +
+                $"modelled, so the player's meter can run ahead of the plan's.");
+        }
+
+        /// <summary>
+        /// The player's own Star Power phrases that are part of a unison, in the plain tick-range
+        /// form the Unity-free model takes.
+        /// </summary>
+        /// <remarks>
+        /// <c>EngineManager.EngineContainer.UnisonPhrases</c> is the authority, because it is
+        /// literally the list the award path matches a phrase hit against
+        /// (<c>ParticipantToPhrase[EngineId]</c>, <c>EngineManager.UnisonEvent.cs:340-346</c>). It
+        /// is built once at <c>Register</c> from this player's own post-modifier note track and
+        /// the whole chart (<c>EngineManager.GetUnisonPhrases</c>), so it does not depend on which
+        /// other players happen to be in the run — which is why a single-player run still gets the
+        /// bonus, and why the plan is right to assume every unison is awarded: the participant set
+        /// the engine counts successes against holds only the registered engines
+        /// (<c>UnisonEvent.Success</c>, <c>:122-140</c>).
+        /// <para/>
+        /// The container is created in <see cref="CreateEngine"/>, which runs before every call
+        /// site of this method (<c>TrackPlayer.Initialize</c> and the practice-section rebuild at
+        /// <c>TrackPlayer.cs:1615-1628</c>), but the null guard stays: a missing container must
+        /// cost the plan its unison bonuses, not the whole overlay.
+        /// </remarks>
+        private List<SpUnisonPhrase> GetUnisonPhrases()
+        {
+            var phrases = EngineContainer?.UnisonPhrases;
+            if (phrases is null || phrases.Count == 0)
+            {
+                return null;
+            }
+
+            var ranges = new List<SpUnisonPhrase>(phrases.Count);
+            foreach (var phrase in phrases)
+            {
+                ranges.Add(new SpUnisonPhrase(phrase.Tick, phrase.TickEnd));
+            }
+
+            return ranges;
+        }
+
+        /// <summary>
         /// Computes the optimal Star Power path for this player's current note track.
         /// </summary>
         /// <remarks>
@@ -198,27 +284,32 @@ namespace YARG.Gameplay.Player
             try
             {
                 var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-                var path = SpPathOptimizer.Optimize(NoteTrack, SyncTrack, EngineParams);
+                var path = SpPathOptimizer.Optimize(NoteTrack, SyncTrack, EngineParams,
+                    GetUnisonPhrases());
                 stopwatch.Stop();
 
                 if (path.Activations.Count == 0)
                 {
                     YargLogger.LogFormatInfo(
-                        "SP path ({0}): no activations — projected {1}, solved in {2:0.0} ms",
+                        "SP path ({0}): no activations — projected {1}, {2} unison phrase(s), " +
+                        "solved in {3:0.0} ms",
                         Player.Profile.CurrentInstrument, path.ProjectedScore,
-                        stopwatch.Elapsed.TotalMilliseconds);
+                        path.UnisonPhraseEndTicks.Count, stopwatch.Elapsed.TotalMilliseconds);
                 }
                 else
                 {
                     var first = path.Activations[0];
                     YargLogger.LogFormatInfo(
                         "SP path ({0}): {1} activation(s), first at tick {2} ({3:0.000}s, note {4}), " +
-                        "projected {5} (+{6} over no Star Power), solved in {7:0.0} ms",
+                        "projected {5} (+{6} over no Star Power), {7} unison phrase(s), " +
+                        "solved in {8:0.0} ms",
                         Player.Profile.CurrentInstrument, path.Activations.Count,
                         first.ActivationTick, first.ActivationTime, first.NoteIndex,
                         path.ProjectedScore, path.ScoreGainOverNoActivations,
-                        stopwatch.Elapsed.TotalMilliseconds);
+                        path.UnisonPhraseEndTicks.Count, stopwatch.Elapsed.TotalMilliseconds);
                 }
+
+                LogStarPowerPathPhrases(path);
 
                 SetStarPowerPath(path);
             }
@@ -228,6 +319,38 @@ namespace YARG.Gameplay.Player
                 // song down with it.
                 YargLogger.LogException(e, "SP path: the optimizer failed, hiding the overlay");
                 SetStarPowerPath(null);
+            }
+        }
+
+        /// <summary>
+        /// The lanes the Star Power path's activation note occupies, so the marker can ring the
+        /// note(s) the player actually has to hit.
+        /// </summary>
+        /// <remarks>
+        /// Full-width notes — open notes without a dedicated lane, and wildcards — contribute
+        /// nothing: they already span the highway, which is exactly what the marker's band does,
+        /// so a ring around them would only draw a second copy of the band.
+        /// </remarks>
+        protected override void GetActivationLaneXPositions(int noteIndex, List<float> xPositions)
+        {
+            if (Notes is null || noteIndex < 0 || noteIndex >= Notes.Count)
+            {
+                return;
+            }
+
+            foreach (var note in Notes[noteIndex].AllNotes)
+            {
+                if (NoteIsFullWidth(note))
+                {
+                    continue;
+                }
+
+                int lane = GetLanePosition((FiveFretGuitarFret) note.Fret);
+
+                // The same arithmetic TrackElement.GetElementX does; duplicated because that is
+                // protected on the element, not the player.
+                xPositions.Add(TRACK_WIDTH / LaneCount * (lane + 1)
+                    - TRACK_WIDTH / 2f - 1f / LaneCount);
             }
         }
 

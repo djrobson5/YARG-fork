@@ -49,6 +49,13 @@ namespace YARG.Gameplay.SpPath
 
         private readonly ScoreModel _model;
 
+        /// <summary>
+        /// Indexed by scoring-note index: the quarter bars hitting that note banks. 0 for an
+        /// ordinary note, 1 for a Star Power phrase end, 2 when that phrase is also a unison the
+        /// engine pays a bonus on. Precomputed so the DP never re-scans the unison list.
+        /// </summary>
+        private readonly byte[] _quarterBarsGained;
+
         /// <summary>Prefix sums of event values, indexed by event count. <c>_prefix[k]</c> is the
         /// un-doubled score of the first <c>k</c> events.</summary>
         private readonly long[] _prefix;
@@ -67,7 +74,18 @@ namespace YARG.Gameplay.SpPath
         /// silently pick, so the mistake would only show up on the presets that matter. Prefer
         /// <see cref="FromParameters"/>, which reads it off the live engine parameters.
         /// </param>
-        public SpScoreModel(ScoreModel model, bool noStarPowerOverlap)
+        /// <param name="unisonPhrases">
+        /// The <b>player's own</b> Star Power phrases that are part of a unison, as plain
+        /// quarter-tick ranges — <c>EngineManager.EngineContainer.UnisonPhrases</c> on the Unity
+        /// side. Hitting the phrase end of one of these banks <b>two</b> quarter bars, not one:
+        /// <c>AwardStarPower</c> gains a quarter (<c>BaseEngine.Generic.cs:1158-1163</c>) and then
+        /// raises <c>OnStarPowerPhraseHit</c>, which <c>EngineManager.OnStarPowerPhraseHit</c>
+        /// (<c>EngineManager.UnisonEvent.cs:336-360</c>) turns into a second quarter via
+        /// <c>BaseEngine.AwardUnisonBonus</c> (<c>BaseEngine.cs:637-641</c>). <c>null</c> or empty
+        /// means "no unisons", which reproduces the pre-unison model exactly.
+        /// </param>
+        public SpScoreModel(ScoreModel model, bool noStarPowerOverlap,
+            IReadOnlyList<SpUnisonPhrase> unisonPhrases = null)
         {
             _model = model ?? throw new ArgumentNullException(nameof(model));
             NoStarPowerOverlap = noStarPowerOverlap;
@@ -94,6 +112,54 @@ namespace YARG.Gameplay.SpPath
                 _eventMeasureTicks[i] = measureTick;
                 _prefix[i + 1] = _prefix[i] + events[i].Value;
             }
+
+            var scoringNotes = model.ScoringNotes;
+            _quarterBarsGained = new byte[scoringNotes.Count];
+            var unisonTicks = new List<uint>();
+
+            for (int i = 0; i < scoringNotes.Count; i++)
+            {
+                if (!scoringNotes[i].IsPhraseEnd)
+                {
+                    continue;
+                }
+
+                bool unison = ContainsTick(unisonPhrases, scoringNotes[i].Tick);
+                _quarterBarsGained[i] = (byte) (unison ? 2 : 1);
+
+                if (unison)
+                {
+                    unisonTicks.Add(scoringNotes[i].Tick);
+                }
+            }
+
+            UnisonPhraseEndTicks = unisonTicks;
+        }
+
+        /// <summary>
+        /// The engine matches a phrase hit to a unison by asking whether the hit's time falls
+        /// inside the player's own unison phrase, ends included
+        /// (<c>EngineManager.UnisonEvent.cs:346</c>:
+        /// <c>phrase.Time &lt;= time &amp;&amp; time &lt;= phrase.TimeEnd</c>). Ticks are monotone
+        /// in time, so the same test in ticks picks the same phrases, and it keeps a second
+        /// coordinate space out of the model.
+        /// </summary>
+        private static bool ContainsTick(IReadOnlyList<SpUnisonPhrase> phrases, uint tick)
+        {
+            if (phrases is null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < phrases.Count; i++)
+            {
+                if (phrases[i].Contains(tick))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -101,10 +167,11 @@ namespace YARG.Gameplay.SpPath
         /// <c>GuitarEngineParameters</c> the player's engine was built with
         /// (<c>TrackPlayer.cs:245</c>), so the flag cannot be dropped on the way in.
         /// </summary>
-        public static SpScoreModel FromParameters(ScoreModel model, GuitarEngineParameters parameters)
+        public static SpScoreModel FromParameters(ScoreModel model, GuitarEngineParameters parameters,
+            IReadOnlyList<SpUnisonPhrase> unisonPhrases = null)
         {
             if (parameters is null) throw new ArgumentNullException(nameof(parameters));
-            return new SpScoreModel(model, parameters.NoStarPowerOverlap);
+            return new SpScoreModel(model, parameters.NoStarPowerOverlap, unisonPhrases);
         }
 
         public ScoreModel Model => _model;
@@ -120,6 +187,19 @@ namespace YARG.Gameplay.SpPath
 
         /// <summary>Number of combo steps / scoring notes.</summary>
         public int NoteCount => _model.ScoringNotes.Count;
+
+        /// <summary>
+        /// Quarter ticks of the phrase-end notes the model expects a <em>unison</em> bonus on — the
+        /// subset of the phrase ends that fell inside one of the unison ranges handed in. Empty
+        /// when the chart has no unisons, which is the case the goldens are pinned on.
+        /// </summary>
+        public IReadOnlyList<uint> UnisonPhraseEndTicks { get; }
+
+        /// <summary>
+        /// Quarter bars banked by hitting scoring note <paramref name="scoringNoteIndex"/>: 0, 1,
+        /// or 2 for a unison phrase end. Before the full-bar clamp — see <see cref="MeterAfter"/>.
+        /// </summary>
+        public int QuarterBarsGainedAt(int scoringNoteIndex) => _quarterBarsGained[scoringNoteIndex];
 
         /// <summary>
         /// The un-doubled points awarded in the half-open measure-tick interval
@@ -206,14 +286,21 @@ namespace YARG.Gameplay.SpPath
 
             for (int i = firstNoteIndex; i < notes.Count && notes[i].MeasureTick < end; i++)
             {
-                if (!notes[i].IsPhraseEnd || NoStarPowerOverlap)
+                if (NoStarPowerOverlap)
                 {
                     continue;
                 }
 
-                uint extended = end + TicksPerQuarterSpBar;
+                // A unison phrase end runs GainStarPower twice, so it runs this step twice: each
+                // call adds a quarter to the amount and re-derives the end from the *same*
+                // position, and the amount clamp (BaseEngine.cs:532-535) is the same full-bar cap
+                // on the end both times.
                 uint capped = notes[i].MeasureTick + TicksPerFullSpBar;
-                end = extended < capped ? extended : capped;
+                for (int gain = _quarterBarsGained[i]; gain > 0; gain--)
+                {
+                    uint extended = end + TicksPerQuarterSpBar;
+                    end = extended < capped ? extended : capped;
+                }
             }
 
             return end;
@@ -224,12 +311,17 @@ namespace YARG.Gameplay.SpPath
         /// </summary>
         public int MeterAfter(int noteIndex, int quarterBars)
         {
-            if (!_model.ScoringNotes[noteIndex].IsPhraseEnd)
+            int gained = _quarterBarsGained[noteIndex];
+            if (gained == 0)
             {
                 return quarterBars;
             }
 
-            return quarterBars + 1 > MaxQuarterBars ? MaxQuarterBars : quarterBars + 1;
+            // GainStarPower clamps the amount at a full bar on every call (BaseEngine.cs:532-535),
+            // so two clamped quarter-bar gains land on the same number as one clamped half-bar
+            // gain; clamping once is exact.
+            int meter = quarterBars + gained;
+            return meter > MaxQuarterBars ? MaxQuarterBars : meter;
         }
 
         /// <summary>
@@ -320,6 +412,38 @@ namespace YARG.Gameplay.SpPath
 
             return lo;
         }
+    }
+
+    /// <summary>
+    /// One of the player's Star Power phrases that is part of a unison, as a plain quarter-tick
+    /// range. Built on the Unity side from <c>EngineManager.EngineContainer.UnisonPhrases</c>,
+    /// which is exactly the list <c>EngineManager.OnStarPowerPhraseHit</c> matches a phrase hit
+    /// against (<c>ParticipantToPhrase[EngineId]</c>, <c>EngineManager.UnisonEvent.cs:340-346</c>).
+    /// <para/>
+    /// <b>Perfect play awards every one of them.</b> The bonus fires when
+    /// <c>SuccessCount == ParticipantToPhrase.Count</c> (<c>:53-57</c>), and the participant list
+    /// holds only the engines that are actually registered — so in a single-player run the one
+    /// player clearing the phrase is all of them. That is also what the feature's own gate
+    /// guarantees: the overlay exists only for runs with exactly one human player
+    /// (<c>GameManager.InitializeStarPowerPaths</c>).
+    /// </summary>
+    public readonly struct SpUnisonPhrase
+    {
+        /// <summary>Quarter tick the phrase starts at (<c>Phrase.Tick</c>).</summary>
+        public readonly uint Tick;
+
+        /// <summary>Quarter tick the phrase ends at, inclusive (<c>Phrase.TickEnd</c>).</summary>
+        public readonly uint TickEnd;
+
+        public SpUnisonPhrase(uint tick, uint tickEnd)
+        {
+            Tick = tick;
+            TickEnd = tickEnd;
+        }
+
+        public bool Contains(uint tick) => tick >= Tick && tick <= TickEnd;
+
+        public override string ToString() => $"[{Tick}, {TickEnd}]";
     }
 
     /// <summary>One Star Power window, fully determined by its activation note and meter.</summary>

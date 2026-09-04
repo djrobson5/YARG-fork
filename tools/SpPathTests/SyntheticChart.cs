@@ -305,17 +305,59 @@ public static class SyntheticChart
         /// <summary>Measures of dense notes before the first block, to cap the multiplier.</summary>
         public const long LeadInMeasures = 4;
 
-        public static SongChart Load()
+        /// <param name="withUnisons">
+        /// Add a bass track whose Star Power phrases coincide with the <b>first</b> phrase of each
+        /// block, turning those four into unisons. See <see cref="UnisonPhraseTicks"/>.
+        /// </param>
+        public static SongChart Load(bool withUnisons = false)
         {
             var settings = ParseSettings.Default_Midi;
             settings.SustainCutoffThreshold = SustainCutoff;
-            return SongChart.FromMidi(in settings, BuildMidi());
+            return SongChart.FromMidi(in settings, BuildMidi(withUnisons));
         }
 
         public static InstrumentDifficulty<GuitarNote> GuitarNotes(SongChart chart) =>
             chart.FiveFretGuitar.GetDifficulty(YARG.Core.Difficulty.Expert);
 
-        private static MidiFile BuildMidi()
+        /// <summary>Quarter tick the sparse stretch of block <paramref name="block"/> starts at.</summary>
+        public static long SparseStart(int block) =>
+            LeadInMeasures * Measure + block * 2 * BlockMeasures * Measure;
+
+        /// <summary>
+        /// Quarter tick of the <paramref name="k"/>th (0 or 1) Star Power phrase note in block
+        /// <paramref name="block"/>. Each of these notes is its own phrase, and carries
+        /// <c>IsStarPowerEnd</c>.
+        /// </summary>
+        public static long PhraseNoteTick(int block, int k) => SparseStart(block) + k * 2 * Measure;
+
+        /// <summary>
+        /// The phrase ranges the bass track mirrors when <c>withUnisons</c> is set — the first
+        /// phrase of each block. Handed straight to the model as
+        /// <c>SpUnisonPhrase</c>es by the tests, and reproduced note-for-note by
+        /// <c>EngineManager.GetUnisonPhrases</c> on the loaded chart, which is what
+        /// <c>SpUnisonTests.DenseWithUnisons_IsWhatTheEngineManagerCallsAUnison</c> pins.
+        /// <para/>
+        /// <b>Only a subset.</b> A bass track carrying <em>every</em> guitar phrase produces no
+        /// unisons at all: <c>ChartExtensions.SpListIsDuplicate</c> drops a candidate track whose
+        /// Star Power section list matches an already-accepted one tick for tick, which is what
+        /// stops a chart's own cloned tracks from unisoning with each other.
+        /// </summary>
+        public static (long Tick, long TickEnd)[] UnisonPhraseTicks
+        {
+            get
+            {
+                var ranges = new (long, long)[Blocks];
+                for (int b = 0; b < Blocks; b++)
+                {
+                    long tick = PhraseNoteTick(b, 0);
+                    ranges[b] = (tick, tick + Resolution);
+                }
+
+                return ranges;
+            }
+        }
+
+        private static MidiFile BuildMidi(bool withUnisons)
         {
             var midi = new MidiFile
             {
@@ -328,7 +370,33 @@ public static class SyntheticChart
             midi.Chunks.Add(sync.Build());
 
             midi.Chunks.Add(BuildGuitarTrack());
+
+            if (withUnisons)
+            {
+                midi.Chunks.Add(BuildBassTrack());
+            }
+
             return midi;
+        }
+
+        /// <summary>
+        /// A minimal bass track: one note per mirrored phrase, inside a Star Power phrase covering
+        /// exactly the same tick range as the guitar's. That is all a unison needs — two
+        /// participants from different instrument groups whose phrases start and end within a
+        /// sixteenth of each other (<c>EngineManager.GetUnisonPhrases</c>,
+        /// <c>EngineManager.UnisonEvent.cs:232-330</c>).
+        /// </summary>
+        private static TrackChunk BuildBassTrack()
+        {
+            var track = new TrackBuilder("PART BASS");
+
+            foreach (var (tick, tickEnd) in UnisonPhraseTicks)
+            {
+                track.AddNote(Green, tick, Tap);
+                AddPhrase(track, StarPowerNote, tick, tickEnd);
+            }
+
+            return track.Build();
         }
 
         private static TrackChunk BuildGuitarTrack()

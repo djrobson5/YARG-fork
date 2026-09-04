@@ -35,22 +35,30 @@ namespace YARG.Gameplay.SpPath
         /// (<c>TrackPlayer.cs:245</c>), so neither <c>MaxMultiplier</c> nor
         /// <c>NoStarPowerOverlap</c> can be dropped by a caller.
         /// </summary>
+        /// <param name="unisonPhrases">
+        /// The player's own unison phrases, as quarter-tick ranges — see
+        /// <see cref="SpUnisonPhrase"/>. Each one pays a second quarter bar on top of the phrase
+        /// itself, so leaving it out makes the plan bank half what the engine will and pushes the
+        /// activations later than they need to be. <c>null</c> means "this chart has no unisons".
+        /// </param>
         public static StarPowerPath Optimize(InstrumentDifficulty<GuitarNote> track,
-            SyncTrack syncTrack, GuitarEngineParameters parameters)
+            SyncTrack syncTrack, GuitarEngineParameters parameters,
+            IReadOnlyList<SpUnisonPhrase> unisonPhrases = null)
         {
             if (parameters is null) throw new ArgumentNullException(nameof(parameters));
             return Optimize(track, syncTrack, parameters.MaxMultiplier,
-                parameters.NoStarPowerOverlap);
+                parameters.NoStarPowerOverlap, unisonPhrases);
         }
 
         /// <param name="noStarPowerOverlap">
-        /// Deliberately has no default — see <see cref="SpScoreModel(ScoreModel, bool)"/>.
+        /// Deliberately has no default — see <see cref="SpScoreModel"/>.
         /// </param>
         public static StarPowerPath Optimize(InstrumentDifficulty<GuitarNote> track,
-            SyncTrack syncTrack, int maxMultiplier, bool noStarPowerOverlap)
+            SyncTrack syncTrack, int maxMultiplier, bool noStarPowerOverlap,
+            IReadOnlyList<SpUnisonPhrase> unisonPhrases = null)
         {
             var model = ScoreModel.Build(track, syncTrack, maxMultiplier);
-            return Optimize(new SpScoreModel(model, noStarPowerOverlap));
+            return Optimize(new SpScoreModel(model, noStarPowerOverlap, unisonPhrases));
         }
 
         public static StarPowerPath Optimize(SpScoreModel sp)
@@ -144,9 +152,23 @@ namespace YARG.Gameplay.SpPath
                 q = 0;
             }
 
+            // The phrase ends the model is counting on, kept so the log can be checked against the
+            // engine's own TotalStarPowerPhrases and against the chart. Same authority the engine
+            // uses to award (IsStarPowerEnd, Guitar/GuitarEngine.cs:263-267), so a mismatch means
+            // the model is looking at a different note track than the engine is.
+            var phraseEndTicks = new List<uint>();
+            foreach (var note in sp.Model.ScoringNotes)
+            {
+                if (note.IsPhraseEnd)
+                {
+                    phraseEndTicks.Add(note.Tick);
+                }
+            }
+
             long extra = n == 0 ? 0 : best[0];
             return new StarPowerPath(activations, sp.Model.ProjectPerfectScore() + (int) extra,
-                (int) extra);
+                (int) extra, sp.TicksPerQuarterSpBar, phraseEndTicks,
+                sp.UnisonPhraseEndTicks);
         }
     }
 
@@ -156,11 +178,15 @@ namespace YARG.Gameplay.SpPath
     public sealed class StarPowerPath
     {
         public StarPowerPath(IReadOnlyList<Activation> activations, int projectedScore,
-            int scoreGainOverNoActivations)
+            int scoreGainOverNoActivations, uint ticksPerQuarterSpBar,
+            IReadOnlyList<uint> phraseEndTicks, IReadOnlyList<uint> unisonPhraseEndTicks = null)
         {
             Activations = activations;
             ProjectedScore = projectedScore;
             ScoreGainOverNoActivations = scoreGainOverNoActivations;
+            TicksPerQuarterSpBar = ticksPerQuarterSpBar;
+            PhraseEndTicks = phraseEndTicks ?? Array.Empty<uint>();
+            UnisonPhraseEndTicks = unisonPhraseEndTicks ?? Array.Empty<uint>();
         }
 
         /// <summary>Ordered by activation tick.</summary>
@@ -172,9 +198,35 @@ namespace YARG.Gameplay.SpPath
         /// <summary>How much the path beats never activating at all.</summary>
         public int ScoreGainOverNoActivations { get; }
 
+        /// <summary>
+        /// One quarter bar of meter, in Star Power ticks (<c>BaseEngine.cs:168</c>). Carried on the
+        /// path so the Unity-side divergence check can turn <see cref="Activation.MeterAtActivation"/>
+        /// into the tick count to compare <c>BaseStats.StarPowerTickAmount</c> against, without
+        /// re-deriving the constant a third time.
+        /// </summary>
+        public uint TicksPerQuarterSpBar { get; }
+
+        /// <summary>
+        /// Quarter ticks of the notes the model expects to award a phrase on — every scoring note
+        /// carrying <c>IsStarPowerEnd</c>. Diagnostics only: comparing its count against the
+        /// engine's <c>BaseStats.TotalStarPowerPhrases</c> is what catches the model and the engine
+        /// disagreeing about which phrases exist.
+        /// </summary>
+        public IReadOnlyList<uint> PhraseEndTicks { get; }
+
+        /// <summary>
+        /// The subset of <see cref="PhraseEndTicks"/> the model expects a unison bonus on — a
+        /// second <see cref="TicksPerQuarterSpBar"/> from <c>BaseEngine.AwardUnisonBonus</c>
+        /// (<c>BaseEngine.cs:637-641</c>). Empty on a chart with no unisons, in which case the
+        /// plan is identical to the pre-unison model's.
+        /// </summary>
+        public IReadOnlyList<uint> UnisonPhraseEndTicks { get; }
+
         public override string ToString() =>
             $"{Activations.Count} activation(s), projected {ProjectedScore} " +
-            $"(+{ScoreGainOverNoActivations} over no Star Power)";
+            $"(+{ScoreGainOverNoActivations} over no Star Power), " +
+            $"{PhraseEndTicks.Count} phrase(s), " +
+            $"{UnisonPhraseEndTicks.Count} unison(s)";
     }
 
     /// <summary>One point on the path. Plain C#, no <c>UnityEngine</c> types — see §3 of the design doc.</summary>
