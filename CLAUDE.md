@@ -18,6 +18,8 @@ When in doubt about which model fits, prefer the cheaper one and escalate on fai
 - Upstream: `https://github.com/YARC-Official/YARG.git`, cloned recursively. The `YARG.Core` engine submodule lives at the repo root (`YARG.Core/`), not under `Assets/Plugins`.
 - Unity project. Check `ProjectSettings/ProjectVersion.txt` for the required editor version before building.
 - Feature spec and locked design decisions: `docs/section-fc-design.md`. Session handoff with current state and next steps: `docs/section-fc-handoff.md`. Running list of open items: `docs/open-items.md`. Read all three before touching section-completion code.
+- The four roadmap features have their own locked designs: `docs/updater-design.md` (in-game updater), `docs/delete-song-design.md` (delete songs), `docs/sp-path-design.md` (Star Power path); the Star Power model has a headless harness, run with `dotnet test tools/SpPathTests/SpPathTests.csproj` (35 tests).
+- The fork never modifies the `YARG.Core` submodule; fixes that would belong there are worked around from the main repo.
 
 ## Building headlessly
 

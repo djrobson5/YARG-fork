@@ -1,9 +1,20 @@
 # Roadmap
 
-Feasibility research for four features the user is considering after Section FC.
-Nothing here is implemented. Written 2026-09-03 against `feature/section-fc` (post
-upstream `dev` merge). Every claim is either backed by a file path plus symbol name
-or explicitly marked unverified.
+Feasibility research for the four features the user was considering after Section FC.
+Written 2026-09-03 against `feature/section-fc` (post upstream `dev` merge). Every claim
+is either backed by a file path plus symbol name or explicitly marked unverified.
+
+**All four have since been implemented** (features 2, 3 and 4 in code; feature 1 is a
+ready script blocked on the user's files). This document is now research history and is
+kept unedited as such — where it says "nothing here is implemented", read that as of the
+day it was written. For what was actually built, the decisions that were locked, and what
+still needs verifying, read instead:
+
+- `docs/section-fc-handoff.md` → "Roadmap work, 2026-09-03" — current state of all four.
+- `docs/updater-design.md` — feature 4, in-game updater.
+- `docs/delete-song-design.md` — feature 2, delete songs.
+- `docs/sp-path-design.md` — feature 3, optimal Star Power path.
+- `tools/import-scores.ps1` — feature 1, score import.
 
 Read `docs/section-fc-design.md` and `docs/section-fc-handoff.md` first for the
 conventions this fork already follows (slice-by-slice delivery, mockup-then-interview
