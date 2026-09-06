@@ -34,10 +34,10 @@
             "FiveFretRhythm": "Rhythm",
             "FiveFretCoopGuitar": "Co-op",
             "Keys": "Keys",
-            "SixFretGuitar": "Guitar",
-            "SixFretBass": "Bass",
-            "SixFretRhythm": "Rhythm",
-            "SixFretCoopGuitar": "Co-op",
+            "SixFretGuitar": "Guitar (6-Fret)",
+            "SixFretBass": "Bass (6-Fret)",
+            "SixFretRhythm": "Rhythm (6-Fret)",
+            "SixFretCoopGuitar": "Co-op (6-Fret)",
             "FourLaneDrums": "4-Lane Drums",
             "ProDrums": "Pro Drums",
             "FiveLaneDrums": "5-Lane Drums",
@@ -249,10 +249,75 @@
                 "Message": "Are you sure you want to delete <b>{0}</b>?\n\n{1}",
                 "Confirm": "Type <b>{0}</b> here to confirm"
             },
+            "DeleteSong": {
+                "Trash": "The song's files will be sent to the <b>Recycle Bin</b> where possible, so you can usually put them back if you change your mind. Windows still deletes outright on drives with no Recycle Bin, or when the files are too big for it.\n\nYour scores and section progress for this song are kept.",
+                "Permanent": "The song's files will be <b>deleted permanently</b>. There is no trash folder YARG can use on this system, so this cannot be undone.\n\nYour scores and section progress for this song are kept.",
+                "ExConWarning": "\n\nThis song lives in an unpacked pack. Its folder will be removed, but the pack's <b>songs.dta</b> will still list it, so the next full scan will report it as a bad song until you edit that file.",
+                "Path": "\n\n<alpha=#80>{0}",
+                "Trashed": "Moved \"{0}\" to the Recycle Bin. A full song scan will run the next time you start YARG.",
+                "Deleted": "Deleted \"{0}\". A full song scan will run the next time you start YARG.",
+                "Failed": "Could not delete \"{0}\". See the log for details.",
+                "LibraryRoot": {
+                    "Title": "That Is a Song Folder",
+                    "Description": "This song sits directly at one of your configured song folders:\n\n<alpha=#80>{0}<alpha=#FF>\n\nDeleting it would delete the folder itself, so \"Delete Song\" is unavailable here. Remove the folder in Settings > Song Manager instead."
+                },
+                "PackedCon": {
+                    "Title": "Song Is Inside a Pack",
+                    "Description": "This song is stored inside a packed Rock Band CON file, which YARG can read but cannot edit.\n\nDeleting it would mean deleting the whole pack and every other song in it, so \"Delete Song\" is unavailable here. Remove the pack file yourself if that is what you want."
+                }
+            },
             "Experimental": {
                 "Title": "Experimental Features Notice",
                 "Description": "The options about to be displayed represent a work in progress. These features are subject to change, may contain bugs, and <b>could even cause major problems if enabled</b>.",
                 "Confirm": "I Understand"
+            },
+            "Updates": {
+                "OpenReleasePage": "Open Release Page",
+                "DownloadUpdate": "Download Update",
+                "InstallAndRestart": "Install and Restart",
+                "UpToDate": {
+                    "Title": "Up to Date",
+                    "Description": "Installed  <b>{0}</b>\n<alpha=#80>{1}</alpha>\n\nYou are running the latest release."
+                },
+                "UpdateAvailable": {
+                    "Title": "Update Available",
+                    "Description": "Installed  <b>{0}</b>\nLatest  <b>{1}</b>\n\nOpen the release page to download the new build, then unzip it over your current install."
+                },
+                "Failed": {
+                    "Title": "Could Not Check for Updates",
+                    "Description": "Could not reach GitHub to check for a newer release. Check your internet connection and try again.\n\nInstalled  <b>{0}</b>\n<alpha=#80>{1}</alpha>",
+                    "NoReleases": "No fork releases were found on GitHub.\n\nInstalled  <b>{0}</b>\n<alpha=#80>{1}</alpha>",
+                    "RateLimited": "GitHub is rate limiting this connection. Try again in an hour.\n\nInstalled  <b>{0}</b>\n<alpha=#80>{1}</alpha>"
+                },
+                "Downloading": {
+                    "Title": "Downloading Update",
+                    "Description": "Downloading <b>{0}</b>\u2026 {1}%",
+                    "Extracting": "Downloaded <b>{0}</b>.\n\nExtracting\u2026"
+                },
+                "Ready": {
+                    "Title": "Update Ready",
+                    "Description": "The update has been downloaded and verified.\n\n<b>Install and Restart</b> will close YARG, replace this install with <b>{0}</b> and reopen it. Your current build is kept in a <b>backup</b> folder next to the install until the next update.\n\nStaged  <b>{0}</b>\n<alpha=#80>{1}</alpha>",
+                    "DescriptionManual": "The update has been downloaded and verified.\n\nThis build cannot replace itself; run tools\\update-yarg.ps1 or open the release page to install it.\n\nStaged  <b>{0}</b>\n<alpha=#80>{1}</alpha>"
+                },
+                "Installing": {
+                    "Title": "Installing Update",
+                    "Description": "Installing <b>{0}</b>.\n\nYARG will close now and reopen once the new build is in place. This takes a few seconds; do not close the window that appears."
+                },
+                "InstallFailed": {
+                    "Title": "Could Not Install",
+                    "Description": "The updater could not start. Nothing has been changed.\n\nRun tools\\update-yarg.ps1, or unzip the release over <b>{0}</b> yourself.",
+                    "NotWritable": "YARG cannot write to its own install folder, and this updater never asks for administrator rights.\n\nMove the install somewhere under your user profile (for example <b>%LOCALAPPDATA%\\YARG-SectionFC</b>) and try again, or run tools\\update-yarg.ps1 from an account that can write to <b>{0}</b>.",
+                    "NotStaged": "The staged build has gone missing, so there is nothing to install.\n\nCheck for updates and download it again.\n<alpha=#80>{0}</alpha>"
+                },
+                "DownloadFailed": {
+                    "Title": "Could Not Download",
+                    "Description": "The download of <b>{0}</b> did not finish. Check your internet connection and try again.",
+                    "NoAsset": "Release <b>{0}</b> has no Windows download attached to it. Open the release page to see what it does have.",
+                    "SizeMismatch": "The download of <b>{0}</b> is the wrong size, so it is incomplete or corrupt. It has been discarded; try again.",
+                    "ExtractFailed": "The download of <b>{0}</b> could not be unzipped, so it is corrupt. It has been discarded; try again.",
+                    "StageIoError": "Could not write to the updates folder. Check that there is enough disk space and that nothing is locking <b>{0}</b>.",
+                    "InvalidLayout": "The download of <b>{0}</b> does not look like a YARG build, so it was not staged. Install it by hand from the release page."
+                }
             },
             "ShowDialog": {
                 "Title": "Choose Your Fate",
@@ -387,6 +452,7 @@
                     "DeleteSetlist": "Delete Setlist",
                     "ViewSongFolder": "View Song Folder",
                     "CopySongChecksum": "Copy Song Checksum",
+                    "DeleteSong": "Delete Song",
                     "CollapseAll": "Collapse All",
                     "ExpandAll": "Expand All"
                 }
@@ -557,7 +623,9 @@
             "EndSetlistEarly" : "End Setlist",
             "AddSongOffset": "(Hold) Save song offset",
             "RemoveSongOffset": "(Hold) Undo offset save",
-            "ViewReplay": "View Replay"
+            "ViewReplay": "View Replay",
+            "SectionsPerfected" : "Sections perfected",
+            "SectionFullCombo" : "Section FC"
         },
         "Settings": {
             "ShowAdvanced": "Show Advanced",
@@ -714,6 +782,14 @@
 			"PhraseStreak": "{0:N0}-PHRASE STREAK",
             "StarPowerReady": "STAR POWER READY",
             "StrongFinish": "STRONG FINISH"
+        },
+        "SectionStrip": {
+            "Dropped": "DROPPED",
+            "Preview": "SECTION"
+        },
+        "StarPowerPath": {
+            "ActivateIn": "ACTIVATE IN {0}",
+            "ActivateNow": "ACTIVATE"
         },
         "Solo": {
             "Performance": {
@@ -946,6 +1022,14 @@
             "SoloBlue": "Solo Blue Fret",
             "SoloOrange": "Solo Orange Fret"
         },
+        "SixFret": {
+            "Black1": "Black Fret 1 (First)",
+            "Black2": "Black Fret 2 (Second)",
+            "Black3": "Black Fret 3 (Third)",
+            "White1": "White Fret 1 (Fourth)",
+            "White2": "White Fret 2 (Fifth)",
+            "White3": "White Fret 3 (Sixth)"
+        },
         "Guitar": {
             "StrumUp": "Strum Up",
             "StrumDown": "Strum Down",
@@ -1088,7 +1172,8 @@
             "Gameplay": "Gameplay",
             "CrowdFX": "Crowd FX",
             "OutputConfiguration": "Output Configuration",
-            "Accessibility": "Accessibility"
+            "Accessibility": "Accessibility",
+            "Updates": "Updates"
         },
         "Button": {
             "CopyCurrentSongJsonFilePath": "Copy Current Song Json File Path",
@@ -1104,7 +1189,8 @@
             "OpenExecutablePath": "Open Executable Path",
             "OpenPersistentDataPath": "Open Persistent Data Path",
             "RemoveRemoteContent": "Remove Cached Content",
-            "OpenAsioControlPanel": "Open ASIO Control Panel"
+            "OpenAsioControlPanel": "Open ASIO Control Panel",
+            "CheckForUpdates": "Check for Updates"
         },
         "Setting": {
             "AllowDuplicateSongs": {
@@ -1582,6 +1668,30 @@
                 "Name": "Show Hit Window",
                 "Description": "If enabled, a box will be shown on your track that represents the \"window\" in which notes can be hit."
             },
+            "ShowSectionStrip": {
+                "Name": "Show Section Strip",
+                "Description": "Shows a strip of blocks above your track, one per section, marking which sections you have already perfected and how the current one is going. Has no effect when \"Track Section Completion\" is off."
+            },
+            "ShowStarPowerPath": {
+                "Name": "Show Star Power Path",
+                "Description": "Rings the notes where a perfect run should activate Star Power to score the most points, and counts down to them in a chip above your track. 5-fret guitar and bass only, and only when you are playing alone. The path assumes a full combo with no whammy, so it is a target rather than a promise."
+            },
+            "StarPowerPathColor": {
+                "Name": "Star Power Path Color",
+                "Description": "The color the whole Star Power path cue is drawn in: the marked notes, the band and ring on the highway, the glow at the strike line, and the countdown chip. Defaults to the bright activation green. Takes effect on the next song."
+            },
+            "StarPowerPathChipLeadIn": {
+                "Name": "Star Power Path Chip Lead-In",
+                "Description": "How many seconds before a planned activation the countdown chip appears, at the latest. The chip actually appears at whichever comes first, this or the measure line before the activation. Takes effect on the next song."
+            },
+            "StarPowerPathChipHold": {
+                "Name": "Star Power Path Chip Hold",
+                "Description": "How many seconds the countdown chip stays up after the moment to activate has passed, as confirmation. Set to zero to have it disappear immediately. Takes effect on the next song."
+            },
+            "StarPowerPathFretGlow": {
+                "Name": "Star Power Path Strike Line Glow",
+                "Description": "Washes the strike line in the path color while a planned activation is due. Always off when \"Reduce Flashing Lights\" is on. Takes effect on the next song."
+            },
             "SongTimeOnScoreBox": {
                 "Name": "Song Time On Score Box",
                 "Description": "Change the song time displayed above the score box. In the examples provided, the song is 5 minutes and 30 seconds long, and you are 1 minute and 10 seconds into the song.",
@@ -1615,6 +1725,10 @@
             "SongBackgroundOpacity": {
                 "Name": "Song Background Opacity",
                 "Description": "Adjusts the opacity of background during gameplay."
+            },
+            "TrackSectionCompletion": {
+                "Name": "Track Section Completion",
+                "Description": "Tracks which chart sections you have perfected across runs, and shows the progress on the Score Screen, in the Music Library, and on your track. Turning this off hides all of it and stops recording, but keeps the progress you have already earned."
             },
             "UseChipmunkSpeed": {
                 "Name": "Chipmunk Speed",
@@ -2037,6 +2151,7 @@
                     "Name": "Instrument",
                     "Dropdown": {
                         "FiveFretGuitar": "Guitar (5-Fret)",
+                        "SixFretGuitar": "Guitar (6-Fret)",
                         "FiveLaneDrums": "Drums (5-Lane)",
                         "FourLaneDrums": "Drums (4-Lane)",
                         "ProKeys": "Pro Keys"
@@ -2365,6 +2480,24 @@
                 },
                 "BlackNoteStarPower": {
                     "Name": "Black Note Star Power"
+                },
+                "BlackFret": {
+                    "Name": "Black Fret"
+                },
+                "WhiteFret": {
+                    "Name": "White Fret"
+                },
+                "BlackFretInner": {
+                    "Name": "Black Fret Inner"
+                },
+                "WhiteFretInner": {
+                    "Name": "White Fret Inner"
+                },
+                "BlackParticles": {
+                    "Name": "Black Particles"
+                },
+                "WhiteParticles": {
+                    "Name": "White Particles"
                 },
                 "TapStripEmission": {
                     "Name": "Tap Strip Emission",

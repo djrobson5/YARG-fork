@@ -1,0 +1,57 @@
+name: SP path tests
+
+# The drift guard for the optimal Star Power path model (docs/sp-path-design.md §3).
+# It runs YARG's real headless engine over real charts and asserts that the fork's duplicated
+# scoring model reproduces the engine's score exactly, so an upstream change to
+# BaseEngine.Generic.cs that moves the scoring rules fails here instead of silently making the
+# overlay wrong.
+#
+# No Unity licence and no Assets/Packages/ bootstrap: just the .NET 8 SDK and the YARG.Core
+# submodule, which is why this is a separate workflow from the Unity build.
+
+on:
+  pull_request:
+    paths:
+      - "Assets/Script/Gameplay/SpPath/**"
+      - "tools/SpPathTests/**"
+      - "YARG.Core"
+      - ".github/workflows/sp-path-tests.yml"
+  push:
+    branches: [main, dev, "feature/**"]
+    paths:
+      - "Assets/Script/Gameplay/SpPath/**"
+      - "tools/SpPathTests/**"
+      - "YARG.Core"
+      - ".github/workflows/sp-path-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: dotnet test
+    runs-on: ubuntu-latest
+    # The suite is ~2 s warm; anything near this is a hang (a restore with no package
+    # source, or a brute-force search that stopped terminating), not slow tests.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # YARG.Core is a submodule, and the test charts live inside it.
+          submodules: recursive
+          fetch-depth: 1
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.x
+
+      - name: Restore
+        run: dotnet restore tools/SpPathTests/SpPathTests.csproj
+
+      - name: Test
+        run: dotnet test tools/SpPathTests/SpPathTests.csproj --no-restore -nologo

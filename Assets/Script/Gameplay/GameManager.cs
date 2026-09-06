@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Cysharp.Threading.Tasks;
@@ -674,16 +674,39 @@ namespace YARG.Gameplay
                 YargLogger.LogException(e, "Failed to save replay!");
             }
 
+            // Scanned up front so that the score screen and the database both read the same
+            // results, rather than the scan being run twice
+            var sectionCompletions = ScanSectionCompletions();
+
+            // Built before the scores are recorded, but only published afterwards: whether the
+            // section rows actually made it to the database is not known until RecordScores has
+            // run, and the card must never show progress that was silently dropped
+            var playerScores = _players.Select(player => new PlayerScoreCard
+            {
+                IsHighScore = player.Score > player.LastHighScore,
+                Player = player.Player,
+                Stats = player.BaseStats,
+                IsReplay = player.Player.IsReplay,
+                Sections = sectionCompletions.TryGetValue(player, out var completion)
+                    ? completion.Summary
+                    : null,
+            }).ToArray();
+
+            bool sectionsRecorded = RecordScores(replayInfo, sectionCompletions);
+            if (!sectionsRecorded)
+            {
+                // RecordScores bailed before writing anything, so there is no persisted progress
+                // to report. PlayerScoreCard is a struct, so this has to go through the array.
+                for (int i = 0; i < playerScores.Length; i++)
+                {
+                    playerScores[i].Sections = null;
+                }
+            }
+
             // Pass the score info to the stats screen
             GlobalVariables.State.ScoreScreenStats = new ScoreScreenStats
             {
-                PlayerScores = _players.Select(player => new PlayerScoreCard
-                {
-                    IsHighScore = player.Score > player.LastHighScore,
-                    Player = player.Player,
-                    Stats = player.BaseStats,
-                    IsReplay = player.Player.IsReplay
-                }).ToArray(),
+                PlayerScores = playerScores,
                 BandScore = BandScore,
                 BandStars = (int) BandStars,
 
@@ -700,18 +723,21 @@ namespace YARG.Gameplay
                 ReplayInfo = replayInfo,
             };
 
-            RecordScores(replayInfo);
-
             // Go to the score screen
             GlobalVariables.Instance.LoadScene(SceneIndex.Score);
             return true;
         }
 
-        private void RecordScores(ReplayInfo replayInfo)
+        /// <returns>
+        /// Whether the section completions were written. False means this method returned early
+        /// and nothing at all was recorded, section rows included.
+        /// </returns>
+        private bool RecordScores(ReplayInfo replayInfo,
+            IReadOnlyDictionary<BasePlayer, PendingSectionCompletion> sectionCompletions)
         {
             if (!ScoreContainer.IsBandScoreValid(SongSpeed))
             {
-                return;
+                return false;
             }
 
             // Get all of the individual player score entries
@@ -753,7 +779,7 @@ namespace YARG.Gameplay
             var validScoreCount = _players.Count(p => ScoreContainer.IsSoloScoreValid(SongSpeed, p.Player));
             if (validScoreCount == 0)
             {
-                return;
+                return false;
             }
 
             int humanBandScore = 0;
@@ -765,7 +791,7 @@ namespace YARG.Gameplay
                 // This will remove band multiplier and Star Power contribution from bots
                 if (replayInfo == null || ReplayData == null)
                 {
-                    return;
+                    return false;
                 }
                 var results = ReplayAnalyzer.AnalyzeReplay(Chart, replayInfo, ReplayData);
                 foreach (var result in results)
@@ -801,6 +827,10 @@ namespace YARG.Gameplay
                 ? StarAmountHelper.GetStarsFromInt(Mathf.FloorToInt(humanBandStars))
                 : StarAmount.None;
 
+            // Section completions are written alongside the score, so that the two are either
+            // both recorded or both skipped
+            RecordSectionCompletions(sectionCompletions.Values);
+
             ScoreContainer.RecordScore(new GameRecord
             {
                 Date = DateTime.Now,
@@ -820,6 +850,353 @@ namespace YARG.Gameplay
                 PlayedWithReplay = GlobalVariables.State.PlayingWithReplay,
                 HasBots = HasBots,
             }, playerEntries);
+
+            return true;
+        }
+
+        /// <summary>
+        /// The section completions of a single player, waiting to be written to the database.
+        /// </summary>
+        private class PendingSectionCompletion
+        {
+            public YargProfile Profile;
+
+            /// <summary>
+            /// The amount of sections that contained at least one note for this player's
+            /// instrument. Empty sections can never be perfected, so they are not counted.
+            /// </summary>
+            public int ApplicableSectionCount;
+
+            public int PerfectedThisRun;
+
+            public IReadOnlyList<SectionCompletionResult> Results;
+
+            /// <summary>
+            /// The same results, shaped for the score screen.
+            /// </summary>
+            public PlayerSectionSummary Summary;
+        }
+
+        /// <summary>
+        /// Builds the live section strip state of every player that is allowed to earn credit,
+        /// and hands it to them.
+        /// </summary>
+        /// <remarks>
+        /// The gates are the same ones <see cref="ScanSectionCompletions"/> applies at the end of
+        /// the song, so a run that will never be recorded never gets a strip promising otherwise.
+        /// <para>
+        /// Called before the song starts, while nothing has been hit, so the scan's hit counts are
+        /// all zero and only its note totals carry information: which sections have notes for this
+        /// player, and therefore which ones get a block. Reusing the scanner for that keeps
+        /// "applicable" defined in exactly one place.
+        /// </para>
+        /// </remarks>
+        private void InitializeSectionStripStates()
+        {
+            // Slice 5 gates: the master switch turns the whole feature off, and ShowSectionStrip
+            // hides just this surface while everything else keeps working
+            if (!SettingsManager.Settings.TrackSectionCompletion.Value ||
+                !SettingsManager.Settings.ShowSectionStrip.Value)
+            {
+                return;
+            }
+
+            if (IsPractice || GlobalVariables.State.PlayingWithReplay ||
+                !ScoreContainer.IsBandScoreValid(SongSpeed))
+            {
+                return;
+            }
+
+            var sections = Chart.Sections;
+            if (sections.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var player in _players)
+            {
+                // Skip bots, replays, and anyone that's obviously cheating.
+                if (player.Player.IsReplay || !ScoreContainer.IsSoloScoreValid(SongSpeed, player.Player))
+                {
+                    continue;
+                }
+
+                // Only highway players have a TrackView to draw the strip on. Vocals keep the
+                // miss hook (see BasePlayer.NotifySectionNoteMissed) for a later vocals surface,
+                // but building a state they cannot show is dead work.
+                if (player is not TrackPlayer)
+                {
+                    continue;
+                }
+
+                var results = player.ScanSectionCompletion(sections);
+                if (results is null)
+                {
+                    continue;
+                }
+
+                var profile = player.Player.Profile;
+                var completedEarlier = ScoreContainer.GetCompletedSections(Song.Hash, profile.Id,
+                    profile.CurrentInstrument, profile.CurrentDifficulty, profile.HarmonyIndex);
+
+                player.SetSectionState(SectionStripState.Create(sections, results, completedEarlier));
+            }
+        }
+
+        /// <summary>
+        /// Turns the optimal Star Power path overlay on for the one human player, when the run
+        /// qualifies for it.
+        /// </summary>
+        /// <remarks>
+        /// Called right after <see cref="InitializeSectionStripStates"/>, for the same reason: the
+        /// optimizer needs the post-modifier note track and the live engine parameters, neither of
+        /// which exists before <c>CreatePlayers()</c> (<c>docs/sp-path-design.md</c> §4.1).
+        /// <para>
+        /// The band gate is §4.5: Star Power is coupled across players (the band multiplier and
+        /// the unison bonus), so a single-player path is not merely approximate in a band run, it
+        /// is wrong. Bots do not count towards the human total, so playing alongside one still
+        /// gets an overlay.
+        /// </para>
+        /// <para>
+        /// Practice and replays are excluded outright, the way the section strip excludes them.
+        /// Practice because upstream swallows every Star Power input there
+        /// (<c>FiveFretGuitarPlayer.InterceptInput</c>), so a path could never be followed;
+        /// replays because the inputs are already fixed and an overlay telling the viewer what to
+        /// press is meaningless.
+        /// </para>
+        /// </remarks>
+        private void InitializeStarPowerPaths()
+        {
+            if (!SettingsManager.Settings.ShowStarPowerPath.Value)
+            {
+                return;
+            }
+
+            if (IsPractice)
+            {
+                YargLogger.LogInfo("SP path: skipped, practice mode");
+                return;
+            }
+
+            if (GlobalVariables.State.PlayingWithReplay)
+            {
+                YargLogger.LogInfo("SP path: skipped, replay playback");
+                return;
+            }
+
+            // §4.5. Sitting-out players are not in the run at all, and bots are not humans.
+            int humanCount = _players.Count(p => !p.Player.SittingOut && !p.Player.Profile.IsBot);
+            if (humanCount != 1)
+            {
+                YargLogger.LogFormatInfo("SP path: skipped, {0} human player(s) in this run",
+                    humanCount);
+                return;
+            }
+
+            foreach (var player in _players)
+            {
+                if (player.Player.SittingOut || player.Player.Profile.IsBot ||
+                    player.Player.IsReplay)
+                {
+                    continue;
+                }
+
+                // Everything else (instrument support) is the player's own business, since it
+                // also has to hold on a practice-section rebuild.
+                player.EnableStarPowerPath();
+            }
+        }
+
+        /// <summary>
+        /// Scans the section completion of every player that is allowed to earn credit for it.
+        /// </summary>
+        /// <remarks>
+        /// Run once, before the score screen data is built, so that the card and the database
+        /// write share a single scan.
+        /// </remarks>
+        private Dictionary<BasePlayer, PendingSectionCompletion> ScanSectionCompletions()
+        {
+            var completions = new Dictionary<BasePlayer, PendingSectionCompletion>();
+
+            // Slice 5 master switch. An empty result means nothing is written to the section
+            // tables and every score card gets a null Sections, which hides the row, the strip
+            // and the tag. Existing rows are left in the database untouched.
+            if (!SettingsManager.Settings.TrackSectionCompletion.Value)
+            {
+                return completions;
+            }
+
+            // Same gate as the band score; an invalid band score means nothing gets recorded
+            if (!ScoreContainer.IsBandScoreValid(SongSpeed))
+            {
+                return completions;
+            }
+
+            foreach (var player in _players)
+            {
+                // Skip bots and anyone that's obviously cheating.
+                if (!ScoreContainer.IsSoloScoreValid(SongSpeed, player.Player))
+                {
+                    continue;
+                }
+
+                var completion = ScanSectionCompletion(player);
+                if (completion != null)
+                {
+                    completions.Add(player, completion);
+                }
+            }
+
+            return completions;
+        }
+
+        /// <summary>
+        /// Determines which chart sections this player perfected, or <c>null</c> if this run
+        /// cannot earn section completion credit.
+        /// </summary>
+        /// <remarks>
+        /// This is only reached for full-song runs; <see cref="EndSong"/> returns early in
+        /// practice mode, so practice never earns section completion credit.
+        /// </remarks>
+        private PendingSectionCompletion ScanSectionCompletion(BasePlayer player)
+        {
+            // Replays never earn credit, neither playback nor playing alongside one
+            if (player.Player.IsReplay || GlobalVariables.State.PlayingWithReplay)
+            {
+                return null;
+            }
+
+            var sections = Chart.Sections;
+            if (sections.Count == 0)
+            {
+                return null;
+            }
+
+            var results = player.ScanSectionCompletion(sections);
+            if (results is null)
+            {
+                return null;
+            }
+
+            int perfectedThisRun = 0;
+            int applicableCount = 0;
+            foreach (var result in results)
+            {
+                if (result.NotesTotal <= 0)
+                {
+                    // A section with no notes for this instrument is not part of the total
+                    continue;
+                }
+
+                applicableCount++;
+                if (result.IsPerfected)
+                {
+                    perfectedThisRun++;
+                }
+            }
+
+            if (applicableCount == 0)
+            {
+                // Nothing on this instrument lines up with the chart's sections
+                return null;
+            }
+
+            var profile = player.Player.Profile;
+
+            // The pre-run set is needed either way to tell "perfected earlier" blocks apart from
+            // "perfected just now" ones, so the cumulative count is built from it rather than
+            // waiting on the database write, which happens after the score screen data is built
+            var completedBefore = ScoreContainer.GetCompletedSections(Song.Hash, profile.Id,
+                profile.CurrentInstrument, profile.CurrentDifficulty, profile.HarmonyIndex);
+
+            return new PendingSectionCompletion
+            {
+                Profile = profile,
+                ApplicableSectionCount = applicableCount,
+                PerfectedThisRun = perfectedThisRun,
+                Results = results,
+                Summary = BuildSectionSummary(results, applicableCount, completedBefore),
+            };
+        }
+
+        /// <summary>
+        /// Shapes a scan's results into the per-section states and counts the score card displays.
+        /// </summary>
+        private static PlayerSectionSummary BuildSectionSummary(IReadOnlyList<SectionCompletionResult> results,
+            int applicableCount, HashSet<int> completedBefore)
+        {
+            var states = new List<SectionCompletionState>(applicableCount);
+            var newlyCompleted = new List<int>();
+
+            foreach (var result in results)
+            {
+                if (result.NotesTotal <= 0)
+                {
+                    // Sections with no notes get no block, matching the denominator
+                    continue;
+                }
+
+                if (completedBefore.Contains(result.SectionIndex))
+                {
+                    states.Add(SectionCompletionState.CompletedEarlier);
+                }
+                else if (result.IsPerfected)
+                {
+                    states.Add(SectionCompletionState.CompletedThisRun);
+                    newlyCompleted.Add(result.SectionIndex);
+                }
+                else
+                {
+                    states.Add(SectionCompletionState.Missing);
+                }
+            }
+
+            // Derived from the states rather than from completedBefore.Count, so that rows left
+            // behind by sections that are no longer applicable can never push the fraction past
+            // what the strip actually shows
+            int completedCount = 0;
+            foreach (var state in states)
+            {
+                if (state != SectionCompletionState.Missing)
+                {
+                    completedCount++;
+                }
+            }
+
+            return new PlayerSectionSummary
+            {
+                ApplicableCount = applicableCount,
+                CompletedCount = completedCount,
+                NewlyCompletedIndices = newlyCompleted.ToArray(),
+                SectionStates = states.ToArray(),
+            };
+        }
+
+        /// <summary>
+        /// Writes the collected section completions to the database and logs the cumulative progress.
+        /// </summary>
+        private void RecordSectionCompletions(IEnumerable<PendingSectionCompletion> completions)
+        {
+            foreach (var completion in completions)
+            {
+                var profile = completion.Profile;
+                int sectionCount = completion.ApplicableSectionCount;
+
+                bool success = ScoreContainer.RecordSectionCompletions(Song.Hash, profile.Id,
+                    profile.CurrentInstrument, profile.CurrentDifficulty, profile.HarmonyIndex,
+                    sectionCount, completion.Results, out int completedTotal);
+
+                if (!success)
+                {
+                    // The failure itself is already logged; don't follow it with a bogus total
+                    continue;
+                }
+
+                YargLogger.LogFormatInfo(
+                    "Section FC ({0}, {1}): {2}/{3} sections perfected this run, {4}/{5} cumulative.",
+                    profile.Name, profile.CurrentInstrument, completion.PerfectedThisRun, sectionCount,
+                    completedTotal, sectionCount);
+            }
         }
 
         public void ForceQuitSong()
@@ -1030,6 +1407,10 @@ namespace YARG.Gameplay
                 }
 
                 player.Player.IsScoreValid = false;
+
+                // Nothing from here on can be recorded, so the strip would be promising credit
+                // that this run can no longer earn. Dropping the state hides it.
+                player.SetSectionState(null);
             }
 
             if (invalidated && !string.IsNullOrEmpty(toastKey))

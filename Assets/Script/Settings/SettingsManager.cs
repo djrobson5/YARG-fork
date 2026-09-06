@@ -11,6 +11,7 @@ using YARG.Core.Utility;
 using YARG.Helpers;
 using YARG.Settings.Metadata;
 using YARG.Settings.Types;
+using YARG.Song;
 
 namespace YARG.Settings
 {
@@ -39,14 +40,39 @@ namespace YARG.Settings
 
         private static bool _settingsCanBeSaved = true;
 
+        /// <summary>
+        /// Whether <see cref="SaveSettings"/> will actually write to disk. It is false when the
+        /// settings file failed to load or a migration decided the existing file must not be
+        /// overwritten, in which case every save is silently dropped. Callers that persist a flag
+        /// they depend on later (for example the song cache dirty flag) can check this to warn.
+        /// </summary>
+        public static bool SettingsCanBeSaved => SettingContainer.IsInitialized && Settings is not null
+            && _settingsCanBeSaved;
+
         public static string OutputDeviceAtStartup { get; private set; } = "Default";
 
         public static SettingContainer Settings { get; private set; }
+
+        /// <summary>
+        /// Whether the "Check for Updates" row should appear at all. It is meaningless
+        /// outside of a CI release build (where <see cref="UnityEngine.Application.version"/>
+        /// is the project's bundle version rather than a release tag), and offline mode
+        /// suppresses every outgoing request.
+        /// </summary>
+        private static bool IsUpdateCheckAvailable()
+        {
+            return UpdateChecker.IsReleaseBuild && !GlobalVariables.OfflineMode;
+        }
 
         public static readonly List<Tab> DisplayedSettingsTabs = new()
         {
             new MetadataTab("General", icon: "Engine")
             {
+                // Hidden outside of CI release builds (nothing to compare) and in offline
+                // mode. See docs/updater-design.md.
+                new HeaderMetadata("Updates", visibleWhen: IsUpdateCheckAvailable),
+                new ButtonRowMetadata(nameof(Settings.CheckForUpdates), IsUpdateCheckAvailable),
+
                 new HeaderMetadata("Calibration"),
                 new ButtonRowMetadata(nameof(Settings.OpenCalibrator)),
                 nameof(Settings.AudioCalibration),
@@ -108,6 +134,7 @@ namespace YARG.Settings
                 new FieldMetadata(nameof(Settings.ShowPercentDecimals), isAdvanced: true),
                 nameof(Settings.HighScoreHistory),
                 new FieldMetadata(nameof(Settings.SongLengthLabels), isAdvanced: true),
+                nameof(Settings.TrackSectionCompletion),
                 new HeaderMetadata("PlayAShow"),
                 nameof(Settings.EnablePlayAShow),
                 nameof(Settings.PlayAShowTimeout),
@@ -208,6 +235,12 @@ namespace YARG.Settings
                 nameof(Settings.GraphicalProgressOnScoreBox),
                 nameof(Settings.GraphicalSongProgressTint),
                 nameof(Settings.KeepSongInfoVisible),
+                nameof(Settings.ShowSectionStrip),
+                nameof(Settings.ShowStarPowerPath),
+                nameof(Settings.StarPowerPathColor),
+                nameof(Settings.StarPowerPathChipLeadIn),
+                nameof(Settings.StarPowerPathChipHold),
+                nameof(Settings.StarPowerPathFretGlow),
             },
             new PresetsTab("Presets", icon: "Customization"),
             new AllSettingsTab(),
@@ -379,7 +412,7 @@ namespace YARG.Settings
         {
             // If the game tries to save the settings before they are loaded, it can wipe the settings file
             // (such as closing the game before they load)
-            if (SettingContainer.IsInitialized && Settings is not null && _settingsCanBeSaved)
+            if (SettingsCanBeSaved)
             {
                 var json = JObject.Parse(JsonConvert.SerializeObject(Settings, JsonSettings));
                 SettingsMigration.SetCurrentSchemaVersion(json);

@@ -217,9 +217,10 @@ namespace YARG.Menu.ScoreScreen
                 switch (score.Player.Profile.GameMode)
                 {
                     case GameMode.FiveFretGuitar:
+                    case GameMode.SixFretGuitar:
                     {
                         card = Instantiate(_guitarCardPrefab, _cardContainer);
-                        ((ScoreCard<GuitarStats>)card).Initialize(score.IsHighScore, score.Player, score.Stats as GuitarStats, score.IsReplay);
+                        ((ScoreCard<GuitarStats>)card).Initialize(score.IsHighScore, score.Player, score.Stats as GuitarStats, score.IsReplay, score.Sections);
                         break;
                     }
                     case GameMode.FourLaneDrums:
@@ -227,19 +228,19 @@ namespace YARG.Menu.ScoreScreen
                     case GameMode.EliteDrums:
                     {
                         card = Instantiate(_drumsCardPrefab, _cardContainer);
-                        ((ScoreCard<DrumsStats>)card).Initialize(score.IsHighScore, score.Player, score.Stats as DrumsStats, score.IsReplay);
+                        ((ScoreCard<DrumsStats>)card).Initialize(score.IsHighScore, score.Player, score.Stats as DrumsStats, score.IsReplay, score.Sections);
                         break;
                     }
                     case GameMode.Vocals:
                     {
                         card = Instantiate(_vocalsCardPrefab, _cardContainer);
-                        ((ScoreCard<VocalsStats>)card).Initialize(score.IsHighScore, score.Player, score.Stats as VocalsStats, score.IsReplay);
+                        ((ScoreCard<VocalsStats>)card).Initialize(score.IsHighScore, score.Player, score.Stats as VocalsStats, score.IsReplay, score.Sections);
                         break;
                     }
                     case GameMode.ProKeys:
                     {
                         card = Instantiate(_keysCardPrefab, _cardContainer);
-                        ((ScoreCard<KeysStats>) card).Initialize(score.IsHighScore, score.Player, score.Stats as KeysStats, score.IsReplay);
+                        ((ScoreCard<KeysStats>) card).Initialize(score.IsHighScore, score.Player, score.Stats as KeysStats, score.IsReplay, score.Sections);
                         break;
                     }
                 }

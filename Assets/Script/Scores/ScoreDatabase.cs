@@ -77,6 +77,8 @@ namespace YARG.Scores
             _db.CreateTable<GameRecord>();
             _db.CreateTable<PlayerScoreRecord>();
             _db.CreateTable<PlayerInfoRecord>();
+            _db.CreateTable<SectionCompletionRecord>();
+            _db.CreateTable<SectionProgressRecord>();
 
             // These queries filter player scores by player/instrument/replay status and then join through
             // GameRecordId. The individual column indexes created by sqlite-net cannot cover that access pattern.
@@ -165,6 +167,16 @@ namespace YARG.Scores
             YargLogger.LogFormatTrace("Updated {0} rows in score database.", rows);
         }
 
+        /// <summary>
+        /// Runs <paramref name="action"/> as a single transaction, rolling back everything it
+        /// wrote if it throws.
+        /// </summary>
+        public void RunInTransaction(Action action)
+        {
+            YargLogger.LogTrace("Beginning score database transaction.");
+            _db.RunInTransaction(action);
+        }
+
         private List<T> Query<T>(string query, params object[] args)
             where T : new()
         {
@@ -221,6 +233,39 @@ namespace YARG.Scores
         public void InsertSoloRecords(IEnumerable<PlayerScoreRecord> records)
         {
             InsertAll(records);
+        }
+
+        public void InsertSectionCompletions(IEnumerable<SectionCompletionRecord> records)
+        {
+            InsertAll(records);
+        }
+
+        /// <summary>
+        /// Writes the player's cumulative section progress for a song, replacing the existing row
+        /// if there is one.
+        /// </summary>
+        /// <remarks>
+        /// There is at most one row per key, so this always ends up as a single insert or update.
+        /// </remarks>
+        public void UpsertSectionProgress(SectionProgressRecord record)
+        {
+            var current = QuerySectionProgress(
+                record.SongChecksum,
+                record.PlayerId,
+                record.Instrument,
+                record.Difficulty,
+                record.HarmonyIndex
+            );
+
+            if (current is null)
+            {
+                Insert(record);
+            }
+            else
+            {
+                record.Id = current.Id;
+                Update(record);
+            }
         }
 
         #endregion
@@ -321,6 +366,81 @@ namespace YARG.Scores
                 ORDER BY BandScore DESC
                 LIMIT 1",
                 songChecksum.HashBytes
+            );
+        }
+
+        public List<SectionCompletionRecord> QuerySectionCompletions(
+            HashWrapper songChecksum,
+            Guid playerId,
+            Instrument instrument,
+            Difficulty difficulty,
+            int harmonyIndex
+        )
+        {
+            return Query<SectionCompletionRecord>(
+                @"SELECT * FROM SectionCompletions
+                WHERE SongChecksum = ?
+                    AND PlayerId = ?
+                    AND Instrument = ?
+                    AND Difficulty = ?
+                    AND HarmonyIndex = ?
+                ORDER BY SectionIndex",
+                songChecksum.HashBytes,
+                playerId,
+                (int) instrument,
+                (int) difficulty,
+                harmonyIndex
+            );
+        }
+
+        public SectionProgressRecord QuerySectionProgress(
+            HashWrapper songChecksum,
+            Guid playerId,
+            Instrument instrument,
+            Difficulty difficulty,
+            int harmonyIndex
+        )
+        {
+            return QuerySectionProgress(songChecksum.HashBytes, playerId, instrument, difficulty,
+                harmonyIndex);
+        }
+
+        public SectionProgressRecord QuerySectionProgress(
+            byte[] songChecksum,
+            Guid playerId,
+            Instrument instrument,
+            Difficulty difficulty,
+            int harmonyIndex
+        )
+        {
+            return FindWithQuery<SectionProgressRecord>(
+                @"SELECT * FROM SectionProgress
+                WHERE SongChecksum = ?
+                    AND PlayerId = ?
+                    AND Instrument = ?
+                    AND Difficulty = ?
+                    AND HarmonyIndex = ?
+                LIMIT 1",
+                songChecksum,
+                playerId,
+                (int) instrument,
+                (int) difficulty,
+                harmonyIndex
+            );
+        }
+
+        /// <summary>
+        /// Gets every stored section progress row for a player and instrument, across all songs,
+        /// difficulties, and harmony parts.
+        /// </summary>
+        public List<SectionProgressRecord> QueryPlayerSectionProgress(Guid playerId, Instrument instrument)
+        {
+            return Query<SectionProgressRecord>(
+                @"SELECT * FROM SectionProgress
+                WHERE PlayerId = ?
+                    AND Instrument = ?",
+                playerId,
+                (int) instrument
             );
         }
 

@@ -449,9 +449,18 @@ namespace YARG.Menu.MusicLibrary
                     _mainLibraryIndex = SelectedIndex;
                 }
 
+                // ToList() drops hashes that are no longer in the library (a song deleted or
+                // removed from a scanned folder), so a non-empty setlist can still resolve to
+                // nothing. Bail rather than index into an empty list.
+                var showSongs = ShowPlaylist.ToList();
+                if (showSongs.Count == 0)
+                {
+                    return;
+                }
+
                 GlobalVariables.State.PlayingAShow = true;
-                GlobalVariables.State.ShowSongs = ShowPlaylist.ToList();
-                GlobalVariables.State.CurrentSong = GlobalVariables.State.ShowSongs.First();
+                GlobalVariables.State.ShowSongs = showSongs;
+                GlobalVariables.State.CurrentSong = showSongs[0];
                 GlobalVariables.State.ShowIndex = 0;
                 MenuManager.Instance.PushMenu(MenuManager.Menu.DifficultySelect);
             }

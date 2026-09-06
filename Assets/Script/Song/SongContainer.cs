@@ -1214,6 +1214,138 @@ namespace YARG.Song
             FillContainers();
         }
 
+        /// <summary>
+        /// Records that the in-memory library no longer matches <c>songcache.bin</c>, so the next
+        /// launch must run a full scan. Written through to settings.json immediately: the flag is
+        /// worthless if the game is killed before it is persisted.
+        /// </summary>
+        public static void MarkSongCacheDirty()
+        {
+            if (SettingsManager.Settings.SongCacheDirty)
+            {
+                return;
+            }
+
+            SettingsManager.Settings.SongCacheDirty = true;
+            PersistSongCacheDirtyFlag();
+        }
+
+        /// <summary>
+        /// Clears the dirty flag after a full scan has reconciled the cache with the disk.
+        /// </summary>
+        public static void ClearSongCacheDirty()
+        {
+            if (!SettingsManager.Settings.SongCacheDirty)
+            {
+                return;
+            }
+
+            SettingsManager.Settings.SongCacheDirty = false;
+            PersistSongCacheDirtyFlag();
+        }
+
+        /// <summary>
+        /// Writes the settings file so the dirty flag survives a crash or a kill. Never throws:
+        /// a failed save must not abort the delete that is already half-done on disk.
+        /// </summary>
+        private static void PersistSongCacheDirtyFlag()
+        {
+            if (!SettingsManager.SettingsCanBeSaved)
+            {
+                // A failed load or a migration has locked settings.json; the flag only lives in
+                // memory, so a quick scan on the next launch may resurrect a deleted song.
+                YargLogger.LogWarning(
+                    "Could not persist the song cache dirty flag: settings saving is disabled.");
+                return;
+            }
+
+            try
+            {
+                SettingsManager.SaveSettings();
+            }
+            catch (Exception e)
+            {
+                YargLogger.LogException(e, "Failed to persist the song cache dirty flag.");
+            }
+        }
+
+        /// <summary>
+        /// Whether the raw song cache still holds any entry under the given hash.
+        /// </summary>
+        /// <remarks>
+        /// Unlike <see cref="SongsByHash"/>, this consults <c>SongCache.Entries</c> directly, so it
+        /// is not affected by the rating/category filtering the public containers apply. Callers
+        /// deciding whether a hash is dead (playlist pruning, for instance) must use this: a song
+        /// hidden by a filter is still installed, and its hash must not be pruned.
+        /// </remarks>
+        public static bool HasAnyEntryForHash(HashWrapper hash)
+        {
+            return _songCache.Entries.TryGetValue(hash, out var entries) && entries.Count > 0;
+        }
+
+        /// <summary>
+        /// Drops a single song from the in-memory library without rescanning anything.
+        /// </summary>
+        /// <remarks>
+        /// Only the in-memory containers are touched: <c>songcache.bin</c> still lists the song
+        /// and there is no incremental way to rewrite it, so the caller is responsible for
+        /// setting <see cref="SettingsManager.SettingContainer.SongCacheDirty"/> so the next
+        /// launch runs a full scan instead of the quick one. See docs/delete-song-design.md.
+        ///
+        /// The match is on identity first and <see cref="SongEntry.ActualLocation"/> second,
+        /// never on the hash alone: <c>SongCache.Entries</c> maps one hash to a <i>list</i>,
+        /// because duplicate copies of the same chart in different folders share a checksum,
+        /// and those copies have to survive.
+        /// </remarks>
+        /// <returns>Whether an entry was found and removed.</returns>
+        public static bool RemoveSong(SongEntry song)
+        {
+            if (song == null)
+            {
+                return false;
+            }
+
+            if (!_songCache.Entries.TryGetValue(song.Hash, out var entries))
+            {
+                return false;
+            }
+
+            int index = entries.FindIndex(entry => IsSameEntry(entry, song));
+            if (index < 0)
+            {
+                return false;
+            }
+
+            entries.RemoveAt(index);
+
+            // Only drop the hash itself once its last copy is gone.
+            if (entries.Count == 0)
+            {
+                _songCache.Entries.Remove(song.Hash);
+            }
+
+            // Re-sorts and refills every container, which also rebuilds _songsByHash and
+            // bumps LibraryRevision.
+            RequestContainerRefresh();
+
+            // Partial rather than Full: the library keeps the user's playlist and scroll
+            // position, and nothing outside this one entry changed.
+            MusicLibraryMenu.SetReload(MusicLibraryReloadState.Partial);
+            return true;
+
+            static bool IsSameEntry(SongEntry lhs, SongEntry rhs)
+            {
+                if (ReferenceEquals(lhs, rhs))
+                {
+                    return true;
+                }
+
+                return lhs.SubType == rhs.SubType
+                    && string.Equals(lhs.ActualLocation, rhs.ActualLocation,
+                        StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
         readonly struct IntensityComparer : IComparer<SongEntry>
         {
             private readonly Instrument _instrument;

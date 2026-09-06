@@ -506,6 +506,8 @@ namespace YARG.Scores
             _currentInstrumentSetKey = string.Empty;
             PlayerHighScores.Clear();
             PlayerHighPercentages.Clear();
+
+            InvalidateSectionProgressCache();
         }
 
         public static List<SongEntry> GetMostPlayedSongs(int maxCount)

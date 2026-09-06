@@ -9,10 +9,12 @@ using YARG.Core.Input;
 using YARG.Core.Logging;
 using YARG.Core.Replays;
 using YARG.Gameplay.HUD;
+using YARG.Gameplay.SpPath;
 using YARG.Helpers.Extensions;
 using YARG.Helpers.UI;
 using YARG.Input;
 using YARG.Player;
+using YARG.Scores;
 using YARG.Settings;
 
 namespace YARG.Gameplay.Player
@@ -215,6 +217,132 @@ namespace YARG.Gameplay.Player
 
         // TODO Make this more generic
         public abstract void SetStemMuteState(bool muted);
+
+        /// <summary>
+        /// This player's live section strip state, or <c>null</c> if this run cannot earn
+        /// section completion credit.
+        /// </summary>
+        public SectionStripState SectionState { get; private set; }
+
+        /// <summary>
+        /// Hands this player the section state built for it at song start.
+        /// </summary>
+        /// <remarks>
+        /// The eligibility gates live in <c>GameManager</c> next to the ones the end-of-song scan
+        /// uses, so there is only one place that decides whether a run counts.
+        /// </remarks>
+        public void SetSectionState(SectionStripState state)
+        {
+            SectionState = state;
+            OnSectionStateSet();
+        }
+
+        /// <summary>
+        /// Called once the section state has been assigned, so that players with somewhere to
+        /// draw it can pass it along.
+        /// </summary>
+        protected virtual void OnSectionStateSet()
+        {
+        }
+
+        /// <summary>
+        /// The optimal Star Power path computed for this player at song load, or <c>null</c> when
+        /// the overlay is off, the instrument is unsupported, or this is a band run.
+        /// </summary>
+        public StarPowerPath StarPowerPath { get; private set; }
+
+        /// <summary>
+        /// Whether the Star Power path overlay is switched on for this run
+        /// (<c>docs/sp-path-design.md</c> §4.5). Set once at song load; a player with this off
+        /// never computes a path, not even on a practice-section change.
+        /// </summary>
+        public bool StarPowerPathEnabled { get; private set; }
+
+        /// <summary>
+        /// Set once the player's actual Star Power state stops matching the plan. Never un-set
+        /// within a run — only a practice-section change or a replay seek clears it, both of
+        /// which rebuild the path anyway.
+        /// </summary>
+        public bool SpPathDiverged { get; protected set; }
+
+        /// <summary>
+        /// Turns the overlay on for this player and computes the first path.
+        /// </summary>
+        /// <remarks>
+        /// The gates live in <c>GameManager.InitializeStarPowerPaths</c>, next to the section
+        /// strip's, so there is only one place that decides whether a run gets an overlay.
+        /// </remarks>
+        public void EnableStarPowerPath()
+        {
+            StarPowerPathEnabled = true;
+            RecomputeStarPowerPath();
+        }
+
+        /// <summary>
+        /// Rebuilds the path from the player's current note track. A no-op for players that do
+        /// not support the overlay, and whenever <see cref="StarPowerPathEnabled"/> is false.
+        /// </summary>
+        public virtual void RecomputeStarPowerPath()
+        {
+        }
+
+        /// <summary>
+        /// Hands this player a freshly computed path (or <c>null</c> to clear it), and resets the
+        /// divergence flag, since a new path describes a run that has not started yet.
+        /// </summary>
+        protected void SetStarPowerPath(StarPowerPath path)
+        {
+            StarPowerPath = path;
+            SpPathDiverged = false;
+            OnStarPowerPathSet();
+        }
+
+        /// <summary>
+        /// Called once the path has been assigned, so that players with somewhere to draw it can
+        /// pass it along.
+        /// </summary>
+        protected virtual void OnStarPowerPathSet()
+        {
+        }
+
+        /// <summary>
+        /// Tells the section state that a note at the given tick was missed, which drops the
+        /// section containing it for this run.
+        /// </summary>
+        /// <remarks>
+        /// The single place the per-instrument miss paths funnel into, so that adding an
+        /// instrument never means adding another hook.
+        /// </remarks>
+        protected void NotifySectionNoteMissed(uint tick)
+        {
+            SectionState?.OnNoteMissed(tick);
+        }
+
+        /// <summary>
+        /// Tells the section state that <paramref name="count"/> of the notes the scanner counts
+        /// were just hit at the given tick, which advances that section's live progress.
+        /// </summary>
+        /// <remarks>
+        /// The mirror image of <see cref="NotifySectionNoteMissed"/>, and the single place the
+        /// per-instrument hit paths funnel into.
+        /// </remarks>
+        protected void NotifySectionNoteHit(uint tick, int count)
+        {
+            SectionState?.OnNoteHit(tick, count);
+        }
+
+        /// <summary>
+        /// Determines which of the chart's sections had every one of their notes hit this run.
+        /// </summary>
+        /// <returns>
+        /// One result per section, in section order, or <c>null</c> if this player
+        /// does not support section completion tracking.
+        /// </returns>
+        public virtual IReadOnlyList<SectionCompletionResult> ScanSectionCompletion(
+            IReadOnlyList<Section> sections)
+        {
+            return null;
+        }
 
         public virtual void SetStarPowerFX(bool active)
         {
