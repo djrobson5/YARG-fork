@@ -49,3 +49,27 @@ Exit code 0 and no `error CS` lines means green. Gotchas:
 - Unity's VS Code integration rewrites `.vscode/settings.json` on open. Revert it before committing.
 - Unity also rewrites `dotnet.defaultSolution` in `.vscode/settings.json` (to `YARG-fork.slnx`) when VS Code is the external editor. Revert with `git checkout -- .vscode/settings.json`.
 - Make sure no song or library preview is playing before focusing the editor to trigger a recompile after a large pull. A BASS audio callback firing during the domain unload deadlocked the editor once (log stops at `Begin MonoManager ReloadAssembly` with a NullReferenceException in a DSP callback). Recovery: kill Unity and relaunch; nothing on disk is affected.
+
+### Persistent headless editor (Unity CLI + MCP)
+
+Unity's beta `unity` CLI (1.0.0-beta.9, at `C:\Users\djrob\AppData\Local\Unity\bin\unity.exe`, on PATH) and its `unity-editor-mcp` server (registered user-scope in Claude Code) drive a running editor. The required `com.unity.pipeline` package already comes from upstream.
+
+Check `Get-Process Unity` first and leave a GUI editor alone — the CLI attaches to whichever editor owns the project, and two can't own it at once. If none is running, launch one (no `-quit`):
+
+```
+Start-Process "C:\Program Files\Unity\Hub\Editor\6000.3.5f2\Editor\Unity.exe" -ArgumentList "-batchmode","-nographics","-projectPath","<repo>","-logFile","<scratch>\unity-headless.log"
+```
+
+It serves port 7800; `unity status` or `mcp__unity-editor-mcp__editor_status` confirms readiness. Use it for:
+
+- `recompile` — sub-second full-assembly build, covering the editor assemblies the dotnet check misses.
+- Structural prefab/scene verification: `find_assets`, `open_scene`, `get_serialized_fields`, `get_console_logs`, and `eval` (Roslyn C#, so `PrefabUtility.LoadPrefabContents` / `SerializedObject` sweeps find missing scripts and null refs).
+- `run_tests`.
+
+Prefer this over hand-editing `.prefab`/`.unity` YAML whenever an editor is reachable. Limits:
+
+- `-nographics` has no GPU, so `screenshot` and `capture_game_view` fail; visual checks need the GUI editor.
+- Compile errors boot the editor into Safe Mode and the CLI can't connect, so the dotnet fast check stays the first line.
+- Batchmode opens no scene; call `open_scene` before any hierarchy query.
+- `UnityEditor.SearchService.SceneSearch.GetHierarchyPath` doesn't exist in 6000.3.
+- The headless run rewrites `.vscode/settings.json` (see the gotcha above).
