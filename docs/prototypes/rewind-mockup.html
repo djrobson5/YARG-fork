@@ -1,0 +1,675 @@
+<title>Rewind to Section Mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Red+Hat+Display:wght@700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0B0C14;
+    --util:#8A90AE;
+    --util-dim:#5A6080;
+    --rhd:"Red Hat Display","Trebuchet MS","Segoe UI",Arial,sans-serif;
+    --barlow:"Barlow","Segoe UI",Roboto,Arial,sans-serif;
+    --sel:rgba(62,180,255,0.275);   /* #3EB4FF46 */
+    --sel-soft:rgba(62,180,255,0.13);
+    --cursor:rgba(62,180,255,0.251); /* #3EB4FF40 */
+    --clean:#AD7AFF;
+    --dropped:#E05265;
+    --needed:#262941;
+    --earlier:#5C4B8A;
+    --orange:#FF8413;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--ink);
+    color:#E7E9F5;
+    font-family:var(--barlow);
+    -webkit-font-smoothing:antialiased;
+  }
+  .page{max-width:1500px;margin:0 auto;padding:28px 28px 130px;}
+
+  /* ---------- utility chrome (deliberately NOT game UI) ---------- */
+  .doc-title{font-size:15px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--util);margin:0 0 4px;}
+  .doc-sub{font-size:13px;color:var(--util-dim);margin:0 0 26px;line-height:1.5;}
+  .vhead{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin:34px 0 6px;padding-top:22px;border-top:1px solid #1B1E2E;}
+  .vkey{font-family:var(--barlow);font-size:12px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#0B0C14;background:var(--util);border-radius:4px;padding:3px 8px;}
+  .vname{font-size:16px;font-weight:600;color:#C9CEE6;}
+  .vnote{font-size:13px;color:var(--util-dim);line-height:1.5;margin:2px 0 18px;max-width:1000px;}
+  .cap{font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--util-dim);margin:22px 0 7px;}
+
+  /* ---------- 1920x1080 stage ---------- */
+  .stagebox{width:100%;overflow:hidden;border:1px solid #1B1E2E;border-radius:6px;}
+  .stage{width:1920px;height:1080px;position:relative;overflow:hidden;transform-origin:top left;}
+
+  /* pause background stand-in for the PauseBackground sprite */
+  .pausebg{
+    position:absolute;inset:0;
+    background:
+      radial-gradient(120% 90% at 22% 12%, #1B2340 0%, #0E1122 46%, #06070E 100%),
+      linear-gradient(200deg, rgba(62,180,255,.10), rgba(0,0,0,0) 55%),
+      linear-gradient(20deg, rgba(173,122,255,.09), rgba(0,0,0,0) 60%);
+    filter:blur(0px);
+  }
+  .pausebg::after{
+    content:"";position:absolute;inset:0;
+    background:
+      radial-gradient(38% 55% at 78% 68%, rgba(46,217,255,.10), rgba(0,0,0,0) 70%),
+      radial-gradient(30% 40% at 12% 82%, rgba(255,132,19,.07), rgba(0,0,0,0) 70%);
+  }
+
+  /* header */
+  .phead{position:absolute;left:0;top:0;width:1920px;height:250px;background:rgba(0,0,0,.8);border-bottom:2px solid rgba(255,255,255,.05);}
+  .cover{position:absolute;left:50px;top:50px;width:150px;height:150px;
+    background:linear-gradient(145deg,#3A1E5C 0%,#7A2340 48%,#C4471C 100%);
+    box-shadow:inset 0 0 0 2px rgba(255,255,255,.08);}
+  .cover span{position:absolute;left:0;right:0;bottom:14px;text-align:center;font-family:var(--rhd);font-weight:900;
+    font-size:19px;letter-spacing:.14em;color:rgba(255,255,255,.72);text-transform:uppercase;}
+  .htext{position:absolute;left:225px;top:0;height:250px;display:flex;flex-direction:column;justify-content:center;
+    font-family:var(--rhd);text-transform:uppercase;}
+  .h-album{font-weight:700;font-size:20px;color:rgba(255,255,255,.3);line-height:1.05;}
+  .h-song{font-weight:700;font-size:40px;color:#fff;line-height:1.05;}
+  .h-artist{font-weight:700;font-size:25px;color:#fff;line-height:1.15;}
+  .h-source{font-weight:700;font-size:17px;color:#fff;line-height:1.2;display:flex;align-items:center;gap:8px;margin-top:2px;}
+  .srcicon{width:25px;height:25px;border-radius:3px;background:#2ED9FF1F;box-shadow:inset 0 0 0 2px rgba(46,217,255,.55);
+    display:flex;align-items:center;justify-content:center;font-family:var(--rhd);font-weight:900;font-size:13px;color:#2ED9FF;}
+
+  /* left menu column */
+  .col{position:absolute;left:0;top:275px;width:750px;height:721px;}
+  .mtitle{position:absolute;left:37.5px;top:0;height:50px;font-family:var(--rhd);font-weight:900;font-size:60px;line-height:50px;
+    color:#fff;text-transform:uppercase;white-space:nowrap;}
+  .list{position:absolute;left:0;top:82px;width:750px;}
+  .row{position:relative;width:750px;height:58px;margin-bottom:5px;display:flex;align-items:center;}
+  .row .label{padding-left:37.5px;font-family:var(--rhd);font-weight:900;font-size:40px;color:#fff;text-transform:uppercase;line-height:1;}
+  .row.sel{background:var(--sel);}
+  .row.sel-soft{background:var(--sel-soft);}
+
+  /* centered practice-style scroller (variant A) */
+  .scroller{position:absolute;left:0;top:82px;width:750px;height:639px;overflow:hidden;
+    -webkit-mask-image:linear-gradient(180deg,rgba(0,0,0,0) 0%,#000 13%,#000 87%,rgba(0,0,0,0) 100%);
+            mask-image:linear-gradient(180deg,rgba(0,0,0,0) 0%,#000 13%,#000 87%,rgba(0,0,0,0) 100%);}
+  .srow{position:absolute;left:0;width:750px;height:58px;display:flex;align-items:center;justify-content:space-between;}
+  .srow .nm{padding-left:37.5px;font-family:var(--rhd);font-weight:900;font-size:40px;text-transform:uppercase;
+    color:rgba(255,255,255,.15);line-height:1;white-space:nowrap;}
+  .srow .tm{padding-right:37.5px;font-family:var(--rhd);font-weight:700;font-size:28px;
+    color:rgba(255,255,255,.12);line-height:1;letter-spacing:.02em;}
+  .srow.cur{background:var(--cursor);}
+  .srow.cur .nm{color:#fff;}
+  .srow.cur .tm{color:rgba(255,255,255,.45);}
+  .nowtag{margin-left:16px;font-family:var(--barlow);font-weight:700;font-size:16px;letter-spacing:.16em;
+    text-transform:uppercase;color:#0B0C14;background:#2ED9FF;border-radius:3px;padding:3px 8px;align-self:center;}
+  .nowdot{width:10px;height:10px;border-radius:50%;background:#2ED9FF;margin-left:16px;align-self:center;}
+
+  /* right graphics container pane (variant B) */
+  .pane{position:absolute;left:960px;top:275px;width:960px;height:721px;}
+  .paneinner{position:absolute;left:40px;top:0;width:840px;height:721px;background:rgba(3,3,7,.55);
+    box-shadow:inset 0 0 0 2px rgba(46,217,255,.13);}
+  .panetitle{position:absolute;left:37.5px;top:26px;height:50px;font-family:var(--rhd);font-weight:900;font-size:44px;
+    line-height:50px;color:#fff;text-transform:uppercase;}
+  .panelist{position:absolute;left:0;top:96px;width:840px;height:520px;overflow:hidden;
+    -webkit-mask-image:linear-gradient(180deg,#000 0%,#000 96%,rgba(0,0,0,0) 100%);
+            mask-image:linear-gradient(180deg,#000 0%,#000 96%,rgba(0,0,0,0) 100%);}
+  .prow{position:relative;width:840px;height:58px;margin-bottom:5px;display:flex;align-items:center;gap:18px;padding:0 37.5px;}
+  .prow .glyph{width:18px;height:18px;border-radius:3px;flex:0 0 auto;}
+  .prow .nm{flex:1;font-family:var(--rhd);font-weight:900;font-size:34px;color:rgba(255,255,255,.55);text-transform:uppercase;line-height:1;}
+  .prow .tm{font-family:var(--rhd);font-weight:700;font-size:26px;color:rgba(255,255,255,.28);line-height:1;}
+  .prow.sel{background:var(--sel);}
+  .prow.sel .nm{color:#fff;}
+  .prow.sel .tm{color:rgba(255,255,255,.55);}
+  .curtag{font-family:var(--barlow);font-weight:700;font-size:15px;letter-spacing:.16em;text-transform:uppercase;
+    color:#0B0C14;background:#2ED9FF;border-radius:3px;padding:3px 8px;}
+  .confirmline{position:absolute;left:37.5px;top:632px;width:765px;height:58px;display:flex;align-items:center;gap:22px;
+    background:rgba(255,132,19,.10);box-shadow:inset 0 0 0 2px rgba(255,132,19,.35);padding:0 22px;}
+  .confirmline .q{font-family:var(--rhd);font-weight:900;font-size:28px;color:#fff;text-transform:uppercase;}
+  .minibtn{display:flex;align-items:center;gap:8px;font-family:var(--rhd);font-weight:700;font-size:18px;color:#fff;text-transform:uppercase;}
+  .minidot{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    font-family:var(--rhd);font-weight:900;font-size:13px;color:#08121A;}
+
+  /* ---------- variant D additions ---------- */
+  /* left pause list, de-emphasised because focus moved to the right pane */
+  .list.dim .row .label{color:rgba(255,255,255,.45);}
+  /* pane title at the same 60 px as the left menu title */
+  .panetitle.big{font-size:60px;line-height:50px;}
+  /* cursor-centred scroller inside the pane: soft fade at BOTH edges */
+  .panelist.both{
+    -webkit-mask-image:linear-gradient(180deg,rgba(0,0,0,0) 0%,#000 13%,#000 87%,rgba(0,0,0,0) 100%);
+            mask-image:linear-gradient(180deg,rgba(0,0,0,0) 0%,#000 13%,#000 87%,rgba(0,0,0,0) 100%);}
+  .prow.abs{position:absolute;left:0;margin-bottom:0;}
+  .prow.abs.sel{background:var(--cursor);}   /* #3EB4FF40 cursor wash */
+  .prow.abs .nm{flex:0 1 auto;}              /* CURRENT chip hugs the name */
+  .prow.abs .gap{flex:1 1 auto;}
+  .prow.ahead .nm{color:rgba(255,255,255,.15);}
+  .prow.ahead .tm{color:rgba(255,255,255,.09);}
+  .prow .glyph.ring{background:transparent;border-radius:50%;box-shadow:inset 0 0 0 3px #B9BEE0;}
+  .prow .glyph.dot{border-radius:50%;}
+  .panecap{position:absolute;left:37.5px;bottom:28px;width:765px;font-family:var(--barlow);font-weight:500;font-size:20px;
+    color:rgba(255,255,255,.42);text-transform:uppercase;letter-spacing:.04em;line-height:1.3;}
+
+  /* timeline (variant C) */
+  .tl{position:absolute;left:0;top:96px;width:750px;height:64px;display:flex;gap:2px;}
+  .seg{height:64px;position:relative;}
+  .seg.dim{opacity:.5;}
+  .seg.focus{box-shadow:inset 0 0 0 3px #fff;}
+  .playhead{position:absolute;top:88px;width:3px;height:80px;background:#fff;box-shadow:0 0 10px rgba(255,255,255,.7);}
+  .playlabel{position:absolute;top:172px;font-family:var(--barlow);font-weight:600;font-size:16px;letter-spacing:.12em;
+    color:rgba(255,255,255,.6);text-transform:uppercase;transform:translateX(-50%);}
+  .focusrow{position:absolute;left:0;top:230px;width:750px;height:120px;background:var(--sel);
+    display:flex;flex-direction:column;justify-content:center;padding-left:37.5px;}
+  .focusrow .nm{font-family:var(--rhd);font-weight:900;font-size:40px;color:#fff;text-transform:uppercase;line-height:1.05;}
+  .focusrow .meta{margin-top:10px;display:flex;align-items:center;gap:18px;font-family:var(--rhd);font-weight:700;font-size:24px;
+    color:rgba(255,255,255,.55);text-transform:uppercase;}
+  .resulttag{font-family:var(--barlow);font-weight:700;font-size:18px;letter-spacing:.14em;padding:4px 10px;border-radius:3px;
+    text-transform:uppercase;}
+  .caption{position:absolute;left:37.5px;top:366px;width:690px;font-family:var(--barlow);font-weight:500;font-size:20px;
+    color:rgba(255,255,255,.42);text-transform:uppercase;letter-spacing:.04em;}
+  .legend{position:absolute;left:0;top:420px;width:750px;display:flex;gap:26px;padding-left:37.5px;}
+  .legend div{display:flex;align-items:center;gap:8px;font-family:var(--barlow);font-weight:600;font-size:16px;
+    letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.38);}
+  .legend i{width:14px;height:14px;border-radius:2px;display:block;}
+
+  /* help bar */
+  .help{position:absolute;right:50px;bottom:35px;display:flex;gap:10px;}
+  .hbtn{position:relative;width:175px;height:45px;border-radius:10px;display:flex;align-items:center;}
+  .hbtn .icon{position:absolute;left:8.5px;top:1px;width:59px;height:43px;display:flex;align-items:center;justify-content:center;}
+  .hbtn .pad{position:absolute;left:76px;right:10px;font-family:var(--rhd);font-weight:700;font-size:18px;color:#fff;
+    text-transform:uppercase;letter-spacing:.02em;}
+  .btncircle{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    font-family:var(--rhd);font-weight:900;font-size:17px;color:#07121A;}
+  .arrowglyph{font-size:24px;line-height:1;color:#fff;}
+
+  /* ---------- score screen ---------- */
+  .scorebg{position:absolute;inset:0;background:
+    radial-gradient(110% 80% at 50% 0%, #141833 0%, #0A0C18 55%, #05060C 100%);}
+  .shead{position:absolute;left:0;top:0;width:1920px;height:125px;display:flex;align-items:center;padding:0 50px;
+    border-bottom:2px solid rgba(255,255,255,.05);background:rgba(0,0,0,.35);}
+  .shead .st{font-family:var(--rhd);font-weight:800;font-size:34px;color:#fff;line-height:1.1;}
+  .shead .sa{font-family:var(--barlow);font-style:italic;font-weight:400;font-size:24px;color:rgba(255,255,255,.7);line-height:1.2;}
+  .bandscore{margin-left:auto;text-align:right;}
+  .bandscore .bs{font-family:var(--barlow);font-weight:600;font-size:40px;color:#fff;line-height:1;}
+  .starview{display:flex;gap:5px;justify-content:flex-end;margin-top:8px;width:245px;height:45px;align-items:center;}
+
+  .card{position:absolute;left:742.5px;top:170px;width:435px;height:845px;display:flex;flex-direction:column;
+    background:#171A32;overflow:hidden;}
+  .card-head{height:80px;flex:0 0 80px;background:linear-gradient(180deg,#232A55 0%,#1B2145 100%);
+    display:flex;align-items:center;gap:15px;padding:15px;}
+  .ring{width:50px;height:50px;border-radius:50%;box-shadow:inset 0 0 0 4px #2ED9FF;display:flex;align-items:center;
+    justify-content:center;font-family:var(--barlow);font-weight:700;font-size:26px;color:#fff;
+    text-shadow:0 0 3px #000,0 0 3px #000;}
+  .card-head .who{display:flex;flex-direction:column;justify-content:center;gap:3px;}
+  .card-head .nm{font-family:var(--rhd);font-weight:800;font-size:26px;color:#fff;line-height:1;}
+  .card-head .sub{display:flex;align-items:center;gap:6px;font-family:var(--rhd);font-weight:700;font-size:14px;
+    color:#2ED9FF;text-transform:uppercase;line-height:1;}
+  .card-head .sub i{width:4px;height:4px;background:#525673;display:block;border-radius:1px;}
+  .card-top{height:235px;flex:0 0 235px;background:linear-gradient(180deg,#1C2145 0%,#141833 100%);
+    padding:26px 50px;display:flex;flex-direction:column;align-items:center;}
+  .card-top .score{align-self:flex-start;font-family:var(--barlow);font-weight:600;font-size:30px;color:#fff;line-height:1;}
+  .card-top .pct{font-family:var(--barlow);font-weight:700;font-size:80px;color:#fff;line-height:1;margin-top:6px;}
+  .card-top .stars{display:flex;gap:5px;margin-top:10px;height:40px;}
+  .card-body{flex:1 1 auto;background:#030306;position:relative;overflow:hidden;
+    border-left:2px solid rgba(46,217,255,.22);border-right:2px solid rgba(46,217,255,.22);}
+  .card-body-inner{padding:25px 0;display:flex;flex-direction:column;gap:25px;}
+  .grouphead{height:50px;display:flex;align-items:center;padding:0 25px;font-family:var(--rhd);font-weight:800;font-size:20px;
+    color:#D9D9FF;text-transform:uppercase;letter-spacing:.02em;}
+  .grouphead.mod{height:35px;justify-content:center;}
+  .stats{display:flex;flex-direction:column;gap:12px;}
+  .stat{height:21px;display:flex;align-items:center;justify-content:space-between;padding:0 25px;}
+  .stat .k{font-family:var(--barlow);font-weight:500;font-size:20px;color:#7D7DA3;text-transform:uppercase;line-height:1;}
+  .stat .v{font-family:var(--barlow);font-weight:400;font-size:22px;color:#fff;line-height:1;display:flex;align-items:center;gap:8px;}
+  .inlinepill{background:rgba(221,73,63,.196);color:#FF8E86;font-family:var(--barlow);font-weight:600;font-size:14px;
+    padding:2px 7px;border-radius:9px;text-transform:uppercase;letter-spacing:.06em;}
+  .sep{height:20px;padding:0 50px;display:flex;align-items:center;}
+  .sep i{display:block;width:100%;height:2px;background:rgba(217,217,217,.196);}
+  .strip{height:22px;padding:0 50px;display:flex;gap:2px;}
+  .strip i{display:block;flex:1;height:22px;}
+  .modrow{height:40px;display:flex;align-items:center;justify-content:center;gap:10px;}
+  .scrollbar{position:absolute;right:0;top:0;width:15px;height:100%;background:rgba(255,255,255,.03);}
+  .scrollbar i{position:absolute;left:3px;top:8px;width:9px;height:340px;border-radius:5px;background:#2ED9FF;display:block;}
+  .engine{height:57px;flex:0 0 57px;background:#030306;border-top:2px solid rgba(46,217,255,.22);
+    display:flex;align-items:center;justify-content:center;gap:10px;}
+  .pill{height:27px;display:flex;align-items:center;padding:0 12px;border-radius:14px;background:rgba(3,3,7,.08);
+    box-shadow:inset 0 0 0 2px rgba(191,191,233,.5);font-family:var(--barlow);font-weight:600;font-size:16px;
+    color:#BFBFE9;text-transform:uppercase;letter-spacing:.03em;}
+  .pill.rewound{box-shadow:inset 0 0 0 2px rgba(255,132,19,.75);color:#FFB061;background:rgba(255,132,19,.10);}
+  .tag{height:61px;flex:0 0 61px;display:flex;align-items:center;justify-content:center;
+    font-family:var(--rhd);font-weight:700;font-size:30px;text-transform:uppercase;letter-spacing:.02em;}
+  .tag.blue{background:#2ED9FF;color:#004554;}
+  .tag.gray{background:#6B708C;color:#FFFFFF;}
+  .tag.amber{background:#FFB020;color:#3A2100;}
+  .cardnote{position:absolute;top:170px;width:340px;font-family:var(--barlow);font-weight:500;font-size:19px;line-height:1.5;
+    color:rgba(255,255,255,.34);}
+  .cardnote b{color:rgba(255,255,255,.62);font-weight:700;}
+  .cardnote .arrow{display:block;margin-top:10px;font-size:15px;letter-spacing:.16em;text-transform:uppercase;color:rgba(255,132,19,.75);}
+
+  /* ---------- variant switcher ---------- */
+  .switch{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:50;display:flex;align-items:center;
+    gap:4px;background:#F2F4FF;color:#0B0C14;border-radius:999px;padding:6px;box-shadow:0 10px 34px rgba(0,0,0,.6);}
+  .switch button{border:0;background:transparent;color:#0B0C14;font-family:var(--barlow);font-weight:700;font-size:18px;
+    width:38px;height:38px;border-radius:999px;cursor:pointer;line-height:1;}
+  .switch button:hover{background:#0B0C1414;}
+  .switch .lbl{font-family:var(--barlow);font-weight:700;font-size:14px;letter-spacing:.1em;text-transform:uppercase;
+    padding:0 14px;min-width:230px;text-align:center;}
+  .switch .hint{font-family:var(--barlow);font-weight:500;font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+    color:#0B0C1499;padding-right:10px;}
+</style>
+
+<div class="page">
+  <p class="doc-title">Rewind to Section &mdash; planning mockup</p>
+  <p class="doc-sub">Variant D is the chosen composition and the default view; A, B and C are the three original takes on the
+    QuickPlay pause-menu rewind picker and its end-of-song badge.
+    Geometry, fonts and colours follow the real prefabs (1920&times;1080 canvas). Sprites that could not be reproduced
+    (PauseBackground, album cover, modifier icons, difficulty ring) are CSS stand-ins at the correct size.
+    Use &larr;/&rarr; or the pill bar below to flip variants.</p>
+  <div id="root"></div>
+</div>
+
+<div class="switch">
+  <button id="prev" aria-label="Previous variant">&larr;</button>
+  <span class="lbl" id="vlabel">D &mdash; Chosen</span>
+  <button id="next" aria-label="Next variant">&rarr;</button>
+  <span class="hint">&larr; &rarr; keys</span>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ------------------------------------------------------------------ data */
+  // Through the Fire and Flames &mdash; 7:24 (444 s). Player is 4:51 into "Gtr Solo 3".
+  var NOW = 291; // 4:51
+  var END = 444; // 7:24
+  var S = [
+    {n:"Intro",           t:0,   r:"clean"},
+    {n:"Intro Solo A",    t:22,  r:"dropped", d:4},
+    {n:"Intro Solo B",    t:41,  r:"dropped", d:11},
+    {n:"Verse 1",         t:60,  r:"clean"},
+    {n:"Pre-Chorus 1",    t:81,  r:"clean"},
+    {n:"Chorus 1",        t:94,  r:"clean"},
+    {n:"Gtr Solo 1",      t:112, r:"dropped", d:7},
+    {n:"Verse 2",         t:134, r:"clean"},
+    {n:"Pre-Chorus 2",    t:155, r:"clean"},
+    {n:"Chorus 2",        t:168, r:"clean"},
+    {n:"Gtr Solo 2",      t:186, r:"dropped", d:3},
+    {n:"Bridge",          t:208, r:"clean"},
+    {n:"Keyboard Solo",   t:230, r:"clean"},
+    {n:"Tapping Solo",    t:250, r:"dropped", d:2},
+    {n:"Gtr Solo 3",      t:278, r:"now"},
+    {n:"Verse 3",         t:312, r:"ahead"},
+    {n:"Chorus 3",        t:340, r:"ahead"},
+    {n:"Outro Solo",      t:364, r:"ahead"},
+    {n:"Big Rock Ending!",t:412, r:"ahead"}
+  ];
+  var CUR = 14;                 // index of "Gtr Solo 3"
+  var PLAYED = S.slice(0, CUR+1);
+
+  var COL = {clean:"#AD7AFF", dropped:"#E05265", now:"#4A4F72", ahead:"#262941"};
+
+  function mmss(t){ var m=Math.floor(t/60), s=t%60; return m+":"+(s<10?"0":"")+s; }
+  function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;"); }
+
+  /* ------------------------------------------------------- shared fragments */
+  function pauseHeader(){
+    return '<div class="phead">'
+      + '<div class="cover"><span>Guitar Hero III</span></div>'
+      + '<div class="htext">'
+      +   '<div class="h-album">Guitar Hero III: Legends of Rock</div>'
+      +   '<div class="h-song">Through the Fire and Flames</div>'
+      +   '<div class="h-artist">DragonForce</div>'
+      +   '<div class="h-source"><span class="srcicon">GH</span><span>Guitar Hero III</span></div>'
+      + '</div></div>';
+  }
+
+  var TINT = {green:"#17E289", red:"#F32B37", yellow:"#FCD548", blue:"#1271FF", orange:"#FF8413", white:"#FFFFFF"};
+
+  function helpBtn(kind, label){
+    var tint = TINT[kind] || "#FFFFFF";
+    var icon;
+    if(kind === "green")      icon = '<span class="btncircle" style="background:'+tint+'">A</span>';
+    else if(kind === "red")   icon = '<span class="btncircle" style="background:'+tint+';color:#fff">B</span>';
+    else if(kind === "up")    icon = '<span class="arrowglyph">&#9650;</span>';
+    else if(kind === "down")  icon = '<span class="arrowglyph">&#9660;</span>';
+    else if(kind === "left")  icon = '<span class="arrowglyph">&#9664;</span>';
+    else if(kind === "right") icon = '<span class="arrowglyph">&#9654;</span>';
+    else icon = '<span class="arrowglyph">&#9679;</span>';
+    var t = (kind==="up"||kind==="down"||kind==="left"||kind==="right") ? "#FFFFFF" : tint;
+    return '<div class="hbtn" style="background:'+hexa(t,.08)+';box-shadow:inset 0 0 0 2px '+hexa(t,.30)+'">'
+      + '<span class="icon">'+icon+'</span><span class="pad">'+label+'</span></div>';
+  }
+  function hexa(hex,a){
+    var h = hex.replace("#","");
+    var r = parseInt(h.substr(0,2),16), g = parseInt(h.substr(2,2),16), b = parseInt(h.substr(4,2),16);
+    return "rgba("+r+","+g+","+b+","+a+")";
+  }
+  function helpBar(list){
+    return '<div class="help">' + list.map(function(x){ return helpBtn(x[0], x[1]); }).join("") + '</div>';
+  }
+
+  /* ---------------------------------------------------- score-card pieces */
+  function star(filled){
+    var c = filled ? "#FFD642" : "rgba(255,255,255,.16)";
+    return '<svg width="40" height="40" viewBox="0 0 24 24" aria-hidden="true">'
+      + '<path fill="'+c+'" d="M12 2.6l2.9 5.9 6.5.95-4.7 4.6 1.1 6.5L12 17.5 6.2 20.55l1.1-6.5-4.7-4.6 6.5-.95z"/></svg>';
+  }
+  function modIcon(kind){
+    var w = 'fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
+    var body;
+    if(kind === "rewind"){
+      body = '<path fill="#FFFFFF" d="M22 9 12 16.5 22 24z"/><path fill="#FFFFFF" d="M32 9 22 16.5 32 24z"/>'
+           + '<rect x="8" y="9" width="3" height="15" fill="#FFFFFF"/>';
+    } else if(kind === "taps"){
+      body = '<circle cx="20" cy="20" r="9" '+w+'/><circle cx="20" cy="20" r="3.5" fill="#FFFFFF"/>';
+    } else if(kind === "hopos"){
+      body = '<path '+w+' d="M11 25l7-9 7 9"/><path '+w+' d="M15 15h10"/>';
+    } else if(kind === "nokicks"){
+      body = '<rect x="10" y="14" width="20" height="12" rx="2" '+w+'/><path '+w+' d="M10 28 30 12"/>';
+    } else {
+      body = '<path '+w+' d="M12 20h16M20 12v16"/>';
+    }
+    return '<svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true">'+body+'</svg>';
+  }
+  function sectionStrip(){
+    return '<div class="strip">' + S.map(function(s){
+      var c = s.r === "clean" ? "#AD7AFF" : (s.r === "dropped" ? "#5C4B8A" : "#262941");
+      return '<i style="background:'+c+'"></i>';
+    }).join("") + '</div>';
+  }
+
+  // variant: "A" | "B" | "C" | "D"
+  function scoreCard(variant){
+    var mods = ['<span>'+modIcon("taps")+'</span>','<span>'+modIcon("hopos")+'</span>','<span>'+modIcon("nokicks")+'</span>'];
+    if(variant === "B") mods.unshift('<span title="Rewound">'+modIcon("rewind")+'</span>');
+
+    var pills = '<span class="pill">Default Engine</span><span class="pill">Modifiers Active</span>';
+    if(variant === "A" || variant === "D") pills += '<span class="pill rewound">Rewound</span>';
+
+    var tag = variant === "B" ? '<div class="tag gray">Rewound</div>'
+            : variant === "C" ? '<div class="tag amber">Rewound &middot; 2&times;</div>'
+            :                   '<div class="tag blue">Cleared</div>';
+
+    return '<div class="card">'
+      + '<div class="card-head">'
+      +   '<div class="ring">7</div>'
+      +   '<div class="who"><div class="nm">djrobson</div>'
+      +     '<div class="sub"><span>Guitar</span><i></i><span>Expert</span></div></div>'
+      + '</div>'
+      + '<div class="card-top">'
+      +   '<div class="score">612,480</div>'
+      +   '<div class="pct">94%</div>'
+      +   '<div class="stars">'+star(1)+star(1)+star(1)+star(1)+star(0)+'</div>'
+      + '</div>'
+      + '<div class="card-body"><div class="card-body-inner">'
+      +   '<div><div class="grouphead">Performance</div>'
+      +     '<div class="stats">'
+      +       '<div class="stat"><span class="k">Notes Hit</span><span class="v">2,814 / 2,996<span class="inlinepill">182 Missed</span></span></div>'
+      +       '<div class="stat"><span class="k">Max Streak</span><span class="v">412</span></div>'
+      +     '</div>'
+      +     sectionStrip()
+      +     '<div class="stats" style="margin-top:12px">'
+      +       '<div class="stat"><span class="k">SP Phrases</span><span class="v">8 / 12</span></div>'
+      +       '<div class="stat"><span class="k">Sections Perfected</span><span class="v">9 / 14 &middot; +2</span></div>'
+      +     '</div>'
+      +   '</div>'
+      +   '<div class="sep"><i></i></div>'
+      +   '<div><div class="grouphead mod">Modifiers</div>'
+      +     '<div class="modrow">'+mods.join("")+'</div>'
+      +   '</div>'
+      + '</div><div class="scrollbar"><i></i></div></div>'
+      + '<div class="engine">'+pills+'</div>'
+      + tag
+      + '</div>';
+  }
+
+  function scoreStage(variant){
+    var note = variant === "A"
+      ? '<b>Badge: a pill.</b> "Rewound" joins the Engine Settings strip next to Default Engine and Modifiers Active, tinted amber (#FF8413 family). Bottom tag is untouched.'
+      : variant === "B"
+      ? '<b>Badge: a modifier icon.</b> A 40&times;40 rewind glyph leads the MODIFIERS icon row, and the bottom tag reads "Rewound" in the Gray tag styling &mdash; ranked below Section FC and Full Combo.'
+      : variant === "C"
+      ? '<b>Badge: the bottom tag, with a count.</b> "Rewound &middot; 2&times;" in an amber tag. Sections Perfected stays exactly as it is today.'
+      : '<b>Chosen: the pill (A).</b> "Rewound" joins the Engine Settings strip next to Default Engine and Modifiers Active, tinted amber (#FF8413 family). The MODIFIERS icon row and the bottom tag stay exactly as the baseline card &mdash; no extra icon, no tag change.';
+    return '<div class="stage">'
+      + '<div class="scorebg"></div>'
+      + '<div class="shead">'
+      +   '<div><div class="st">Through the Fire and Flames</div><div class="sa">DragonForce</div></div>'
+      +   '<div class="bandscore"><div class="bs">612,480</div>'
+      +     '<div class="starview">'+star(1)+star(1)+star(1)+star(1)+star(0)+'</div></div>'
+      + '</div>'
+      + scoreCard(variant)
+      + '<div class="cardnote" style="left:1230px">'+note+'</div>'
+      + '</div>';
+  }
+
+  /* ------------------------------------------------------------ variant A */
+  function stageA(){
+    var items = [{back:true}].concat(PLAYED);
+    var cursor = items.length - 2;               // most recent COMPLETED section (Tapping Solo)
+    var viewH = 639, rowPitch = 63, centerY = viewH/2 - 29;
+    var rows = items.map(function(it, i){
+      var y = centerY + (i - cursor) * rowPitch;
+      if(y < -70 || y > viewH + 10) return "";
+      if(it.back){
+        return '<div class="srow'+(i===cursor?" cur":"")+'" style="top:'+y+'px">'
+          + '<span class="nm">Back</span><span class="tm"></span></div>';
+      }
+      var isNow = it.r === "now";
+      return '<div class="srow'+(i===cursor?" cur":"")+'" style="top:'+y+'px">'
+        + '<span class="nm">'+esc(it.n)+(isNow?'<span class="nowtag">Now</span>':'')+'</span>'
+        + '<span class="tm">'+mmss(it.t)+'</span></div>';
+    }).join("");
+
+    return '<div class="stage">'
+      + '<div class="pausebg"></div>'
+      + pauseHeader()
+      + '<div class="col">'
+      +   '<div class="mtitle">Rewind to Section</div>'
+      +   '<div class="scroller">'+rows+'</div>'
+      + '</div>'
+      + helpBar([["green","Confirm"],["red","Back"],["up","Up"],["down","Down"]])
+      + '</div>';
+  }
+
+  /* ------------------------------------------------------------ variant B */
+  // opts: {dim:true} de-emphasises the whole list, {fullWash:true} uses the real 27.5% selection wash
+  function mainList(selIndex, extraRow, opts){
+    opts = opts || {};
+    var base = ["Resume","Restart","Practice","Save Replay","Settings","Back to Library"];
+    if(extraRow) base.splice(2, 0, "Rewind to Section");
+    var selCls = opts.fullWash ? " sel" : " sel-soft";
+    return '<div class="list'+(opts.dim?" dim":"")+'">' + base.map(function(t,i){
+      var cls = i === selIndex ? selCls : "";
+      return '<div class="row'+cls+'"><span class="label">'+esc(t)+'</span></div>';
+    }).join("") + '</div>';
+  }
+
+  function stageB(){
+    var newest = PLAYED.slice().reverse();       // current section first
+    var selName = "Verse 2";
+    var rows = newest.slice(0, 9).map(function(s){
+      var c = s.r === "clean" ? COL.clean : (s.r === "dropped" ? COL.dropped : COL.now);
+      var sel = s.n === selName;
+      return '<div class="prow'+(sel?" sel":"")+'">'
+        + '<span class="glyph" style="background:'+c+'"></span>'
+        + '<span class="nm">'+esc(s.n)+'</span>'
+        + (s.r === "now" ? '<span class="curtag">Current</span>' : '')
+        + '<span class="tm">'+mmss(s.t)+'</span></div>';
+    }).join("");
+
+    return '<div class="stage">'
+      + '<div class="pausebg"></div>'
+      + pauseHeader()
+      + '<div class="col"><div class="mtitle">Quickplay Paused</div>'+ mainList(2, true) +'</div>'
+      + '<div class="pane"><div class="paneinner">'
+      +   '<div class="panetitle">Rewind to Section</div>'
+      +   '<div class="panelist">'+rows+'</div>'
+      +   '<div class="confirmline">'
+      +     '<span class="q">Rewind to Verse 2?</span>'
+      +     '<span class="minibtn" style="margin-left:auto"><span class="minidot" style="background:#17E289">A</span>Confirm</span>'
+      +     '<span class="minibtn"><span class="minidot" style="background:#F32B37;color:#fff">B</span>Back</span>'
+      +   '</div>'
+      + '</div></div>'
+      + helpBar([["green","Confirm"],["red","Back"],["up","Up"],["down","Down"]])
+      + '</div>';
+  }
+
+  /* ------------------------------------------------------------ variant C */
+  function stageC(){
+    var focusIdx = 13;                           // "Tapping Solo" &mdash; dropped 2
+    var gap = 2, total = S.length;
+    var usable = 750 - gap * (total - 1);
+    var segs = S.map(function(s, i){
+      var dur = (i === total - 1 ? END : S[i+1].t) - s.t;
+      var w = usable * (dur / END);
+      var c = s.r === "clean" ? COL.clean : s.r === "dropped" ? COL.dropped : s.r === "now" ? COL.now : COL.ahead;
+      var cls = "seg" + (s.r === "ahead" ? " dim" : "") + (i === focusIdx ? " focus" : "");
+      return '<div class="'+cls+'" style="width:'+w.toFixed(2)+'px;background:'+c+'"></div>';
+    }).join("");
+
+    var f = S[focusIdx];
+    var resultText = f.r === "clean" ? "Clean" : f.r === "dropped" ? ("Dropped " + f.d + " notes") : "In progress";
+    var resultCol  = f.r === "clean" ? COL.clean : f.r === "dropped" ? COL.dropped : "#B9BEE0";
+    var playX = (NOW / END) * 750;
+
+    return '<div class="stage">'
+      + '<div class="pausebg"></div>'
+      + pauseHeader()
+      + '<div class="col">'
+      +   '<div class="mtitle">Rewind to Section</div>'
+      +   '<div class="tl">'+segs+'</div>'
+      +   '<div class="playhead" style="left:'+playX.toFixed(1)+'px"></div>'
+      +   '<div class="playlabel" style="left:'+playX.toFixed(1)+'px">Now 4:51</div>'
+      +   '<div class="focusrow">'
+      +     '<div class="nm">Tapping Solo</div>'
+      +     '<div class="meta"><span>'+mmss(f.t)+'</span>'
+      +       '<span class="resulttag" style="background:'+hexa(resultCol,.18)+';color:'+resultCol+'">'+resultText+'</span></div>'
+      +   '</div>'
+      +   '<div class="caption">Resumes 2.5 s before the section with a countdown</div>'
+      +   '<div class="legend">'
+      +     '<div><i style="background:'+COL.clean+'"></i>Clean</div>'
+      +     '<div><i style="background:'+COL.dropped+'"></i>Dropped</div>'
+      +     '<div><i style="background:'+COL.now+'"></i>In progress</div>'
+      +     '<div><i style="background:'+COL.ahead+'"></i>Not played</div>'
+      +   '</div>'
+      + '</div>'
+      + helpBar([["green","Confirm"],["red","Back"],["left","Left"],["right","Right"]])
+      + '</div>';
+  }
+
+  /* ------------------------------------------------------------ variant D */
+  /* The chosen composition: B's right pane, whole chart in chart order with
+     unplayed sections dimmed and skipped, cursor on the CURRENT section,
+     one confirm, and A's score-card pill. */
+  function stageD(){
+    var viewH = 546, rowPitch = 63, centerY = viewH/2 - 29;
+    var cursor = CUR;                            // "Gtr Solo 3", the current section
+
+    var rows = S.map(function(s, i){
+      var y = centerY + (i - cursor) * rowPitch;
+      if(y < -70 || y > viewH + 10) return "";
+
+      var ahead = s.r === "ahead";
+      var glyph = ahead
+        ? '<span class="glyph dot" style="background:'+COL.ahead+'"></span>'
+        : (s.r === "now"
+            ? '<span class="glyph ring"></span>'
+            : '<span class="glyph dot" style="background:'+(s.r === "clean" ? COL.clean : COL.dropped)+'"></span>');
+
+      var cls = "prow abs" + (ahead ? " ahead" : "") + (i === cursor ? " sel" : "");
+      return '<div class="'+cls+'" style="top:'+y+'px">'
+        + glyph
+        + '<span class="nm">'+esc(s.n)+'</span>'
+        + (s.r === "now" ? '<span class="curtag">Current</span>' : '')
+        + '<span class="gap"></span>'
+        + '<span class="tm">'+mmss(s.t)+'</span></div>';
+    }).join("");
+
+    return '<div class="stage">'
+      + '<div class="pausebg"></div>'
+      + pauseHeader()
+      + '<div class="col"><div class="mtitle">Quickplay Paused</div>'
+      +   mainList(2, true, {dim:true, fullWash:true}) + '</div>'
+      + '<div class="pane"><div class="paneinner">'
+      +   '<div class="panetitle big">Rewind to Section</div>'
+      +   '<div class="panelist both" style="top:112px;height:'+viewH+'px">'+rows+'</div>'
+      +   '<div class="panecap">Resumes 2.5 s before the section with a countdown</div>'
+      + '</div></div>'
+      + helpBar([["green","Confirm"],["red","Back"],["up","Up"],["down","Down"]])
+      + '</div>';
+  }
+
+  /* ------------------------------------------------------------- assembly */
+  var VARIANTS = [
+    {key:"A", label:"A &mdash; Submenu, chart order",
+     note:'A "Rewind to Section" row sits between Restart and Practice. Confirming pushes a submenu into the same 750-wide column (Quick Settings pattern: a "Back" row first), listing only sections the player has already reached, in chart order, with start times. It borrows the practice picker\'s 21-slot centred scroller and its soft top/bottom fade. Confirm rewinds immediately &mdash; no second step.',
+     cap1:"Pause menu &mdash; submenu open, cursor on the most recent completed section",
+     stage1:stageA},
+    {key:"B", label:"B &mdash; Right-pane picker, newest first",
+     note:'No submenu: the row opens the picker in the empty 960-wide Graphics Container, so the pause list stays visible on the left (dimmed selection). Sections run newest-first with per-section result glyphs reusing the HUD section-strip colours, and a second Confirm is required on the inline "Rewind to Verse 2?" line.',
+     cap1:"Pause menu &mdash; right pane focused, pause list still visible",
+     stage1:stageB},
+    {key:"C", label:"C &mdash; Timeline scrubber",
+     note:'The submenu is a song timeline across the full 750 width, segmented by section and coloured by result; unplayed sections are drawn dimmed and skipped by the cursor. Left/Right steps section to section (new white help-bar entries), one large row describes the focused section, and Confirm rewinds immediately with a 2.5 s lead-in.',
+     cap1:"Pause menu &mdash; submenu open, timeline focused on a played section",
+     stage1:stageC},
+    {key:"D", label:"D &mdash; Chosen",
+     note:'<b>The chosen composition.</b> B\'s right-pane picker in the empty 960-wide Graphics Container, so the pause list stays on the left with its "Rewind to Section" row selected but de-emphasised. The pane lists the <b>whole chart in chart order</b> (Intro first): played sections at full strength, unplayed sections ahead of the player dimmed to the practice picker\'s 15% white and skipped by the cursor. The cursor starts on the <b>current</b> section, rows slide through fixed slots around a fixed vertical centre with soft fades top and bottom, and Confirm <b>rewinds immediately</b> &mdash; no second confirm line. The score badge is A\'s amber "Rewound" pill in the Engine Settings strip.',
+     cap1:"Pause menu &mdash; right pane focused, cursor on the current section",
+     stage1:stageD}
+  ];
+
+  var root = document.getElementById("root");
+  var label = document.getElementById("vlabel");
+  var idx = 3;                    // default to D, the chosen composition
+
+  function boxed(html){
+    return '<div class="stagebox">'+html+'</div>';
+  }
+
+  function render(){
+    var v = VARIANTS[idx];
+    label.innerHTML = v.label;
+    root.innerHTML =
+        '<div class="vhead"><span class="vkey">Variant '+v.key+'</span><span class="vname">'+v.label.replace(/^.\s&mdash;\s/,"")+'</span></div>'
+      + '<p class="vnote">'+v.note+'</p>'
+      + '<p class="cap">'+v.cap1+'</p>'
+      + boxed(v.stage1())
+      + '<p class="cap">Score screen &mdash; player card</p>'
+      + boxed(scoreStage(v.key));
+    scale();
+    var u = new URL(window.location.href);
+    u.searchParams.set("variant", v.key);
+    history.replaceState(null, "", u.toString());
+  }
+
+  function scale(){
+    var boxes = root.querySelectorAll(".stagebox");
+    for(var i=0;i<boxes.length;i++){
+      var box = boxes[i];
+      var w = box.clientWidth;
+      var s = w / 1920;
+      var st = box.querySelector(".stage");
+      st.style.transform = "scale("+s+")";
+      box.style.height = Math.round(1080 * s) + "px";
+    }
+  }
+
+  function go(delta){
+    idx = (idx + delta + VARIANTS.length) % VARIANTS.length;
+    render();
+    window.scrollTo({top:0, behavior:"auto"});
+  }
+
+  document.getElementById("prev").addEventListener("click", function(){ go(-1); });
+  document.getElementById("next").addEventListener("click", function(){ go(1); });
+  window.addEventListener("keydown", function(e){
+    if(e.key === "ArrowLeft"){ go(-1); }
+    else if(e.key === "ArrowRight"){ go(1); }
+  });
+  window.addEventListener("resize", scale);
+
+  var want = (new URL(window.location.href)).searchParams.get("variant");
+  if(want){
+    for(var i=0;i<VARIANTS.length;i++){ if(VARIANTS[i].key === want.toUpperCase()) idx = i; }
+  }
+  render();
+  // fonts land after first paint; re-measure once they do
+  if(document.fonts && document.fonts.ready){ document.fonts.ready.then(scale); }
+})();
+</script>
