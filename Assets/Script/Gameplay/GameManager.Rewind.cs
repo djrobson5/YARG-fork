@@ -86,6 +86,13 @@ namespace YARG.Gameplay
         // answers cannot leave the screen black.
         private const float REWIND_FADE_VIDEO_HOLD_SECONDS = 0.5f;
 
+        // Watchdog on each of the two fade waits. Nothing in RewindFadeOverlay should be able to
+        // out-live its own duration any more, but this coroutine is the only unbounded wait in the
+        // feature and a plate that never answered used to strand _rewindFadeInProgress set, which
+        // silently refuses every later rewind in the run. A wait that overruns is logged, forced
+        // clear and carried on from.
+        private const float REWIND_FADE_TIMEOUT_SECONDS = 2f;
+
         private RewindFadeOverlay _rewindFade;
 
         // Re-entrancy guard on the coroutine itself, up for the whole of it including the
@@ -389,21 +396,57 @@ namespace YARG.Gameplay
         /// </remarks>
         public void RewindToSectionFromPause(int sectionIndex, double sectionSongTime)
         {
-            if (_rewindFadeInProgress)
-            {
-                return;
-            }
-
-            // Tested up front, before anything is hidden or popped, because the fade commits: the
-            // menus come down at its start so that nothing can take a second input behind the
-            // plate, and there is no good way to put them back. These are the same gates
-            // RewindToSection applies again for itself below.
-            if (!CanRewindToSection || sectionSongTime > RewindReferenceSongTime)
+            if (!CanStartRewindToSection(sectionSongTime))
             {
                 return;
             }
 
             StartCoroutine(RewindToSectionBehindFade(sectionIndex, sectionSongTime));
+        }
+
+        /// <summary>
+        /// Whether <see cref="RewindToSectionFromPause"/> would actually act on this target.
+        /// </summary>
+        /// <remarks>
+        /// Public so the picker can test it <i>before</i> it closes itself: a refusal used to land
+        /// after the pane had already torn down, which read to the player as Confirm doing nothing
+        /// at all. Every refusal is logged, because the silent ones were undiagnosable from a
+        /// release log.
+        /// <para>
+        /// These are the same gates <see cref="RewindToSection"/> applies again for itself: they
+        /// are tested up front, before anything is hidden or popped, because the fade commits -
+        /// the menus come down at its start so that nothing can take a second input behind the
+        /// plate, and there is no good way to put them back.
+        /// </para>
+        /// </remarks>
+        public bool CanStartRewindToSection(double sectionSongTime)
+        {
+            if (_rewindFadeInProgress)
+            {
+                YargLogger.LogWarning("Rewind refused: a previous rewind's fade is still running");
+                return false;
+            }
+
+            if (!CanRewindToSection)
+            {
+                YargLogger.LogFormatWarning(
+                    "Rewind refused: this run cannot rewind (practice {0}, replay {1}, " +
+                    "playing with replay {2}, players {3}, bots {4}, sections {5}, " +
+                    "reference time {6:0.000})",
+                    IsPractice, IsReplay, GlobalVariables.State.PlayingWithReplay,
+                    _players?.Count ?? 0, HasBots, Chart?.Sections?.Count ?? 0,
+                    RewindReferenceSongTime);
+                return false;
+            }
+
+            if (sectionSongTime > RewindReferenceSongTime)
+            {
+                YargLogger.LogFormatWarning("Rewind refused: target {0:0.000} is ahead of the run at {1:0.000}",
+                    sectionSongTime, RewindReferenceSongTime);
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>
@@ -429,7 +472,10 @@ namespace YARG.Gameplay
 
             try
             {
-                _rewindFade ??= RewindFadeOverlay.Create(transform);
+                if (_rewindFade == null)
+                {
+                    _rewindFade = RewindFadeOverlay.Create(transform);
+                }
 
                 bool wasPaused = Paused;
                 if (wasPaused)
@@ -446,9 +492,9 @@ namespace YARG.Gameplay
                 GlobalAudioHandler.PlaySoundEffect(SfxSample.Rewind);
 
                 _rewindFade.FadeTo(1f, REWIND_FADE_OUT_SECONDS);
-                while (_rewindFade.IsFading)
+                foreach (var wait in WaitForRewindFade(1f))
                 {
-                    yield return null;
+                    yield return wait;
                 }
 
                 if (wasPaused)
@@ -499,15 +545,54 @@ namespace YARG.Gameplay
                 }
 
                 _rewindFade.FadeTo(0f, REWIND_FADE_IN_SECONDS);
-                while (_rewindFade.IsFading)
+                foreach (var wait in WaitForRewindFade(0f))
                 {
-                    yield return null;
+                    yield return wait;
                 }
             }
             finally
             {
                 _rewindSwapInProgress = false;
                 _rewindFadeInProgress = false;
+
+                // Whatever happened above - a refusal, an exception unwinding the coroutine, a
+                // plate that overran - the run must not be left under a black rectangle.
+                // Deliberately not conditioned on IsFading: between the two fades the plate is
+                // opaque and *settled*, so an exception thrown in UpdateCalibration,
+                // RewindToSection, Pause, ResumeCore or the video hold would find no fade to
+                // cancel and leave the black plate over a live run. Clear is idempotent, so the
+                // normal path pays nothing for this.
+                if (_rewindFade != null)
+                {
+                    _rewindFade.Clear();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Waits out a plate fade, with a watchdog.
+        /// </summary>
+        /// <remarks>
+        /// An enumerable rather than a nested coroutine so the caller keeps ownership of the whole
+        /// sequence in one <c>finally</c>. See <see cref="REWIND_FADE_TIMEOUT_SECONDS"/> for why
+        /// the wait is bounded at all.
+        /// </remarks>
+        private IEnumerable WaitForRewindFade(float targetAlpha)
+        {
+            float waited = 0f;
+            while (_rewindFade != null && _rewindFade.IsFading)
+            {
+                if (waited >= REWIND_FADE_TIMEOUT_SECONDS)
+                {
+                    YargLogger.LogFormatWarning(
+                        "Rewind fade to {0} overran {1} s; forcing it clear", targetAlpha,
+                        REWIND_FADE_TIMEOUT_SECONDS);
+                    _rewindFade.Clear(targetAlpha);
+                    break;
+                }
+
+                waited += Time.unscaledDeltaTime;
+                yield return null;
             }
         }
 

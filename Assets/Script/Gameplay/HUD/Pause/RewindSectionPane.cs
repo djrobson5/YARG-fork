@@ -194,9 +194,19 @@ namespace YARG.Gameplay.HUD
             int sectionIndex = HoveredIndex;
             double target = _targetTimes[sectionIndex];
 
-            // Close first: the rewind unwinds the pause underneath us, and the pane must have
-            // given the navigation scheme and group back before that happens.
             var gameManager = _gameManager;
+
+            // Tested before the pane tears itself down. A refused rewind used to land after the
+            // close, so the picker vanished and the player was left looking at the pause list with
+            // nothing having happened; leaving the pane up means Confirm can simply be pressed
+            // again. GameManager logs the reason.
+            if (!gameManager.CanStartRewindToSection(target))
+            {
+                return;
+            }
+
+            // Close before the rewind itself: it unwinds the pause underneath us, and the pane must
+            // have given the navigation scheme and group back before that happens.
             Close();
 
             // Both halves of the target: the time is where the run seeks to, the index is which

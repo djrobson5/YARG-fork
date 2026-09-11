@@ -442,6 +442,14 @@ namespace YARG.Gameplay
 
         public void Pause(bool showMenu = true)
         {
+            // Belt and braces: a pause must never open under a plate left over from a rewind. The
+            // guard keeps the rewind coroutine's own re-open path (which pauses behind the plate
+            // on purpose) out of it.
+            if (!_rewindFadeInProgress && _rewindFade != null)
+            {
+                _rewindFade.Clear();
+            }
+
             _songRunner.Pause();
             PauseCore(showMenu);
         }
