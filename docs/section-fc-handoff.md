@@ -6,6 +6,7 @@ The doc now covers the whole fork, not just Section FC:
 
 - **Section FC** — the sections **State** and **What remains** below, plus `docs/section-fc-design.md`.
 - **The four roadmap features** — **Roadmap work, 2026-09-03**, plus `docs/roadmap.md` (research) and the three design docs it points at.
+- **Rewind to section** — **Rewind to section, 2026-09-10/11**, plus `docs/rewind-design.md` (locked design) and the wayfinder map, issue #2 on the fork.
 - **Fork-wide** — **Workflow that worked**, **Environment gotchas** and **Nightly tracking** apply to everything.
 
 ## Section FC state
@@ -239,6 +240,103 @@ compute a path; drums and vocals do not override `RecomputeStarPowerPath`. The p
 2. Periodic merge of upstream `dev`.
 3. Optional updater slice 5 (automatic check behind a toggle, plus a "latest build" line by the
    version watermark).
+
+## Rewind to section, 2026-09-10/11
+
+From the pause menu, mid-song, the player picks a section they have already entered and returns to
+it. Locked design in `docs/rewind-design.md`; the decision record is the wayfinder map, issue #2 on
+the fork, with grilling/research tickets #3-#8 and build slices #12-#19 under #11 (label
+`build:rewind`).
+
+### What shipped
+
+Seven build slices on `feature/section-fc`, oldest first. Each slice's resolution comment on its
+issue is the detailed record; the table is the index.
+
+| Commit | Issue | Content |
+|---|---|---|
+| `5ac1ce45` | #12 | Slice 1: fresh engine built and re-simulated from the truncated input log on a debug rewind; seek-suppression flag; `_replayInputs` / `PauseInfo` truncation |
+| `758282ed` | #13 | Slice 2: lead-in freeze with inputs dropped, forced countdown to the marker, the **Rewind Lead-In** setting (General > Gameplay, 0.5-5 s, default 2 s, real seconds) |
+| `5584fa45` | #14 | Slice 3: the `REWIND TO SECTION` pause row and the section picker pane in the pause page's Graphics Container, on quick play, setlist and the fail menu |
+| `e407061e` | #15 | Slice 4: `SectionStripState` rewind (no doubled block progress, cursor regresses) and fail-state clearing |
+| `2d19ebba` | #16 | Slice 5: latched HUD and Star Power state cleared — `UnisonDisplay` re-keyed to the fresh engine ids, SP reverb/activation counters, solo/unison/coda/BRE latches, crossing sustains held |
+| `76e2e955` | #17 | Slice 6: backwards seek for `LightManager` and `StageManager`, background video, and the `VocalTrack` rebuild plus `VocalsPlayer._phraseIndex` |
+| `4d6eaa1e` | #18 | Slice 7: the 0.3 s rewind fade (0.15 s out / 0.15 s in, smoothstep, unscaled time), `SfxSample.Rewind` once, and the `REWOUND` pill on the score card |
+
+Slices 4, 6 and 7 also fixed bugs that were not rewind-specific: the venue flashed dark on **every**
+seek (light intensity zeroed by the state clear, so replay and practice were affected too), the
+replay viewer's backwards scrub never moved the lights, and a strobe beat index was off by one
+after `BeatEventHandler.Reset`.
+
+### What was verified
+
+Every slice was user-verified in the GUI editor before it was committed; the per-issue comments
+list what was exercised. Across the seven: rewind out of a solo, a unison phrase and an SP deploy;
+SP active at the target resuming with its remaining duration and reverb; restart-current-section;
+first section; double rewind; fail-menu rewind; finish-song results strip and high score; replay
+save after a rewind; song-source video with Wait For Song Video both on and off; alt-tab during the
+fade; the `REWOUND` pill present on a rewound run and absent on a normal run, in history and in
+replay playback.
+
+Slice 8 (#19) pre-flight, 2026-09-11, at `4d6eaa1e`: SP path harness 49/49 passed;
+`dotnet build Assembly-CSharp.csproj` green (0 errors, 10 pre-existing warnings); a full headless
+Unity 6000.3.5f2 compile including the editor assemblies clean with **no** console errors at all
+(not even the three stock settings-load `NullReferenceException`s, which need a domain reload to
+fire); Unity EditMode tests 1/1 passed and there are no PlayMode tests; and a
+`PrefabUtility.LoadPrefabContents` sweep over all 19 rewind-touched prefabs
+(`Assets/Prefabs/Gameplay/HUD/Pause/*`, the score cards, `ColoredPillElement`) found **0 missing
+scripts**. The only null serialized references are the three `GenericPause` rewind fields
+(`_pauseListNavGroup`, `_rewindRowObject`, `_rewindPane`) on `PracticePause`, `QuickSettings` and
+`ReplayPause` — the three pause prefabs that deliberately carry no Rewind row — and all three are
+null-guarded in `GenericPause.cs`.
+
+Reviews caught real bugs in every single slice; see each issue comment. Do not skip them.
+
+### v1 limits, deliberate
+
+- **Single player only.** The row is hidden with more than one player and hidden when the lone
+  player is a bot. Never offered in practice mode or replay playback.
+- **No persisted marker.** The `REWOUND` pill is session-only; nothing is written to the score
+  record, so a history entry or a saved replay of a rewound run is indistinguishable from a normal
+  run. The replay carries the surviving timeline only, and verifies as an ordinary single-timeline
+  replay.
+- **No `YARG.Core` edits.** Everything is worked around from the main repo, which is why a fresh
+  engine is constructed on every rewind rather than reusing one.
+
+### Known carry-overs
+
+Narrow, all understood, none blocking. Also listed in `docs/open-items.md`.
+
+- **Pause inside the lead-in resets a straddling unison phrase's count** (#16). Resuming runs
+  `RestartLeadIn` → `SetSongTime` → `UnisonDisplay.ResetState`, which zeroes the restored notes-hit
+  count of a unison phrase straddling the marker. The rewind itself is exact.
+- **Vocals: a note straddling the landing does not return until the next element** (#17), and there
+  is no vocals equivalent of the highway's held-note respawn.
+- **The 1 s unpause rewind bypasses `GameManager.SetSongTime`** (#17), so the light and stage
+  cursors stay ahead by up to 1 s after an ordinary unpause. Pre-existing upstream behaviour,
+  surfaced by slice 6, left alone.
+- **The marker seam** (#15). A note whose tick is before the marker but whose hit input fell after
+  it loses that input to the truncation, so it is missed on the re-sim and drops the block it
+  belongs to. Correct by design — the strip follows the surviving timeline and agrees with
+  `Note.WasHit` and the saved replay — but it can look like a lost section.
+- **`CUSTOM ENGINE PRESET` plus two pills clips** (#18). Three pills measure 424 px in the 430-wide
+  Engine Settings strip, so the normal case fits; a custom engine preset (201.8 px) with non-engine
+  modifiers *and* a rewind is 477 px, and each pill's existing `Mask` clips its own text. Taking the
+  font down on every card to buy that one case was judged the worse trade.
+- **Pre-existing vocals practice-mode stalls** (#17), left alone: `ScrollingPhraseNoteTracker.Reset`
+  and `VocalPercussionTrack.Initialize` omit the empty-first-phrase skip, and
+  `ResetPracticeSection` does not return `_phraseLinePool`.
+- **`BaseEngine.Reset()` is incomplete**, filed upstream-shaped as fork issue
+  [#10](https://github.com/djrobson5/YARG-fork/issues/10). It never clears the Star Power position
+  block or `BaseTimeInStarPower`, `GuitarEngine.Reset()` leaves the button masks set,
+  `_scheduledUpdates` is never cleared, and `KeysEngine.Reset` / `BaseEngine.Generic.Reset` do not
+  clear `ActiveSustains`. This is also a live bug in today's replay scrubbing. It is *the* reason
+  the fresh engine is mandatory; the fork works around it rather than editing the submodule.
+
+### What remains
+
+Slice 8 (#19) itself: end-to-end verification in the GUI editor and a release build. Nothing else
+is planned for rewind; the carry-overs above are accepted for v1.
 
 ## Workflow that worked
 

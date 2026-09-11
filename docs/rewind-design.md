@@ -39,7 +39,7 @@ Rejected: the submenu in the 750 column (loses the pause list, adds a Back row),
 | Audio | Full mix from `sectionStart - leadIn`, no fade-in, no stem muting, as in practice mode. If the window crosses time zero, song time goes negative and the mixer schedules silence until zero (`BassSong.SetPosition_Internal`, the normal pre-roll). No clamping. |
 | Engine | Frozen for the whole lead-in via the existing `GameManager.Rewinding` gate, holding the restored section-start state. Judged notes before the marker do not respawn (see the HUD table); only a sustain crossing the boundary is shown, in held state. Inputs arriving during the window are **dropped**, not queued for resume the way `SendInputsOnResume` queues them on the unpause path. The engine goes live at the marker. |
 | Countdown | Reuse the wait-countdown widget (`CountdownDisplay`: ring plus seconds, per track, vocal index 0), driven by the rewind and **forced on** regardless of the player's Countdown Display setting, counting to the **section marker** rather than the first note. If the first note is more than 9 s past the marker, the engine's own wait countdown takes over as usual. The widget's built-in 1.5 s early-hide and its Disabled style are both bypassed for lead-ins (issue 8), so the countdown runs all the way to the marker at every lead-in length. |
-| Pause during the lead-in | Resume restarts the full lead-in from the same target; state is still frozen at section start, so nothing is lost. It is not a 1-second unpause rewind and does not count toward pause-abuse invalidation. |
+| Pause during the lead-in | Resume restarts the full lead-in from the same target; state is still frozen at section start, so nothing is lost. It is not a 1-second unpause rewind and does not count toward pause-abuse invalidation. One narrow exception found in implementation: `RestartLeadIn` goes through `SetSongTime`, which calls `UnisonDisplay.ResetState`, so a unison phrase straddling the marker loses its restored notes-hit count. The rewind itself is exact; only a pause taken inside the window does this. |
 
 ## What the player sees when it lands (locked 2026-09-10, issue 8)
 
@@ -152,7 +152,7 @@ Roughly in dependency order, for later sessions to slice from:
 | Lyric bar, unison display, beat events, camera cuts, venue characters | Already seek with `GameManager.SetSongTime`. |
 | Background video | Seek to lead-in start via `BackgroundManager.SetTime`, song-source videos only. A hitch from the video handshake is accepted. |
 | Venue lights and stage cues | Add a backwards seek to `LightManager` and `StageManager`, rescanning from zero. Also fixes the replay viewer. |
-| Vocals | In v1. Mic inputs are in the input log and re-sim exactly. Add the `VocalTrack` seek and reset `VocalsPlayer._phraseIndex`. |
+| Vocals | In v1. Mic inputs are in the input log and re-sim exactly. Add the `VocalTrack` seek and reset `VocalsPlayer._phraseIndex`. Accepted in implementation: a vocal note straddling the landing does not return until the next element, and there is no vocals equivalent of the held-note respawn the highway gets. |
 | Star Power path | Cursors reset, `SpPathDiverged` cleared, no recompute. Markers respawn from the target. |
 | One-shot notifications (Hot Start, Bass Groove, new high score) | Shown once per run, never re-shown. No flags reset. |
 | Drums | Nothing extra; call `ResetLastHitTimes` for tidiness. |
