@@ -349,6 +349,53 @@ namespace YARG.Gameplay.Player
             GameManager.ChangeStemReverbState(SongStem.Song, active);
         }
 
+        /// <summary>
+        /// Throws this player's engine away and builds a fresh one, re-establishing every
+        /// subscription and re-pointing the engine manager at it.
+        /// </summary>
+        /// <remarks>
+        /// Step 1 of the ordered seek checklist in <c>docs/rewind-design.md</c>. A fresh engine is
+        /// mandatory: <c>BaseEngine.Reset()</c> leaves the Star Power position block,
+        /// <c>BaseTimeInStarPower</c>, the scheduled-update list and (for keys) <c>ActiveSustains</c>
+        /// set, so re-simulating on a reused engine diverges. Never reuse.
+        /// </remarks>
+        public abstract void RebuildEngineForRewind();
+
+        /// <summary>
+        /// Re-simulates the surviving input log into the freshly built engine, then truncates the
+        /// log at the point the engine consumed up to.
+        /// </summary>
+        /// <remarks>
+        /// Steps 5 of the ordered seek checklist. Call <see cref="RebuildEngineForRewind"/> first.
+        /// </remarks>
+        public virtual void RewindTo(double songTime)
+        {
+            IsFc = true;
+
+            // The engine's timeline is song time plus this player's input calibration, because
+            // that is the offset UpdateInputs applies on every live update. Re-simulating on the
+            // raw song time would leave the engine ahead of (or behind) the first live update by
+            // the calibration amount.
+            double engineTime = songTime + InputCalibration;
+
+            _replayInputIndex = BaseEngine.ProcessUpToTime(engineTime, ReplayInputs);
+
+            // The recorded log is the replay, and the replay is the surviving timeline only.
+            // ProcessUpToTime returns the number of inputs it consumed, which is where the
+            // surviving timeline ends.
+            if (_replayInputIndex < _replayInputs.Count)
+            {
+                _replayInputs.RemoveRange(_replayInputIndex, _replayInputs.Count - _replayInputIndex);
+            }
+
+            SetStemMuteState(false);
+
+            ResetVisuals();
+            UpdateVisuals(songTime);
+
+            LastCombo = Combo;
+        }
+
         public virtual void SetReplayTime(double time)
         {
             IsFc = true;
@@ -525,7 +572,9 @@ namespace YARG.Gameplay.Player
                 deploySample = SfxSample.StarPowerDeployCrowd;
             }
 
-            if (!GameManager.Paused)
+            // IsSeekingReplay covers a rewind's re-simulation too, which otherwise replays every
+            // deploy and release of the discarded run at once.
+            if (!GameManager.Paused && !GameManager.IsSeekingReplay)
             {
                 GlobalAudioHandler.PlaySoundEffect(active
                     ? deploySample

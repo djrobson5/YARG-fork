@@ -1706,6 +1706,56 @@ namespace YARG.Gameplay.Player
             ResetPracticeSection();
         }
 
+        public override void RebuildEngineForRewind()
+        {
+            // Reset the outgoing engine before it is unregistered. EngineManager's
+            // RemovePlayerFromUnisons skips any unison whose TimeEnd is before the engine's
+            // CurrentTime, so an engine still sitting at the pre-rewind time would leave its id
+            // on every unison already passed; the new engine's id is then added alongside it and
+            // the phrase can never be completed again. Reset() puts CurrentTime back to
+            // double.MinValue, so no unison is skipped and the old id is dropped from all of them.
+            Engine.Reset();
+
+            // CreateEngine is where every engine subscription is made and where the engine
+            // manager is unregistered from the old container and registered against the new one,
+            // so the practice-section rebuild path is reused wholesale. Nothing here narrows the
+            // note range: a rewind keeps the whole chart.
+            Engine = CreateEngine();
+
+            // These two are subscribed in Initialize rather than in CreateEngine, so they are the
+            // one pair CreateEngine does not restore.
+            Engine.OnComboIncrement += OnComboIncrement;
+            Engine.OnComboReset += OnComboReset;
+
+            // Rewinds only happen in a live run, so the practice/replay speed special cases in
+            // Initialize do not apply.
+            Engine.SetSpeed(GameManager.SongSpeed);
+
+            // The unison phrase list belongs to the engine container, which is a new object now.
+            InitializeUnisonEvents();
+        }
+
+        public override void RewindTo(double songTime)
+        {
+            BeatlineIndex = 0;
+            ResetStarPowerPathCursors();
+            ResetNoteCounters();
+
+            ResetTrackEffectOverlay(songTime);
+
+            // The plan itself is a pure function of the chart and survives the rewind, so the
+            // cursors above are reset but the path is not recomputed.
+
+            CurrentCoda = null;
+            _breIndex = 0;
+            _unisonStartIndex = 0;
+            _unisonEndIndex = 0;
+
+            ResetLastHitTimes();
+
+            base.RewindTo(songTime);
+        }
+
         public override void SetReplayTime(double time)
         {
             BeatlineIndex = 0;
@@ -1786,11 +1836,6 @@ namespace YARG.Gameplay.Player
 
         protected virtual void OnNoteHit(int index, TNote note)
         {
-            if (!Player.Profile.IsBot)
-            {
-                _autoCalibrator.RecordAccuracy(Engine.CurrentTime, note.Time);
-            }
-
             // Big rock ending notes aren't part of a section's note total, so hitting one can't
             // move its progress either.
             //
@@ -1818,6 +1863,13 @@ namespace YARG.Gameplay.Player
 
             if (!GameManager.IsSeekingReplay)
             {
+                if (!Player.Profile.IsBot)
+                {
+                    // Auto-calibration invalidates scores, which a rewound run must never trip,
+                    // and the re-simulated hits are not fresh timing data anyway.
+                    _autoCalibrator.RecordAccuracy(Engine.CurrentTime, note.Time);
+                }
+
                 UpdateMuteState(note, false);
                 if (_currentMultiplier != _previousMultiplier)
                 {

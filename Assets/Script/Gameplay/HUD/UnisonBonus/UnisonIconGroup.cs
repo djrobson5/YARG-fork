@@ -32,16 +32,24 @@ namespace YARG.Gameplay.HUD
         public override void SetNotesHit(int engineId, int notesHit)
         {
             base.SetNotesHit(engineId, notesHit);
+            if (!HasParticipantSlot(engineId) || !_icons.TryGetValue(engineId, out var icon))
+            {
+                return;
+            }
+
             if (!ParticipantFailState[engineId])
             {
-                _icons[engineId].SetProgress(ParticipantProgress(engineId));
+                icon.SetProgress(ParticipantProgress(engineId));
             }
         }
 
         public override void FailUnison(int engineId)
         {
             base.FailUnison(engineId);
-            _icons[engineId].SetFailState(true);
+            if (_icons.TryGetValue(engineId, out var icon))
+            {
+                icon.SetFailState(true);
+            }
         }
 
         public override void ResetState()

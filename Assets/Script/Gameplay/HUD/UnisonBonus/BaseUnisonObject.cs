@@ -12,8 +12,23 @@ namespace YARG.Gameplay.HUD
         protected int[]  ParticipantNotesHit;
         protected int    ParticipantCount;
 
+        /// <summary>
+        /// Whether this object has a slot for the given engine id.
+        /// </summary>
+        /// <remarks>
+        /// The arrays are sized once from the engine count, and engine ids are only inside that
+        /// range while every engine is the one registered at song start. A rewind registers fresh
+        /// engines, which take new ids past the end. Until the display learns to re-key itself
+        /// (the unison display does not follow a rewind yet) these guards keep an out-of-range id
+        /// from throwing every frame.
+        /// </remarks>
+        protected bool HasParticipantSlot(int engineId) =>
+            ParticipantFailState != null && engineId >= 0 && engineId < ParticipantFailState.Length;
+
         protected float ParticipantProgress(int engineId) =>
-            YargMath.InverseLerpF(0f, ParticipantTotalNotes[engineId], ParticipantNotesHit[engineId]);
+            !HasParticipantSlot(engineId)
+                ? 0f
+                : YargMath.InverseLerpF(0f, ParticipantTotalNotes[engineId], ParticipantNotesHit[engineId]);
 
         public void Initialize(int playerCount)
         {
@@ -32,6 +47,11 @@ namespace YARG.Gameplay.HUD
 
         public virtual void AddParticipant(int participantId, int totalNotes)
         {
+            if (!HasParticipantSlot(participantId))
+            {
+                return;
+            }
+
             ParticipantTotalNotes[participantId] = totalNotes;
             ParticipantNotesHit[participantId] = 0;
             ParticipantFailState[participantId] = false;
@@ -40,6 +60,11 @@ namespace YARG.Gameplay.HUD
 
         public virtual void SetNotesHit(int engineId, int notesHit)
         {
+            if (!HasParticipantSlot(engineId))
+            {
+                return;
+            }
+
             if (!ParticipantFailState[engineId])
             {
                 ParticipantNotesHit[engineId] = notesHit;
@@ -48,6 +73,11 @@ namespace YARG.Gameplay.HUD
 
         public virtual void FailUnison(int engineId)
         {
+            if (!HasParticipantSlot(engineId))
+            {
+                return;
+            }
+
             ParticipantFailState[engineId] = true;
         }
     }

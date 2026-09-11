@@ -203,10 +203,13 @@ namespace YARG.Gameplay.Player
 
                 LastCombo = Combo;
 
-                ShowTextNotifications(isLastPhrase);
+                if (!GameManager.IsSeekingReplay)
+                {
+                    ShowTextNotifications(isLastPhrase);
 
-                // Order is important here. ShowVocalPhraseResult() will skip showing AWESOME! if other, more important notifications are already showing.
-                _hud.ShowPhraseHit(percent, Combo);
+                    // Order is important here. ShowVocalPhraseResult() will skip showing AWESOME! if other, more important notifications are already showing.
+                    _hud.ShowPhraseHit(percent, Combo);
+                }
             };
 
             engine.OnNoteHit += (_, note) =>
@@ -230,7 +233,7 @@ namespace YARG.Gameplay.Player
 
             engine.OnNoteMissed += (_, note) =>
             {
-                if (LastCombo >= 2)
+                if (LastCombo >= 2 && !GameManager.IsSeekingReplay)
                 {
                     GlobalAudioHandler.PlaySoundEffect(SfxSample.NoteMiss);
                 }
@@ -302,6 +305,39 @@ namespace YARG.Gameplay.Player
             _percussionTrack.Initialize(NoteTrack.Notes);
 
             base.ResetPracticeSection();
+        }
+
+        public override void RebuildEngineForRewind()
+        {
+            // Unlike the track players' CreateEngine, this one only registers; unregistering the
+            // outgoing container is the caller's job, and skipping it would leave a dead engine in
+            // the engine manager's band-state maths.
+            if (EngineContainer != null)
+            {
+                // Reset before unregistering: RemovePlayerFromUnisons skips unisons that end
+                // before the engine's CurrentTime, so an engine still at the pre-rewind time
+                // would leave its id on every unison already passed and the new id would be
+                // added alongside it, making those phrases uncompletable. Reset() puts
+                // CurrentTime back to double.MinValue so every unison drops the old id.
+                Engine.Reset();
+
+                GameManager.EngineManager.Unregister(EngineContainer);
+                EngineContainer = null;
+            }
+
+            Engine = CreateEngine();
+
+            // Rewinds only happen in a live run, so the practice speed special case does not apply.
+            Engine.SetSpeed(GameManager.SongSpeed);
+        }
+
+        public override void RewindTo(double songTime)
+        {
+            // The vocal track itself does not seek backwards yet, but the phrase cursor must go
+            // back or the HUD reads a phrase the run has not reached again.
+            _phraseIndex = -1;
+
+            base.RewindTo(songTime);
         }
 
         public override void Rewind(double visualTime)

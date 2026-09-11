@@ -763,6 +763,14 @@ namespace YARG.Gameplay.Player
 
         private void OnPadHit(DrumsAction action, bool wasNoteHit, bool wasNoteHitCorrectly, bool wasOverhitInLane, DrumNoteType type, float velocity)
         {
+            // Nothing in here belongs to a re-simulated hit: the drum samples would fire in bulk
+            // and the coda lane timers would be fed the live visual time rather than the time the
+            // hit actually happened.
+            if (GameManager.IsSeekingReplay)
+            {
+                return;
+            }
+
             var fret = DrumsActionToPad(action);
 
             // This is done here for drums rather than in-engine because engine doesn't know about pad ordering

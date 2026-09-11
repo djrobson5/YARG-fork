@@ -309,6 +309,9 @@ namespace YARG.Gameplay
                 ToggleDebugEnabled();
             }
 
+            // Temporary rewind trigger; a no-op outside the editor and development builds
+            CheckRewindDebugInput();
+
             // Skip the rest if paused
             if (_songRunner.Paused)
             {

@@ -3,11 +3,13 @@ using System.Collections.Generic;
 using System.Linq;
 using Cysharp.Text;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.LowLevel;
 using YARG.Assets.Script.Gameplay.Player;
 using YARG.Core.Audio;
 using YARG.Core.Chart;
 using YARG.Core.Extensions;
+using YARG.Core.Logging;
 using YARG.Gameplay.Player;
 using YARG.Integration;
 using YARG.Venue.Characters;
@@ -16,6 +18,45 @@ namespace YARG.Gameplay
 {
     public partial class GameManager
     {
+        /// <summary>
+        /// Temporary debug trigger for the rewind vertical slice: jumps the run back to a section
+        /// start. Deleted once the pause-menu entry point lands.
+        /// </summary>
+        /// <remarks>
+        /// Editor and development builds only, so it cannot fire in a shipped run.
+        /// </remarks>
+        private void CheckRewindDebugInput()
+        {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            var keyboard = Keyboard.current;
+            if (keyboard == null || !keyboard.f9Key.wasPressedThisFrame)
+            {
+                return;
+            }
+
+            if (!Started || Paused || IsPractice || IsReplay)
+            {
+                return;
+            }
+
+            // Shift forces the previous section even when the run is deep inside the current one,
+            // so the same key can both restart a section and step back through them.
+            bool preferPrevious = keyboard.shiftKey.isPressed;
+
+            var target = GetRewindTargetSectionTime(SongTime, preferPrevious);
+            if (target == null)
+            {
+                YargLogger.LogWarning("Debug rewind: this chart has no sections.");
+                return;
+            }
+
+            YargLogger.LogInfo(
+                $"Debug rewind: {SongTime:0.000} -> {target.Value:0.000} (section \"{GetSectionNameAt(target.Value)}\")");
+
+            RewindToTime(target.Value);
+#endif
+        }
+
         private ref struct DebugScrollView
         {
             private bool _hasVertical;
