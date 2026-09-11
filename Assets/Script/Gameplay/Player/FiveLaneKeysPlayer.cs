@@ -93,6 +93,11 @@ namespace YARG.Assets.Script.Gameplay.Player
                 >= ProKeysAction.OpenNote and <= ProKeysAction.OrangeKey;
         }
 
+        protected override bool IsStarPowerAction(int action)
+        {
+            return (ProKeysAction) action == ProKeysAction.StarPower;
+        }
+
         /// See <see cref="StarMultiplierThresholds"/>
         private static float[] GuitarStarMultiplierThresholds => new[]
         {

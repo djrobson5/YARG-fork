@@ -88,6 +88,29 @@ Accepted for v1. Detail and the issue each came from are in `docs/section-fc-han
 - **The 1 s unpause rewind bypasses `GameManager.SetSongTime`** (#17), so the light and stage
   cursors stay ahead by up to 1 s after an ordinary unpause. Pre-existing upstream behaviour,
   surfaced by slice 6, deliberately left alone.
+- **Fixed 2026-09-11: the section's first note was unhittable when it sat close after the marker.**
+  The lead-in dropped inputs on the `IsLeadInActive` flag, so a legitimate early strum (front end
+  plus strum leniency, ~0.12 s on the default 5-fret preset) landing before the marker was
+  discarded, as was everything on the frame the marker was crossed on (EarlyUpdate bindings run
+  before `UpdateRewindLeadIn`). The drop is now on the timestamp:
+  `GameManager.ShouldDropLeadInInput` converts the raw input time with the same `GetInputTime` the
+  live path uses and drops only what is earlier than `marker - BasePlayer.LeadInInputGrace`;
+  anything inside the grace is queued to the frozen engine, which clamps it forward to the marker.
+  The grace is per player - `|HitWindow.GetFrontEnd(MaxWindow)|`, plus `StrumLeniency` on guitar,
+  plus 0.02 s of slack, capped at 0.25 s (`InfiniteFrontEnd` takes the cap). Queued grace inputs
+  update `RewoundEngineInputState` and leave `LeadInInputs`, so `SendLeadInInputsAtMarker` does not
+  resend them; strum/SP are still never resent at the marker.
+  A Star Power press inside the grace window is still dropped (`BasePlayer.IsStarPowerAction`), so a
+  tap on the countdown cannot deploy at the marker. A pause taken inside the lead-in used to leave
+  already-queued grace inputs in the frozen engine's queue, where they would fire at the restarted
+  window's marker; `RestartLeadIn` now drops them from the replay log and re-runs the rewind
+  (fresh engines, empty input queues, re-simulated truncated log) whenever any player queued one.
+  Inputs during the pause itself are excluded outright.
+  **Remaining uncertainty, the marker seam:** a grace input can re-hit a note straddling the marker
+  (one already judged by the re-simulation but still inside its back end). Accepted - the player
+  owns notes still inside their back end - but it is the case to watch if a rewind ever reads as a
+  free hit.
+
 - **The marker seam** (#15). A note before the marker whose hit input fell after it loses that input
   to the truncation, so it is missed on the re-sim and drops the previous block. Correct by design
   (the strip follows the surviving timeline and agrees with `Note.WasHit` and the saved replay), but

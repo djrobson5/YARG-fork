@@ -44,6 +44,49 @@ namespace YARG.Gameplay
         public bool IsLeadInActive => _leadInActive;
 
         /// <summary>
+        /// Whether an input arriving during a rewind lead-in is too early to be worth anything and
+        /// should be dropped rather than queued into the frozen engine.
+        /// </summary>
+        /// <param name="inputSystemTime">
+        /// The raw input-system timestamp off <c>GameInput.Time</c>, exactly as
+        /// <c>BasePlayer.OnGameInput</c> receives it. Converted here with the same
+        /// <see cref="GetInputTime"/> the live path uses, so the comparison is in <i>input</i>
+        /// time, the clock <c>_leadInMarkerInputTime</c> is on.
+        /// </param>
+        /// <param name="grace">
+        /// How far before the marker an input still counts, in song seconds:
+        /// <c>BasePlayer.LeadInInputGrace</c>.
+        /// </param>
+        /// <remarks>
+        /// The test is on the timestamp, not on the flag. A note sitting just after the marker is
+        /// legitimately hit <i>before</i> it - the front end of the hit window plus, on guitar, the
+        /// strum leniency - so a flat "drop everything while the lead-in is up" makes the first
+        /// note of the section unhittable whenever it lands within that distance of the marker.
+        /// It also loses the frame the marker is crossed on outright, because
+        /// <c>InputManager.UpdateBindingsForFrame</c> runs in EarlyUpdate, before
+        /// <see cref="UpdateRewindLeadIn"/> gets to clear the flag.
+        /// <para>
+        /// An input that survives this test is queued into the engine as usual. The engine is
+        /// frozen at the marker, and <c>BaseEngine.QueueInput</c> clamps an earlier-stamped input
+        /// forward to its current time, so a grace-window press is judged as a press at the marker.
+        /// </para>
+        /// </remarks>
+        public bool ShouldDropLeadInInput(double inputSystemTime, double grace)
+        {
+            if (!_leadInActive)
+            {
+                return false;
+            }
+
+            return GetInputTime(inputSystemTime) < _leadInMarkerInputTime - grace;
+        }
+
+        /// <summary>
+        /// The section marker a lead-in is counting toward, in <i>input</i> time.
+        /// </summary>
+        public double LeadInMarkerInputTime => _leadInMarkerInputTime;
+
+        /// <summary>
         /// The point in the run a rewind should be measured from: the section marker while a
         /// lead-in is running, since the clock is deliberately behind it.
         /// </summary>
@@ -101,6 +144,7 @@ namespace YARG.Gameplay
         private bool _rewindSwapInProgress;
 
         private bool   _leadInActive;
+        private int    _leadInSectionIndex;
         private double _leadInMarkerSongTime;
         private double _leadInMarkerInputTime;
         private double _leadInLandingInputTime;
@@ -171,6 +215,10 @@ namespace YARG.Gameplay
 
             IsRewindingToSection = true;
             WasRewound = true;
+
+            // Kept for RestartLeadIn, which may have to run this whole rewind again: two sections
+            // can share a time, so the marker cannot name one on its own.
+            _leadInSectionIndex = sectionIndex;
 
             // Every hit/miss/overhit/Star Power dispatch the re-simulation makes goes through the
             // ordinary handlers, which gate their feedback on this flag. Without it the rewind
@@ -702,6 +750,36 @@ namespace YARG.Gameplay
             UpdateCalibration();
             SetSongTime(_leadInLandingInputTime, 0);
 
+            // Anything the grace window queued before the pause is still sitting in the frozen
+            // engine's input queue, and would fire at the restarted window's marker on top of
+            // whatever the player plays in the replayed window - two strums at the marker is a
+            // guaranteed overstrum. BaseEngine's queue is not reachable from the game assembly and
+            // neither Reset nor ProcessUpToTime empties it, so the discard is the fresh engine the
+            // rewind builds anyway: drop the log entries here, then run the whole rewind again at
+            // the same target. Exact, well under a frame (docs/rewind-design.md, "Cost is not a
+            // concern"), and only paid when the player actually pressed something in the window.
+            if (HasQueuedLeadInGraceInputs())
+            {
+                foreach (var player in _players)
+                {
+                    player.DropLeadInGraceInputs();
+                }
+
+                // _leadInActive stays up on purpose: it is what makes RewindReferenceSongTime the
+                // marker rather than the landing, so the rewind does not read as a forward seek.
+                if (RewindToSection(_leadInSectionIndex, _leadInMarkerSongTime))
+                {
+                    _songRunner.Resume();
+                    ResumeCore();
+                    return;
+                }
+
+                // Refused for some reason the guard above cannot see; the window still has to come
+                // back, so fall through to the ordinary restart.
+                YargLogger.LogWarning(
+                    "Lead-in restart could not rebuild the engines; grace inputs may still be queued");
+            }
+
             _leadInSongSeconds = SettingsManager.Settings.RewindLeadIn.Value * SongSpeed;
             _leadInMarkerInputTime = _leadInMarkerSongTime - _songRunner.AudioCalibration * SongSpeed;
             _leadInLandingInputTime = _leadInMarkerInputTime - _leadInSongSeconds;
@@ -721,6 +799,22 @@ namespace YARG.Gameplay
                 _leadInSongSeconds);
 
             ResumeCore();
+        }
+
+        /// <summary>
+        /// Whether any player queued an input into the frozen engine during this lead-in.
+        /// </summary>
+        private bool HasQueuedLeadInGraceInputs()
+        {
+            foreach (var player in _players)
+            {
+                if (player.HasLeadInGraceInputs)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void DriveLeadInCountdown()

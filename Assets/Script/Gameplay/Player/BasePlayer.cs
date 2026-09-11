@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using PlasticBand.Haptics;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -104,18 +105,81 @@ namespace YARG.Gameplay.Player
         /// <see cref="InputsToSendOnResume"/>.
         /// </summary>
         /// <remarks>
-        /// Inputs arriving in the lead-in window are dropped, never queued
+        /// Inputs arriving early in the lead-in window are dropped, never queued
         /// (<c>docs/rewind-design.md</c>, "Lead-in" -&gt; Engine). This only remembers where the
         /// player's fingers are, so <see cref="SendLeadInInputsAtMarker"/> can hand the engine the
-        /// current physical state at the marker.
+        /// current physical state at the marker. An input close enough to the marker to be inside
+        /// <see cref="LeadInInputGrace"/> is queued to the engine instead, and is removed from
+        /// here when it is, so the marker resend does not send it a second time.
         /// </remarks>
         private Dictionary<int, GameInput> LeadInInputs { get; } = new();
+
+        /// <summary>
+        /// Fixed slack added to every lead-in grace window, in seconds.
+        /// </summary>
+        /// <remarks>
+        /// Covers the frame boundary. <c>InputManager.UpdateBindingsForFrame</c> runs in
+        /// EarlyUpdate, ahead of <c>GameManager.Update</c> and therefore ahead of the release
+        /// test, so the inputs of the frame the marker falls in are seen while the lead-in flag is
+        /// still up.
+        /// </remarks>
+        protected const double LEAD_IN_GRACE_SLACK = 0.02;
+
+        /// <summary>
+        /// Hard ceiling on the lead-in grace window, in seconds.
+        /// </summary>
+        /// <remarks>
+        /// The Casual preset's <c>InfiniteFrontEnd</c> makes the front end unbounded, which as a
+        /// grace window would mean nothing pressed anywhere in the lead-in is ever dropped. A
+        /// quarter of a second is well past any real preset's front end plus strum leniency.
+        /// </remarks>
+        protected const double LEAD_IN_GRACE_CAP = 0.25;
+
+        /// <summary>
+        /// How far <i>before</i> a rewind's section marker an input may land and still be handed to
+        /// the engine, in song seconds.
+        /// </summary>
+        /// <remarks>
+        /// A note just after the marker is legitimately hit before it, so a lead-in that drops
+        /// everything up to the marker makes the section's first note unhittable when it sits
+        /// close after the countdown. The window is the player's own front end at the widest hit
+        /// window, plus <see cref="LEAD_IN_GRACE_SLACK"/>, capped at <see cref="LEAD_IN_GRACE_CAP"/>.
+        /// Instruments with an extra pre-note allowance (guitar's strum leniency) widen it.
+        /// </remarks>
+        public virtual double LeadInInputGrace
+        {
+            get
+            {
+                // GetFrontEnd is signed: it returns the offset of the front edge relative to the
+                // note, which is negative. The grace is its magnitude.
+                double frontEnd = HitWindow is not null
+                    ? Math.Abs(HitWindow.GetFrontEnd(HitWindow.MaxWindow))
+                    : 0;
+
+                return Math.Min(LEAD_IN_GRACE_CAP, frontEnd + LEAD_IN_GRACE_SLACK);
+            }
+        }
 
         /// <summary>
         /// What the freshly re-simulated engine believes each action's state to be at the marker:
         /// the last value of each action in the surviving (truncated) input log.
         /// </summary>
         private Dictionary<int, int> RewoundEngineInputState { get; } = new();
+
+        /// <summary>
+        /// How many inputs this lead-in's grace window has queued into the frozen engine, which is
+        /// also how many entries they have appended to the tail of the replay log.
+        /// </summary>
+        /// <remarks>
+        /// Nothing else appends to the log while the lead-in is up, so the count is enough to undo
+        /// them: see <see cref="DropLeadInGraceInputs"/>.
+        /// </remarks>
+        private int _leadInGraceInputCount;
+
+        /// <summary>
+        /// Whether this player has queued anything into the frozen engine during the lead-in.
+        /// </summary>
+        public bool HasLeadInGraceInputs => _leadInGraceInputCount > 0;
 
         protected SyncTrack SyncTrack { get; private set; }
 
@@ -488,6 +552,7 @@ namespace YARG.Gameplay.Player
 
             CaptureRewoundEngineInputState();
             LeadInInputs.Clear();
+            _leadInGraceInputCount = 0;
 
             // A rewind fired from the pause menu means the player has been pressing things since
             // the pause, and those went to InputsToSendOnResume rather than LastInputs. Fold them
@@ -554,6 +619,23 @@ namespace YARG.Gameplay.Player
         }
 
         /// <summary>
+        /// Whether <paramref name="action"/> is this instrument's Star Power activation.
+        /// </summary>
+        /// <remarks>
+        /// A Star Power press inside a rewind lead-in is dropped like any other early input, even
+        /// when it lands inside the grace window. The window exists so the section's first note is
+        /// hittable, not so Star Power can be deployed from the countdown: the design has Star
+        /// Power resuming at the marker with whatever the re-simulation left
+        /// (<c>docs/rewind-design.md</c>, "Lead-in"), and a tap during the countdown would spend it
+        /// the instant the marker lands. Defaults to nothing; drums have no activation action at
+        /// all (activation notes, not a button).
+        /// </remarks>
+        protected virtual bool IsStarPowerAction(int action)
+        {
+            return false;
+        }
+
+        /// <summary>
         /// Hands the engine the current physical button state, at the section marker.
         /// </summary>
         /// <remarks>
@@ -591,7 +673,9 @@ namespace YARG.Gameplay.Player
             LeadInInputs.Clear();
 
             // The window is over: engine and highway are back on the same clock, so the crossing
-            // sustain is drawn by the ordinary rules from here.
+            // sustain is drawn by the ordinary rules from here. Whatever the grace window queued
+            // is ordinary history now, so it is no longer a candidate for discarding.
+            _leadInGraceInputCount = 0;
             RewindMarkerSongTime = double.NaN;
             OnLeadInMarkerReached();
 
@@ -627,6 +711,35 @@ namespace YARG.Gameplay.Player
             }
 
             RewoundEngineInputState.Clear();
+        }
+
+        /// <summary>
+        /// Discards everything the current lead-in's grace window queued, from the replay log.
+        /// </summary>
+        /// <remarks>
+        /// The engine side is not undone here and cannot be: <c>BaseEngine</c>'s input queue is not
+        /// reachable from the game assembly, and neither <c>Reset</c> nor <c>ProcessUpToTime</c>
+        /// empties it. The caller is <c>GameManager.RestartLeadIn</c>, which follows this with the
+        /// fresh-engine rebuild and re-simulation that the rewind itself uses, so the discarded
+        /// inputs go with the engine they were queued into. Call this <i>before</i> the re-simulation
+        /// or it will replay them straight back in.
+        /// </remarks>
+        public void DropLeadInGraceInputs()
+        {
+            if (_leadInGraceInputCount <= 0)
+            {
+                _leadInGraceInputCount = 0;
+                return;
+            }
+
+            // They are always at the tail: nothing else appends to the log while the lead-in is up.
+            int keep = Math.Max(0, _replayInputs.Count - _leadInGraceInputCount);
+            _replayInputs.RemoveRange(keep, _replayInputs.Count - keep);
+
+            YargLogger.LogFormatDebug("Discarded {0} lead-in grace input(s) on a lead-in restart",
+                _leadInGraceInputCount);
+
+            _leadInGraceInputCount = 0;
         }
 
         /// <summary>
@@ -764,9 +877,26 @@ namespace YARG.Gameplay.Player
             {
                 if (GameManager.IsLeadInActive)
                 {
-                    // Dropped, not queued: nothing pressed during a lead-in is ever judged
-                    // (docs/rewind-design.md, "Lead-in" -> Engine). All that is kept is where the
-                    // buttons are, for the physical-state resend at the marker.
+                    // Dropped, not queued - but on the timestamp, not on the flag. An input close
+                    // enough to the marker to be a legitimate early hit on the section's first
+                    // note goes to the engine instead (docs/rewind-design.md, "Lead-in" ->
+                    // Engine). Anything earlier than that is judged by nothing; all that is kept
+                    // of it is where the buttons are, for the physical-state resend at the marker.
+                    //
+                    // A real pause taken inside the window is excluded outright: the clock stops
+                    // but input-system time does not, so every menu press would convert to a time
+                    // past the marker and be queued as gameplay.
+                    //
+                    // Star Power is excluded too: the grace exists so the section's first note is
+                    // hittable, not so a tap on the countdown can deploy at the marker.
+                    if (!GameManager.Paused &&
+                        !IsStarPowerAction(input.Action) &&
+                        !GameManager.ShouldDropLeadInInput(input.Time, LeadInInputGrace))
+                    {
+                        QueueLeadInGraceInput(ref input);
+                        return;
+                    }
+
                     if (ShouldUpdateInputsOnResume)
                     {
                         LeadInInputs[input.Action] = input;
@@ -808,6 +938,58 @@ namespace YARG.Gameplay.Player
             BaseEngine.QueueInput(ref input);
             OnInputQueued(input);
             _replayInputs.Add(input);
+        }
+
+        /// <summary>
+        /// Queues an input that arrived inside the lead-in's grace window into the frozen engine.
+        /// </summary>
+        /// <remarks>
+        /// The live path, with two differences forced by the freeze. The engine sits at the section
+        /// marker while the clock sits a lead-in earlier, so the input's own time is pulled forward
+        /// to the engine's current time - <c>BaseEngine.QueueInput</c> would do that anyway, but
+        /// doing it here keeps its "forced to move an input time" warning out of the log for a case
+        /// that is expected. And the two rewind bookkeeping maps are updated so the resend at the
+        /// marker (<see cref="SendLeadInInputsAtMarker"/>) treats this action as already delivered
+        /// rather than pressing it a second time.
+        /// </remarks>
+        private void QueueLeadInGraceInput(ref GameInput input)
+        {
+            // LastInputs now carries this action's physical truth, so the stashed copy would only
+            // let the marker resend overwrite it with something older. Dropped here rather than
+            // after the queue so an intercepted input cannot leave one behind.
+            LastInputs[input.Action] = input;
+            LeadInInputs.Remove(input.Action);
+
+            double adjustedTime = GameManager.GetInputTime(input.Time) + InputCalibration;
+            double rawAdjustedTime = adjustedTime;
+
+            // The engine is frozen at the marker; nothing may be queued behind it.
+            adjustedTime = Math.Max(adjustedTime, BaseEngine.CurrentTime);
+
+            input = new(adjustedTime, input.Action, input.Integer);
+
+            if (InterceptInput(ref input))
+            {
+                return;
+            }
+
+            BaseEngine.QueueInput(ref input);
+            OnInputQueued(input);
+            _replayInputs.Add(input);
+
+            // One log entry appended, so one more for DropLeadInGraceInputs to undo. After the
+            // Add, and after the InterceptInput return above, so the count and the tail of the log
+            // cannot disagree.
+            _leadInGraceInputCount++;
+
+            // The engine now holds this value, so the marker resend must not re-send it.
+            RewoundEngineInputState[input.Action] = input.Integer;
+
+            YargLogger.LogFormatDebug(
+                "Lead-in grace input queued: action {0} = {1} at {2:0.0000} (raw {3:0.0000}, " +
+                "marker {4:0.0000}, grace {5:0.0000})",
+                input.Action, input.Integer, input.Time, rawAdjustedTime,
+                GameManager.LeadInMarkerInputTime + InputCalibration, LeadInInputGrace);
         }
 
         protected virtual void OnStarPowerPhraseHit()

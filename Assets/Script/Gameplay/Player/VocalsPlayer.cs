@@ -42,6 +42,11 @@ namespace YARG.Gameplay.Player
 
         public override bool ShouldUpdateInputsOnResume => false;
 
+        protected override bool IsStarPowerAction(int action)
+        {
+            return (VocalsAction) action == VocalsAction.StarPower;
+        }
+
         protected override float[] StarMultiplierThresholds { get; set; } =
         {
             0.05f, 0.11f, 0.19f, 0.46f, 0.77f, 1.06f

@@ -103,6 +103,11 @@ namespace YARG.Gameplay.Player
                 >= GuitarAction.Fret11 and <= GuitarAction.Fret15;
         }
 
+        protected override bool IsStarPowerAction(int action)
+        {
+            return (GuitarAction) action == GuitarAction.StarPower;
+        }
+
         /// See <see cref="StarMultiplierThresholds"/>
         private static float[] GuitarStarMultiplierThresholds => new[]
         {
@@ -116,6 +121,42 @@ namespace YARG.Gameplay.Player
         };
 
         public GuitarEngineParameters EngineParams { get; protected set; }
+
+        /// <summary>
+        /// The front end of the hit window plus the strum leniency, which is how far ahead of a
+        /// note a guitar strum can legitimately land.
+        /// </summary>
+        /// <remarks>
+        /// With the default preset that is 0.070 s of front end plus 0.050 s of strum leniency, so
+        /// a note only 0.1 s after a rewind's section marker is normally strummed before the
+        /// marker. Dropping that strum is what made the section's first note unhittable.
+        /// <c>InfiniteFrontEnd</c> (the Casual preset) has no bound to add, so it takes the cap.
+        /// </remarks>
+        public override double LeadInInputGrace
+        {
+            get
+            {
+                if (EngineParams is null)
+                {
+                    return base.LeadInInputGrace;
+                }
+
+                if (EngineParams.InfiniteFrontEnd)
+                {
+                    return LEAD_IN_GRACE_CAP;
+                }
+
+                // StrumLeniency is stored unscaled; the engine scales it at construction by
+                // handing the song speed to StrumLeniencyTimer (GuitarEngine.SetSpeed). The front
+                // end in the base window is already scaled, by HitWindow.Scale, which
+                // BaseEngine.SetSpeed sets to the same song speed - so scale this by the same
+                // number and the two halves of the grace stay in step at any speed.
+                double scale = HitWindow is not null ? HitWindow.Scale : 1;
+
+                return Math.Min(LEAD_IN_GRACE_CAP,
+                    base.LeadInInputGrace + (EngineParams.StrumLeniency * scale));
+            }
+        }
 
         private double TimeFromSpawnToStrikeline => SpawnTimeOffset - (-STRIKE_LINE_POS / NoteSpeed);
 

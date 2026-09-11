@@ -84,6 +84,11 @@ namespace YARG.Gameplay.Player
                 >= ProKeysAction.OpenNote and <= ProKeysAction.OrangeKey;
         }
 
+        protected override bool IsStarPowerAction(int action)
+        {
+            return (ProKeysAction) action == ProKeysAction.StarPower;
+        }
+
         public float RangeShiftOffset => _currentOffset;
 
         [Header("Pro Keys Specific")]
