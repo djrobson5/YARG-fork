@@ -64,6 +64,20 @@ namespace YARG.Gameplay
         private bool _videoSeeking = false;
         private bool _videoSeekWaitForPause = false;
         private bool _videoWasPausedBeforeSeek = false;
+        private bool _videoSeekOverridePaused = false;
+
+        /// <summary>
+        /// True while a song-source video seek is holding the run override-paused.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately narrower than <c>_videoSeeking</c>, which is raised for every in-range
+        /// song-source seek: the run is only actually held when Wait For Song Video is on, and
+        /// with it off the handshake runs underneath a live song. The rewind's fade holds while
+        /// this is up rather than fading back in on a still frame
+        /// (<c>docs/rewind-design.md</c>, "What the player sees when it lands"), and holding on
+        /// the raw seek flag instead would leave the plate up over a run that is already playing.
+        /// </remarks>
+        public bool IsHoldingForVideoSeek => _videoSeekOverridePaused;
 
         private const float FADE_DURATION = 0.5f;
 
@@ -645,7 +659,10 @@ namespace YARG.Gameplay
                         _videoWasPausedBeforeSeek = _videoPlayer.isPaused;
 
                         if (waitForSeek && SettingsManager.Settings.WaitForSongVideo.Value)
+                        {
+                            _videoSeekOverridePaused = true;
                             GameManager.OverridePause();
+                        }
 
                         _videoPlayer.time = videoTime;
                     }
@@ -670,6 +687,7 @@ namespace YARG.Gameplay
             _videoSeeking = false;
             _videoSeekWaitForPause = false;
             _videoWasPausedBeforeSeek = false;
+            _videoSeekOverridePaused = false;
         }
 
         public void SetSpeed(float speed)

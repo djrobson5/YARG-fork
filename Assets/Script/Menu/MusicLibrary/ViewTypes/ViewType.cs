@@ -6,6 +6,7 @@ using YARG.Helpers.Extensions;
 using YARG.Menu.Data;
 using YARG.Menu.ListMenu;
 using YARG.Playlists;
+using YARG.Scores;
 
 namespace YARG.Menu.MusicLibrary
 {
@@ -26,6 +27,12 @@ namespace YARG.Menu.MusicLibrary
             public Difficulty Difficulty;
             public Instrument Instrument;
             public bool       IsFc;
+
+            /// <summary>
+            /// The cumulative section completion for the same chart the rest of this struct
+            /// describes, or <c>null</c> if no valid run has been recorded for it yet.
+            /// </summary>
+            public SectionProgress? Sections;
         }
 
         public virtual bool UseAsMadeFamousBy => false;

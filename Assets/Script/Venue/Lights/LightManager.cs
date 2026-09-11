@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using YARG.Core.Chart;
@@ -153,6 +154,8 @@ namespace YARG.Venue
 
             // 1/8th of a beat is a 32nd note
             GameManager.BeatEventHandler.Visual.Subscribe(UpdateLightAnimation, BeatEventType.QuarterNote, division: 1f / 8f);
+
+            GameManager.SetVenueLightManager(this);
         }
 
         protected override void GameplayDestroy()
@@ -214,38 +217,7 @@ namespace YARG.Venue
             while (_lightingEventIndex < _lightingEvents.Count &&
                 _lightingEvents[_lightingEventIndex].Time <= GameManager.VisualTime)
             {
-                var current = _lightingEvents[_lightingEventIndex];
-
-                switch (current.Type)
-                {
-                    case LightingType.KeyframeNext:
-                        AnimationFrame++;
-                        break;
-                    case LightingType.KeyframePrevious:
-                        AnimationFrame--;
-                        break;
-                    case LightingType.KeyframeFirst:
-                        AnimationFrame = 0;
-                        break;
-                    case LightingType.WarmAutomatic:
-                    case LightingType.WarmManual:
-                    case LightingType.CoolAutomatic:
-                    case LightingType.CoolManual:
-                    case LightingType.Verse:
-                    case LightingType.Chorus:
-					case LightingType.Searchlights:
-                        // Add a slight randomness to colored cues
-                        for (int i = 0; i < _lightStates.Length; i++)
-                        {
-                            _lightStates[i].Delta = Random.Range(0f, _gradientRandomness);
-                        }
-
-                        goto default;
-                    default:
-                        Animation = current.Type;
-                        AnimationFrame = 0;
-                        break;
-                }
+                ApplyLightingEvent(_lightingEvents[_lightingEventIndex]);
 
                 _lightingEventIndex++;
             }
@@ -284,6 +256,144 @@ namespace YARG.Venue
             }
 
             UpdateLightStates();
+        }
+
+        private void ApplyLightingEvent(LightingEvent current)
+        {
+            switch (current.Type)
+            {
+                case LightingType.KeyframeNext:
+                    AnimationFrame++;
+                    break;
+                case LightingType.KeyframePrevious:
+                    AnimationFrame--;
+                    break;
+                case LightingType.KeyframeFirst:
+                    AnimationFrame = 0;
+                    break;
+                case LightingType.WarmAutomatic:
+                case LightingType.WarmManual:
+                case LightingType.CoolAutomatic:
+                case LightingType.CoolManual:
+                case LightingType.Verse:
+                case LightingType.Chorus:
+                case LightingType.Searchlights:
+                    // Add a slight randomness to colored cues
+                    for (int i = 0; i < _lightStates.Length; i++)
+                    {
+                        _lightStates[i].Delta = Random.Range(0f, _gradientRandomness);
+                    }
+
+                    goto default;
+                default:
+                    Animation = current.Type;
+                    AnimationFrame = 0;
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Seeks the lighting to <paramref name="time"/>, in either direction.
+        /// </summary>
+        /// <remarks>
+        /// Modelled on <see cref="VenueCamera.CameraManager.ResetTime"/>, but lighting cannot be
+        /// seeked by parking a cursor: the cue, the keyframe position and the per-location
+        /// gradient deltas are all <i>state</i> that the events build up, so the only way to know
+        /// what the lights looked like at <paramref name="time"/> is to put everything back to its
+        /// initial state and replay the events from zero.
+        /// <para>
+        /// The replay is silent by construction rather than by a flag: every lighting consumer
+        /// (<see cref="VenueLight"/>, <see cref="NeonLightManager"/>) polls
+        /// <see cref="GetLightStateFor"/> once per frame instead of being called back, and no
+        /// lighting event is a one-shot, so nothing fires while the events run and only the state
+        /// they leave behind is ever seen.
+        /// </para>
+        /// </remarks>
+        public void ResetTime(double time)
+        {
+            // Defensive: the registration that makes this reachable happens inside OnChartLoaded,
+            // after the event lists are assigned.
+            if (_lightingEvents is null)
+            {
+                return;
+            }
+
+            // Back to the initial state, then replay.
+            Animation = LightingType.Default;
+            AnimationFrame = 0;
+            _gradientLightingSpeed = _initialGradientSpeed;
+            Array.Clear(_lightStates, 0, _lightStates.Length);
+            Array.Clear(_spotlightStates, 0, _spotlightStates.Length);
+
+            // Clearing leaves Intensity at zero, but full brightness is the documented default and
+            // the one the `default:` arm of UpdateLightStates restores. Without this every seek -
+            // including the replay scrub and a practice section change, neither of which has a
+            // fade to hide it - lerps the venue up from black over several frames.
+            for (int i = 0; i < _lightStates.Length; i++)
+            {
+                _lightStates[i].Intensity = 1f;
+            }
+
+            _lightingEventIndex = 0;
+            while (_lightingEventIndex < _lightingEvents.Count &&
+                _lightingEvents[_lightingEventIndex].Time <= time)
+            {
+                ApplyLightingEvent(_lightingEvents[_lightingEventIndex]);
+
+                _lightingEventIndex++;
+            }
+
+            // Spotlights have no off event - they elapse - so instead of latching every one that
+            // has ever started, only the ones still running at `time` come back, with the time
+            // they have left rather than their full length.
+            _performerEventIndex = 0;
+            while (_performerEventIndex < _performerEvents.Count &&
+                _performerEvents[_performerEventIndex].Time <= time)
+            {
+                var current = _performerEvents[_performerEventIndex];
+                _performerEventIndex++;
+
+                if (current.Type != PerformerEventType.Spotlight ||
+                    !_spotlightLocations.TryGetValue(current.Performers, out var location))
+                {
+                    continue;
+                }
+
+                double remaining = current.Time + current.TimeLength - time;
+                if (remaining > 0)
+                {
+                    _spotlightStates[(int) location] = remaining;
+                }
+            }
+
+            _beatIndex = GetBeatIndexAt(time);
+        }
+
+        /// <summary>
+        /// The value <see cref="_beatIndex"/> would have reached by <paramref name="time"/>.
+        /// </summary>
+        /// <remarks>
+        /// Keyframed cues step on beats, so a seek that left the counter at zero would put the
+        /// strobe cues a 32nd note out of phase. The counter cannot be read back off the beat
+        /// handler here, because <c>BeatEventHandler.Reset</c> - which the seek has already run -
+        /// clears the fired-count without recomputing the progress, so it is derived from the sync
+        /// track the same way the handler derives it.
+        /// </remarks>
+        private int GetBeatIndexAt(double time)
+        {
+            if (time <= 0)
+            {
+                return 0;
+            }
+
+            var sync = GameManager.Chart.SyncTrack;
+
+            // The subscription above is a quarter note at 1/8th division, so one event per 32nd
+            // note. The count itself, with no + 1: the Reset the seek has already run re-arms the
+            // event, so the next Visual.Update fires the callback for the beat the seek landed in
+            // once more, and that is the increment that brings the counter level with the live
+            // path.
+            return (int) (sync.GetQuarterNotePosition(sync.TimeToTick(time)) * 8);
         }
 
         private void UpdateLightAnimation()

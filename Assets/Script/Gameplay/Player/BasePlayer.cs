@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using PlasticBand.Haptics;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -9,10 +10,12 @@ using YARG.Core.Input;
 using YARG.Core.Logging;
 using YARG.Core.Replays;
 using YARG.Gameplay.HUD;
+using YARG.Gameplay.SpPath;
 using YARG.Helpers.Extensions;
 using YARG.Helpers.UI;
 using YARG.Input;
 using YARG.Player;
+using YARG.Scores;
 using YARG.Settings;
 
 namespace YARG.Gameplay.Player
@@ -97,6 +100,87 @@ namespace YARG.Gameplay.Player
         private Dictionary<int, GameInput> LastInputs { get; } = new();
         private Dictionary<int, GameInput> InputsToSendOnResume { get; } = new();
 
+        /// <summary>
+        /// Physical button state seen while a rewind lead-in is up. Deliberately <i>not</i>
+        /// <see cref="InputsToSendOnResume"/>.
+        /// </summary>
+        /// <remarks>
+        /// Inputs arriving early in the lead-in window are dropped, never queued
+        /// (<c>docs/rewind-design.md</c>, "Lead-in" -&gt; Engine). This only remembers where the
+        /// player's fingers are, so <see cref="SendLeadInInputsAtMarker"/> can hand the engine the
+        /// current physical state at the marker. An input close enough to the marker to be inside
+        /// <see cref="LeadInInputGrace"/> is queued to the engine instead, and is removed from
+        /// here when it is, so the marker resend does not send it a second time.
+        /// </remarks>
+        private Dictionary<int, GameInput> LeadInInputs { get; } = new();
+
+        /// <summary>
+        /// Fixed slack added to every lead-in grace window, in seconds.
+        /// </summary>
+        /// <remarks>
+        /// Covers the frame boundary. <c>InputManager.UpdateBindingsForFrame</c> runs in
+        /// EarlyUpdate, ahead of <c>GameManager.Update</c> and therefore ahead of the release
+        /// test, so the inputs of the frame the marker falls in are seen while the lead-in flag is
+        /// still up.
+        /// </remarks>
+        protected const double LEAD_IN_GRACE_SLACK = 0.02;
+
+        /// <summary>
+        /// Hard ceiling on the lead-in grace window, in seconds.
+        /// </summary>
+        /// <remarks>
+        /// The Casual preset's <c>InfiniteFrontEnd</c> makes the front end unbounded, which as a
+        /// grace window would mean nothing pressed anywhere in the lead-in is ever dropped. A
+        /// quarter of a second is well past any real preset's front end plus strum leniency.
+        /// </remarks>
+        protected const double LEAD_IN_GRACE_CAP = 0.25;
+
+        /// <summary>
+        /// How far <i>before</i> a rewind's section marker an input may land and still be handed to
+        /// the engine, in song seconds.
+        /// </summary>
+        /// <remarks>
+        /// A note just after the marker is legitimately hit before it, so a lead-in that drops
+        /// everything up to the marker makes the section's first note unhittable when it sits
+        /// close after the countdown. The window is the player's own front end at the widest hit
+        /// window, plus <see cref="LEAD_IN_GRACE_SLACK"/>, capped at <see cref="LEAD_IN_GRACE_CAP"/>.
+        /// Instruments with an extra pre-note allowance (guitar's strum leniency) widen it.
+        /// </remarks>
+        public virtual double LeadInInputGrace
+        {
+            get
+            {
+                // GetFrontEnd is signed: it returns the offset of the front edge relative to the
+                // note, which is negative. The grace is its magnitude.
+                double frontEnd = HitWindow is not null
+                    ? Math.Abs(HitWindow.GetFrontEnd(HitWindow.MaxWindow))
+                    : 0;
+
+                return Math.Min(LEAD_IN_GRACE_CAP, frontEnd + LEAD_IN_GRACE_SLACK);
+            }
+        }
+
+        /// <summary>
+        /// What the freshly re-simulated engine believes each action's state to be at the marker:
+        /// the last value of each action in the surviving (truncated) input log.
+        /// </summary>
+        private Dictionary<int, int> RewoundEngineInputState { get; } = new();
+
+        /// <summary>
+        /// How many inputs this lead-in's grace window has queued into the frozen engine, which is
+        /// also how many entries they have appended to the tail of the replay log.
+        /// </summary>
+        /// <remarks>
+        /// Nothing else appends to the log while the lead-in is up, so the count is enough to undo
+        /// them: see <see cref="DropLeadInGraceInputs"/>.
+        /// </remarks>
+        private int _leadInGraceInputCount;
+
+        /// <summary>
+        /// Whether this player has queued anything into the frozen engine during the lead-in.
+        /// </summary>
+        public bool HasLeadInGraceInputs => _leadInGraceInputCount > 0;
+
         protected SyncTrack SyncTrack { get; private set; }
 
         protected bool IsInitialized { get; private set; }
@@ -117,6 +201,19 @@ namespace YARG.Gameplay.Player
         protected EngineManager.EngineContainer EngineContainer;
 
         protected bool PlayerHasFailed;
+
+        /// <summary>
+        /// The section marker a rewind re-simulated to, in <b>song</b> time, for as long as the
+        /// lead-in window is up. <see cref="double.NaN"/> at every other moment.
+        /// </summary>
+        /// <remarks>
+        /// The engine sits here while the highway sits a lead-in earlier, which is the one gap in
+        /// the run where the two clocks disagree - so anything drawing from engine state during
+        /// the window has to measure against this rather than against visual time. Today that is
+        /// the sustain crossing the boundary (<c>docs/rewind-design.md</c>, "Fork-owned pieces
+        /// that need new code" item 7).
+        /// </remarks>
+        protected double RewindMarkerSongTime { get; private set; } = double.NaN;
 
         protected override void GameplayAwake()
         {
@@ -216,9 +313,455 @@ namespace YARG.Gameplay.Player
         // TODO Make this more generic
         public abstract void SetStemMuteState(bool muted);
 
+        /// <summary>
+        /// This player's live section strip state, or <c>null</c> if this run cannot earn
+        /// section completion credit.
+        /// </summary>
+        public SectionStripState SectionState { get; private set; }
+
+        /// <summary>
+        /// Hands this player the section state built for it at song start.
+        /// </summary>
+        /// <remarks>
+        /// The eligibility gates live in <c>GameManager</c> next to the ones the end-of-song scan
+        /// uses, so there is only one place that decides whether a run counts.
+        /// </remarks>
+        public void SetSectionState(SectionStripState state)
+        {
+            SectionState = state;
+            OnSectionStateSet();
+        }
+
+        /// <summary>
+        /// The phrases of this player's own note track, or <c>null</c> for a player that has none.
+        /// </summary>
+        /// <remarks>
+        /// Exists so the rewind picker can find the BRE and coda spans without knowing which
+        /// concrete player it is looking at: a section that starts inside one is not a valid
+        /// rewind target (<c>docs/rewind-design.md</c>, "Section starting inside a BRE/coda").
+        /// The track is the post-modifier one, which is the one actually being played.
+        /// </remarks>
+        public virtual IReadOnlyList<Phrase> TrackPhrases => null;
+
+        /// <summary>
+        /// Called once the section state has been assigned, so that players with somewhere to
+        /// draw it can pass it along.
+        /// </summary>
+        protected virtual void OnSectionStateSet()
+        {
+        }
+
+        /// <summary>
+        /// Clears the fail and near-fail look after a rewind has refilled the rock meter.
+        /// </summary>
+        /// <remarks>
+        /// Fork-owned latched view state, like the ones listed in <c>docs/rewind-design.md</c>
+        /// under "Fork-owned pieces that need new code". A no-op for players with no highway.
+        /// </remarks>
+        public virtual void ClearRewindFailState()
+        {
+        }
+
+        /// <summary>
+        /// The optimal Star Power path computed for this player at song load, or <c>null</c> when
+        /// the overlay is off, the instrument is unsupported, or this is a band run.
+        /// </summary>
+        public StarPowerPath StarPowerPath { get; private set; }
+
+        /// <summary>
+        /// Whether the Star Power path overlay is switched on for this run
+        /// (<c>docs/sp-path-design.md</c> §4.5). Set once at song load; a player with this off
+        /// never computes a path, not even on a practice-section change.
+        /// </summary>
+        public bool StarPowerPathEnabled { get; private set; }
+
+        /// <summary>
+        /// Set once the player's actual Star Power state stops matching the plan. Never un-set
+        /// within a run — only a practice-section change or a replay seek clears it, both of
+        /// which rebuild the path anyway.
+        /// </summary>
+        public bool SpPathDiverged { get; protected set; }
+
+        /// <summary>
+        /// Turns the overlay on for this player and computes the first path.
+        /// </summary>
+        /// <remarks>
+        /// The gates live in <c>GameManager.InitializeStarPowerPaths</c>, next to the section
+        /// strip's, so there is only one place that decides whether a run gets an overlay.
+        /// </remarks>
+        public void EnableStarPowerPath()
+        {
+            StarPowerPathEnabled = true;
+            RecomputeStarPowerPath();
+        }
+
+        /// <summary>
+        /// Rebuilds the path from the player's current note track. A no-op for players that do
+        /// not support the overlay, and whenever <see cref="StarPowerPathEnabled"/> is false.
+        /// </summary>
+        public virtual void RecomputeStarPowerPath()
+        {
+        }
+
+        /// <summary>
+        /// Hands this player a freshly computed path (or <c>null</c> to clear it), and resets the
+        /// divergence flag, since a new path describes a run that has not started yet.
+        /// </summary>
+        protected void SetStarPowerPath(StarPowerPath path)
+        {
+            StarPowerPath = path;
+            SpPathDiverged = false;
+            OnStarPowerPathSet();
+        }
+
+        /// <summary>
+        /// Called once the path has been assigned, so that players with somewhere to draw it can
+        /// pass it along.
+        /// </summary>
+        protected virtual void OnStarPowerPathSet()
+        {
+        }
+
+        /// <summary>
+        /// Tells the section state that a note at the given tick was missed, which drops the
+        /// section containing it for this run.
+        /// </summary>
+        /// <remarks>
+        /// The single place the per-instrument miss paths funnel into, so that adding an
+        /// instrument never means adding another hook.
+        /// <para>
+        /// Held off for the duration of a section rewind, like <see cref="NotifySectionNoteHit"/>.
+        /// A miss is idempotent, so this gate is defensive rather than load-bearing: it keeps the
+        /// two feeds symmetric, so that the whole of the strip's input is off for the re-simulation
+        /// rather than half of it.
+        /// </para>
+        /// </remarks>
+        protected void NotifySectionNoteMissed(uint tick)
+        {
+            if (GameManager.IsRewindingToSection)
+            {
+                return;
+            }
+
+            SectionState?.OnNoteMissed(tick);
+        }
+
+        /// <summary>
+        /// Tells the section state that <paramref name="count"/> of the notes the scanner counts
+        /// were just hit at the given tick, which advances that section's live progress.
+        /// </summary>
+        /// <remarks>
+        /// The mirror image of <see cref="NotifySectionNoteMissed"/>, and the single place the
+        /// per-instrument hit paths funnel into.
+        /// <para>
+        /// A section rewind re-simulates the surviving input log into a fresh engine, which
+        /// re-dispatches every hit before the target, and then rewinds the strip deliberately
+        /// (<c>SectionStripState.RewindTo</c>). The rewind clears the target and everything after
+        /// it, but deliberately does <i>not</i> clear the blocks before it - those already hold
+        /// the surviving timeline's own counts from live play. This adds, so letting the replayed
+        /// hits through would roughly double every one of them (<c>docs/rewind-design.md</c>,
+        /// "Ordered seek checklist" step 6); the feed is held off instead. The gate is the
+        /// rewind's own flag rather than <c>GameManager.IsSeekingReplay</c>, which the rewind also
+        /// raises: the double count is a rewind problem, and a run with a live strip is never
+        /// scrubbed any other way.
+        /// </para>
+        /// </remarks>
+        protected void NotifySectionNoteHit(uint tick, int count)
+        {
+            if (GameManager.IsRewindingToSection)
+            {
+                return;
+            }
+
+            SectionState?.OnNoteHit(tick, count);
+        }
+
+        /// <summary>
+        /// Determines which of the chart's sections had every one of their notes hit this run.
+        /// </summary>
+        /// <returns>
+        /// One result per section, in section order, or <c>null</c> if this player
+        /// does not support section completion tracking.
+        /// </returns>
+        public virtual IReadOnlyList<SectionCompletionResult> ScanSectionCompletion(
+            IReadOnlyList<Section> sections)
+        {
+            return null;
+        }
+
         public virtual void SetStarPowerFX(bool active)
         {
             GameManager.ChangeStemReverbState(SongStem.Song, active);
+        }
+
+        /// <summary>
+        /// Throws this player's engine away and builds a fresh one, re-establishing every
+        /// subscription and re-pointing the engine manager at it.
+        /// </summary>
+        /// <remarks>
+        /// Step 1 of the ordered seek checklist in <c>docs/rewind-design.md</c>. A fresh engine is
+        /// mandatory: <c>BaseEngine.Reset()</c> leaves the Star Power position block,
+        /// <c>BaseTimeInStarPower</c>, the scheduled-update list and (for keys) <c>ActiveSustains</c>
+        /// set, so re-simulating on a reused engine diverges. Never reuse.
+        /// </remarks>
+        public abstract void RebuildEngineForRewind();
+
+        /// <summary>
+        /// Re-simulates the surviving input log into the freshly built engine, then truncates the
+        /// log at the point the engine consumed up to.
+        /// </summary>
+        /// <remarks>
+        /// Steps 5 of the ordered seek checklist. Call <see cref="RebuildEngineForRewind"/> first.
+        /// </remarks>
+        /// <param name="markerInputTime">
+        /// The section marker, in <i>input</i> time. The engine is re-simulated up to here and then
+        /// held frozen through the lead-in, so its state is the state at the marker and the notes
+        /// inside the lead-in window stay judged.
+        /// </param>
+        /// <param name="markerSongTime">
+        /// The same marker in song time, which is the clock the chart's own note times are on.
+        /// </param>
+        /// <param name="landingVisualTime">
+        /// Where the highway is drawn from: the start of the lead-in window, a whole lead-in
+        /// earlier than the marker, in visual time.
+        /// </param>
+        public virtual void RewindTo(double markerInputTime, double markerSongTime,
+            double landingVisualTime)
+        {
+            IsFc = true;
+
+            // Set before the visuals are rebuilt below, because rebuilding them is what has to
+            // redraw the sustain crossing the marker.
+            RewindMarkerSongTime = markerSongTime;
+
+            // The engine's timeline is input time plus this player's input calibration, because
+            // that is the offset UpdateInputs applies on every live update. Re-simulating on the
+            // raw input time would leave the engine ahead of (or behind) the first live update by
+            // the calibration amount.
+            double engineTime = markerInputTime + InputCalibration;
+
+            _replayInputIndex = BaseEngine.ProcessUpToTime(engineTime, ReplayInputs);
+
+            // The recorded log is the replay, and the replay is the surviving timeline only.
+            // ProcessUpToTime returns the number of inputs it consumed, which is where the
+            // surviving timeline ends.
+            if (_replayInputIndex < _replayInputs.Count)
+            {
+                _replayInputs.RemoveRange(_replayInputIndex, _replayInputs.Count - _replayInputIndex);
+            }
+
+            CaptureRewoundEngineInputState();
+            LeadInInputs.Clear();
+            _leadInGraceInputCount = 0;
+
+            // A rewind fired from the pause menu means the player has been pressing things since
+            // the pause, and those went to InputsToSendOnResume rather than LastInputs. Fold them
+            // in - they are the physical truth - and drop the queue, so the marker resend cannot
+            // re-assert a stale "held" and the orphans cannot flush at some later, unrelated
+            // resume.
+            foreach (var queued in InputsToSendOnResume.Values)
+            {
+                LastInputs[queued.Action] = queued;
+            }
+
+            InputsToSendOnResume.Clear();
+
+            SetStemMuteState(false);
+
+            RestartLeadInVisuals(landingVisualTime);
+
+            LastCombo = Combo;
+        }
+
+        /// <summary>
+        /// Rebuilds every visual from scratch at <paramref name="visualTime"/>, the start of the
+        /// lead-in window.
+        /// </summary>
+        /// <remarks>
+        /// Split out of <see cref="RewindTo"/> because a pause taken inside the lead-in replays the
+        /// whole window on resume, which has to put the highway back without touching the engine.
+        /// </remarks>
+        public virtual void RestartLeadInVisuals(double visualTime)
+        {
+            ResetVisuals();
+            UpdateVisuals(visualTime);
+        }
+
+        /// <summary>
+        /// Records what the re-simulated engine believes each action's state to be, so the marker
+        /// resend can send only the actions the player's hands actually disagree with.
+        /// </summary>
+        private void CaptureRewoundEngineInputState()
+        {
+            RewoundEngineInputState.Clear();
+
+            // _replayInputs is already truncated to the surviving timeline, so its last value per
+            // action is exactly what ProcessUpToTime left the engine holding.
+            foreach (var input in _replayInputs)
+            {
+                RewoundEngineInputState[input.Action] = input.Integer;
+            }
+        }
+
+        /// <summary>
+        /// Whether <paramref name="action"/> latches - the engine keeps holding it until a release
+        /// arrives - as opposed to a momentary action whose press is an event in its own right.
+        /// </summary>
+        /// <remarks>
+        /// Only held-state actions may be re-asserted at a rewind marker. A strum, a Star Power
+        /// tap or a velocity-carrying pad hit is consumed the instant it is queued, so replaying a
+        /// press would be a phantom event, not a restoration. Defaults to nothing: a player that
+        /// wants presses resent has to name its held actions.
+        /// </remarks>
+        protected virtual bool IsHeldStateAction(int action)
+        {
+            return false;
+        }
+
+        /// <summary>
+        /// Whether <paramref name="action"/> is this instrument's Star Power activation.
+        /// </summary>
+        /// <remarks>
+        /// A Star Power press inside a rewind lead-in is dropped like any other early input, even
+        /// when it lands inside the grace window. The window exists so the section's first note is
+        /// hittable, not so Star Power can be deployed from the countdown: the design has Star
+        /// Power resuming at the marker with whatever the re-simulation left
+        /// (<c>docs/rewind-design.md</c>, "Lead-in"), and a tap during the countdown would spend it
+        /// the instant the marker lands. Defaults to nothing; drums have no activation action at
+        /// all (activation notes, not a button).
+        /// </remarks>
+        protected virtual bool IsStarPowerAction(int action)
+        {
+            return false;
+        }
+
+        /// <summary>
+        /// Hands the engine the current physical button state, at the section marker.
+        /// </summary>
+        /// <remarks>
+        /// Step 4 of the ordered seek checklist. A sustain crossing the section boundary was
+        /// rebuilt by the re-simulation; if the frets are still held it keeps ticking, and if they
+        /// are not it drops under normal rules. Only the actions whose physical state differs from
+        /// what the engine was left believing are sent, so nothing redundant is queued.
+        /// <para>
+        /// <see cref="ShouldUpdateInputsOnResume"/> is honoured exactly as the unpause resume path
+        /// honours it: drums and vocals have no held state worth restoring, and a resend there
+        /// would be a phantom hit.
+        /// </para>
+        /// <para>
+        /// Where this diverges from <see cref="SendInputsOnResume"/>: that path carries only the
+        /// actions that <i>changed</i> during the pause and still differ from
+        /// <see cref="LastInputs"/>, because the engine it resumes into is the same engine that
+        /// was paused, so anything unchanged is already correct. A rewind resumes into a
+        /// <i>fresh</i> engine re-simulated to a point in the past, so "unchanged" says nothing -
+        /// the comparison has to be against what the re-simulation actually left the engine
+        /// believing, which is <see cref="RewoundEngineInputState"/>. That widens the candidate
+        /// set to every action, which is why the momentary ones are then excluded explicitly by
+        /// <see cref="IsHeldStateAction"/>; the resume path never needed that filter because a
+        /// momentary press that came and went during a pause cancels itself out of its queue.
+        /// </para>
+        /// </remarks>
+        public void SendLeadInInputsAtMarker()
+        {
+            // Whatever arrived during the window was dropped, but it is still the truth about
+            // where the player's hands are.
+            foreach (var captured in LeadInInputs.Values)
+            {
+                LastInputs[captured.Action] = captured;
+            }
+
+            LeadInInputs.Clear();
+
+            // The window is over: engine and highway are back on the same clock, so the crossing
+            // sustain is drawn by the ordinary rules from here. Whatever the grace window queued
+            // is ordinary history now, so it is no longer a candidate for discarding.
+            _leadInGraceInputCount = 0;
+            RewindMarkerSongTime = double.NaN;
+            OnLeadInMarkerReached();
+
+            if (!ShouldUpdateInputsOnResume)
+            {
+                RewoundEngineInputState.Clear();
+                return;
+            }
+
+            // OnGameInput writes back into LastInputs, so iterate a snapshot.
+            var physicalState = new List<GameInput>(LastInputs.Values);
+            foreach (var physical in physicalState)
+            {
+                if (RewoundEngineInputState.TryGetValue(physical.Action, out int engineValue) &&
+                    engineValue == physical.Integer)
+                {
+                    // The engine already holds this; sending it again would be a spurious event.
+                    continue;
+                }
+
+                // A press may only be re-asserted for a latching action. A strum or a Star Power
+                // tap inside the window whose release lands after the marker would otherwise be
+                // delivered here as a true, which is an overstrum or a phantom deploy - exactly
+                // the judging the window is supposed to drop. A release is always safe to send:
+                // at worst it clears a held belief the player is no longer backing.
+                if (physical.Button && !IsHeldStateAction(physical.Action))
+                {
+                    continue;
+                }
+
+                var input = new GameInput(InputManager.CurrentInputTime, physical.Action, physical.Integer);
+                OnGameInput(ref input);
+            }
+
+            RewoundEngineInputState.Clear();
+        }
+
+        /// <summary>
+        /// Discards everything the current lead-in's grace window queued, from the replay log.
+        /// </summary>
+        /// <remarks>
+        /// The engine side is not undone here and cannot be: <c>BaseEngine</c>'s input queue is not
+        /// reachable from the game assembly, and neither <c>Reset</c> nor <c>ProcessUpToTime</c>
+        /// empties it. The caller is <c>GameManager.RestartLeadIn</c>, which follows this with the
+        /// fresh-engine rebuild and re-simulation that the rewind itself uses, so the discarded
+        /// inputs go with the engine they were queued into. Call this <i>before</i> the re-simulation
+        /// or it will replay them straight back in.
+        /// </remarks>
+        public void DropLeadInGraceInputs()
+        {
+            if (_leadInGraceInputCount <= 0)
+            {
+                _leadInGraceInputCount = 0;
+                return;
+            }
+
+            // They are always at the tail: nothing else appends to the log while the lead-in is up.
+            int keep = Math.Max(0, _replayInputs.Count - _leadInGraceInputCount);
+            _replayInputs.RemoveRange(keep, _replayInputs.Count - keep);
+
+            YargLogger.LogFormatDebug("Discarded {0} lead-in grace input(s) on a lead-in restart",
+                _leadInGraceInputCount);
+
+            _leadInGraceInputCount = 0;
+        }
+
+        /// <summary>
+        /// Drives this player's countdown widget for a rewind lead-in.
+        /// </summary>
+        public virtual void UpdateLeadInCountdown(double countdownLength, double endSongTime)
+        {
+        }
+
+        /// <summary>
+        /// Puts this player's countdown widget back in its reset state once the lead-in is over.
+        /// </summary>
+        public virtual void ForceResetLeadInCountdown()
+        {
+        }
+
+        /// <summary>
+        /// Called once the lead-in window has closed, for anything a player worked out during the
+        /// re-simulation and only needed for the duration of the window.
+        /// </summary>
+        protected virtual void OnLeadInMarkerReached()
+        {
         }
 
         public virtual void SetReplayTime(double time)
@@ -332,6 +875,36 @@ namespace YARG.Gameplay.Player
             // Ignore while paused
             if (GameManager.Paused || GameManager.Rewinding)
             {
+                if (GameManager.IsLeadInActive)
+                {
+                    // Dropped, not queued - but on the timestamp, not on the flag. An input close
+                    // enough to the marker to be a legitimate early hit on the section's first
+                    // note goes to the engine instead (docs/rewind-design.md, "Lead-in" ->
+                    // Engine). Anything earlier than that is judged by nothing; all that is kept
+                    // of it is where the buttons are, for the physical-state resend at the marker.
+                    //
+                    // A real pause taken inside the window is excluded outright: the clock stops
+                    // but input-system time does not, so every menu press would convert to a time
+                    // past the marker and be queued as gameplay.
+                    //
+                    // Star Power is excluded too: the grace exists so the section's first note is
+                    // hittable, not so a tap on the countdown can deploy at the marker.
+                    if (!GameManager.Paused &&
+                        !IsStarPowerAction(input.Action) &&
+                        !GameManager.ShouldDropLeadInInput(input.Time, LeadInInputGrace))
+                    {
+                        QueueLeadInGraceInput(ref input);
+                        return;
+                    }
+
+                    if (ShouldUpdateInputsOnResume)
+                    {
+                        LeadInInputs[input.Action] = input;
+                    }
+
+                    return;
+                }
+
                 if (!ShouldUpdateInputsOnResume)
                 {
                     return;
@@ -367,6 +940,58 @@ namespace YARG.Gameplay.Player
             _replayInputs.Add(input);
         }
 
+        /// <summary>
+        /// Queues an input that arrived inside the lead-in's grace window into the frozen engine.
+        /// </summary>
+        /// <remarks>
+        /// The live path, with two differences forced by the freeze. The engine sits at the section
+        /// marker while the clock sits a lead-in earlier, so the input's own time is pulled forward
+        /// to the engine's current time - <c>BaseEngine.QueueInput</c> would do that anyway, but
+        /// doing it here keeps its "forced to move an input time" warning out of the log for a case
+        /// that is expected. And the two rewind bookkeeping maps are updated so the resend at the
+        /// marker (<see cref="SendLeadInInputsAtMarker"/>) treats this action as already delivered
+        /// rather than pressing it a second time.
+        /// </remarks>
+        private void QueueLeadInGraceInput(ref GameInput input)
+        {
+            // LastInputs now carries this action's physical truth, so the stashed copy would only
+            // let the marker resend overwrite it with something older. Dropped here rather than
+            // after the queue so an intercepted input cannot leave one behind.
+            LastInputs[input.Action] = input;
+            LeadInInputs.Remove(input.Action);
+
+            double adjustedTime = GameManager.GetInputTime(input.Time) + InputCalibration;
+            double rawAdjustedTime = adjustedTime;
+
+            // The engine is frozen at the marker; nothing may be queued behind it.
+            adjustedTime = Math.Max(adjustedTime, BaseEngine.CurrentTime);
+
+            input = new(adjustedTime, input.Action, input.Integer);
+
+            if (InterceptInput(ref input))
+            {
+                return;
+            }
+
+            BaseEngine.QueueInput(ref input);
+            OnInputQueued(input);
+            _replayInputs.Add(input);
+
+            // One log entry appended, so one more for DropLeadInGraceInputs to undo. After the
+            // Add, and after the InterceptInput return above, so the count and the tail of the log
+            // cannot disagree.
+            _leadInGraceInputCount++;
+
+            // The engine now holds this value, so the marker resend must not re-send it.
+            RewoundEngineInputState[input.Action] = input.Integer;
+
+            YargLogger.LogFormatDebug(
+                "Lead-in grace input queued: action {0} = {1} at {2:0.0000} (raw {3:0.0000}, " +
+                "marker {4:0.0000}, grace {5:0.0000})",
+                input.Action, input.Integer, input.Time, rawAdjustedTime,
+                GameManager.LeadInMarkerInputTime + InputCalibration, LeadInInputGrace);
+        }
+
         protected virtual void OnStarPowerPhraseHit()
         {
             if (!GameManager.Paused && !GameManager.IsSeekingReplay)
@@ -397,7 +1022,9 @@ namespace YARG.Gameplay.Player
                 deploySample = SfxSample.StarPowerDeployCrowd;
             }
 
-            if (!GameManager.Paused)
+            // IsSeekingReplay covers a rewind's re-simulation too, which otherwise replays every
+            // deploy and release of the discarded run at once.
+            if (!GameManager.Paused && !GameManager.IsSeekingReplay)
             {
                 GlobalAudioHandler.PlaySoundEffect(active
                     ? deploySample

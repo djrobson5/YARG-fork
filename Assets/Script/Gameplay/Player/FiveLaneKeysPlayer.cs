@@ -77,6 +77,27 @@ namespace YARG.Assets.Script.Gameplay.Player
 
         public override bool ShouldUpdateInputsOnResume => true;
 
+        /// <summary>
+        /// The keys, and nothing else.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="ProKeysAction.StarPower"/> is momentary and
+        /// <see cref="ProKeysAction.TouchEffects"/> is an axis, so neither may be re-asserted at a
+        /// rewind marker.
+        /// </remarks>
+        protected override bool IsHeldStateAction(int action)
+        {
+            var keysAction = (ProKeysAction) action;
+            return keysAction is
+                >= ProKeysAction.Key1 and <= ProKeysAction.Key25 or
+                >= ProKeysAction.OpenNote and <= ProKeysAction.OrangeKey;
+        }
+
+        protected override bool IsStarPowerAction(int action)
+        {
+            return (ProKeysAction) action == ProKeysAction.StarPower;
+        }
+
         /// See <see cref="StarMultiplierThresholds"/>
         private static float[] GuitarStarMultiplierThresholds => new[]
         {
@@ -586,6 +607,8 @@ namespace YARG.Assets.Script.Gameplay.Player
 
         private void OnSustainEnd(GuitarNote note, double timeEnded, bool finished)
         {
+            NoteSustainEnded(note, false);
+
             (NotePool.GetByKey(note) as FiveLaneKeysNoteElement)?.SustainEnd(finished);
 
             // Mute the stem if you let go of the sustain too early.

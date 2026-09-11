@@ -68,6 +68,27 @@ namespace YARG.Gameplay.Player
 
         public override bool ShouldUpdateInputsOnResume => true;
 
+        /// <summary>
+        /// The keys, and nothing else.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="ProKeysAction.StarPower"/> is momentary and
+        /// <see cref="ProKeysAction.TouchEffects"/> is an axis, so neither may be re-asserted at a
+        /// rewind marker.
+        /// </remarks>
+        protected override bool IsHeldStateAction(int action)
+        {
+            var keysAction = (ProKeysAction) action;
+            return keysAction is
+                >= ProKeysAction.Key1 and <= ProKeysAction.Key25 or
+                >= ProKeysAction.OpenNote and <= ProKeysAction.OrangeKey;
+        }
+
+        protected override bool IsStarPowerAction(int action)
+        {
+            return (ProKeysAction) action == ProKeysAction.StarPower;
+        }
+
         public float RangeShiftOffset => _currentOffset;
 
         [Header("Pro Keys Specific")]
@@ -314,6 +335,8 @@ namespace YARG.Gameplay.Player
 
         private void OnSustainEnd(ProKeysNote parent, double timeEnded, bool finished)
         {
+            NoteSustainEnded(parent, false);
+
             (NotePool.GetByKey(parent) as ProKeysNoteElement)?.SustainEnd(finished);
 
             _keysArray.SetSustained(parent.Key, false);

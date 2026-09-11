@@ -77,6 +77,27 @@ namespace YARG.Gameplay.HUD
 
         private readonly List<EngineManager.EngineContainer> _players = new();
 
+        /// <summary>
+        /// Re-points the meter at the engine containers registered right now.
+        /// </summary>
+        /// <remarks>
+        /// The container list is snapshotted in <see cref="Initialize"/> and the slider arrays are
+        /// sized from it, so a rewind — which throws every engine away and registers a new one per
+        /// player — would otherwise leave this reading dead containers and the meter frozen.
+        /// Registration order is preserved by the rebuild, so the indices still line up; if the
+        /// count ever disagrees the old list is kept rather than indexing past the arrays.
+        /// </remarks>
+        public void RebuildPlayers()
+        {
+            if (_engineManager == null || _engineManager.Engines.Count != _players.Count)
+            {
+                return;
+            }
+
+            _players.Clear();
+            _players.AddRange(_engineManager.Engines);
+        }
+
         // Allows some overlap
         private const float HAPPINESS_COLLISION_RANGE = 0.06f;
         private const float SPRITE_OVERLAP_OFFSET     = 28f;

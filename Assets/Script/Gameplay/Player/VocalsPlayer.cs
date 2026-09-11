@@ -15,6 +15,7 @@ using YARG.Gameplay.Visuals;
 using YARG.Helpers;
 using YARG.Input;
 using YARG.Player;
+using YARG.Scores;
 using YARG.Settings;
 
 namespace YARG.Gameplay.Player
@@ -40,6 +41,11 @@ namespace YARG.Gameplay.Player
         private const float OUTLINE_WIDTH = 7f;
 
         public override bool ShouldUpdateInputsOnResume => false;
+
+        protected override bool IsStarPowerAction(int action)
+        {
+            return (VocalsAction) action == VocalsAction.StarPower;
+        }
 
         protected override float[] StarMultiplierThresholds { get; set; } =
         {
@@ -202,25 +208,50 @@ namespace YARG.Gameplay.Player
 
                 LastCombo = Combo;
 
-                ShowTextNotifications(isLastPhrase);
+                if (!GameManager.IsSeekingReplay)
+                {
+                    ShowTextNotifications(isLastPhrase);
 
-                // Order is important here. ShowVocalPhraseResult() will skip showing AWESOME! if other, more important notifications are already showing.
-                _hud.ShowPhraseHit(percent, Combo);
+                    // Order is important here. ShowVocalPhraseResult() will skip showing AWESOME! if other, more important notifications are already showing.
+                    _hud.ShowPhraseHit(percent, Combo);
+                }
             };
 
             engine.OnNoteHit += (_, note) =>
             {
-                if (note.IsPercussion)
+                // The particle burst and its lights are feedback, so they are gated the way the
+                // sibling handlers gate theirs: a re-simulation would otherwise fire one for
+                // every percussion note the surviving timeline ever hit.
+                if (note.IsPercussion && !GameManager.IsSeekingReplay)
                 {
                     _percussionTrack.HitPercussionNote(note);
                 }
+
+                // Vocals are graded per phrase, and the same phrases the scanner counts are the
+                // ones that move a section's progress here. One phrase is worth one of the
+                // scanner's NotesTotal, so the count is always one.
+                //
+                // IsPercussion is a note inside a percussion phrase rather than a phrase of the
+                // phrase list the scanner walks, so it is excluded here as well.
+                if (!note.IsPercussion && !note.IsPercussionPhrase && !note.IsBigRockEnding)
+                {
+                    NotifySectionNoteHit(note.Tick, 1);
+                }
             };
 
-            engine.OnNoteMissed += (_, _) =>
+            engine.OnNoteMissed += (_, note) =>
             {
-                if (LastCombo >= 2)
+                if (LastCombo >= 2 && !GameManager.IsSeekingReplay)
                 {
                     GlobalAudioHandler.PlaySoundEffect(SfxSample.NoteMiss);
+                }
+
+                // Vocals are graded per phrase, and the same phrases the scanner counts are the
+                // ones that can drop a section here. IsPercussion is a note inside a percussion
+                // phrase rather than one of the phrases the scanner walks, so it is excluded too.
+                if (!note.IsPercussion && !note.IsPercussionPhrase && !note.IsBigRockEnding)
+                {
+                    NotifySectionNoteMissed(note.Tick);
                 }
 
                 LastCombo = Combo;
@@ -265,6 +296,14 @@ namespace YARG.Gameplay.Player
         protected override void ResetVisuals()
         {
             _lastTargetNote = null;
+
+            // Both are stamped with GameManager.InputTime, which during a re-simulation is the
+            // landing rather than the historical moment, so a replayed sing or hit that ended
+            // "true" would still be inside the threshold at the landing and show the needle with
+            // no target note behind it.
+            _lastSingTime = null;
+            _lastHitTime = null;
+
             _hud.SetFullCombo(IsFc);
         }
 
@@ -282,6 +321,73 @@ namespace YARG.Gameplay.Player
             _percussionTrack.Initialize(NoteTrack.Notes);
 
             base.ResetPracticeSection();
+        }
+
+        public override void RebuildEngineForRewind()
+        {
+            // Unlike the track players' CreateEngine, this one only registers; unregistering the
+            // outgoing container is the caller's job, and skipping it would leave a dead engine in
+            // the engine manager's band-state maths.
+            if (EngineContainer != null)
+            {
+                // Reset before unregistering: RemovePlayerFromUnisons skips unisons that end
+                // before the engine's CurrentTime, so an engine still at the pre-rewind time
+                // would leave its id on every unison already passed and the new id would be
+                // added alongside it, making those phrases uncompletable. Reset() puts
+                // CurrentTime back to double.MinValue so every unison drops the old id.
+                Engine.Reset();
+
+                GameManager.EngineManager.Unregister(EngineContainer);
+                EngineContainer = null;
+            }
+
+            Engine = CreateEngine();
+
+            // Rewinds only happen in a live run, so the practice speed special case does not apply.
+            Engine.SetSpeed(GameManager.SongSpeed);
+        }
+
+        public override void RestartLeadInVisuals(double visualTime)
+        {
+            // The phrase cursor must go back or the HUD reads a phrase the run has not reached
+            // again. UpdatePercussionPhrase walks it forward from -1 on the next update, so the
+            // percussion readout lands on the phrase under way at the landing on its own.
+            _phraseIndex = -1;
+
+            // One highway is shared by every harmony part, so the part that owns the countdown
+            // owns the seek too; the percussion track is this player's own.
+            if (_handlesCountdown && GameManager.VocalTrack != null)
+            {
+                GameManager.VocalTrack.RewindTo(visualTime);
+            }
+
+            if (_percussionTrack != null)
+            {
+                _percussionTrack.RewindTo();
+            }
+
+            base.RestartLeadInVisuals(visualTime);
+        }
+
+        public override void UpdateLeadInCountdown(double countdownLength, double endSongTime)
+        {
+            // Vocals share one countdown widget, owned by index 0.
+            if (!_handlesCountdown || GameManager.VocalTrack == null)
+            {
+                return;
+            }
+
+            GameManager.VocalTrack.UpdateLeadInCountdown(countdownLength, endSongTime);
+        }
+
+        public override void ForceResetLeadInCountdown()
+        {
+            if (!_handlesCountdown || GameManager.VocalTrack == null)
+            {
+                return;
+            }
+
+            GameManager.VocalTrack.ForceResetCountdown();
         }
 
         public override void Rewind(double visualTime)
@@ -642,6 +748,13 @@ namespace YARG.Gameplay.Player
 
             return note.ChildNotes.Count > 0 &&
                 note.ChildNotes.All(child => child.Tick >= start && child.TotalTickEnd <= end);
+        }
+
+        public override IReadOnlyList<SectionCompletionResult> ScanSectionCompletion(
+            IReadOnlyList<Section> sections)
+        {
+            // Vocals are graded per phrase, not per note
+            return SectionCompletionScanner.ScanVocalPhrases(sections, NoteTrack.Notes);
         }
 
         public override void SetStemMuteState(bool muted)

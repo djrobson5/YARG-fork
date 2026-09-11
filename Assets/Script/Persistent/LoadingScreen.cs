@@ -86,8 +86,16 @@ namespace YARG
                 });
             }
 
-            // Fast scan (cache read) on startup
-            await SongContainer.RunRefresh(true, context);
+            // Fast scan (cache read) on startup, unless a song was deleted since the last scan.
+            // The quick scan does not stat song files, so it would resurrect the deleted song
+            // from songcache.bin as an unplayable ghost entry; only a full scan can drop it.
+            bool quick = !SettingsManager.Settings.SongCacheDirty;
+            await SongContainer.RunRefresh(quick, context);
+
+            if (!quick)
+            {
+                SongContainer.ClearSongCacheDirty();
+            }
         }
 
         private static async UniTask UpdateSourcesAndGenres(LoadingContext context)

@@ -97,9 +97,15 @@ namespace YARG.Menu.ScoreScreen
         [SerializeField]
         private ColoredPillElement _modifiersUsedTag;
         [SerializeField]
+        private ColoredPillElement _rewoundTag;
+        [SerializeField]
         private GameObject _modifiersUsedContainer;
         [SerializeField]
         private GameObject _modifiersUsedSeparator;
+
+        [Space]
+        [SerializeField]
+        private RectTransform _sectionStripContainer;
 
 
         private ScoreCardColorizer _colorizer;
@@ -114,9 +120,14 @@ namespace YARG.Menu.ScoreScreen
         private TextMeshProUGUI _offsetHistogramRightAxisLabel;
         private readonly List<RectTransform> _offsetHistogramBarPool = new();
 
+        private StatInfo _sectionsPerfectedRow;
+        private readonly List<Image> _sectionBlockPool = new();
+
         protected bool  IsHighScore;
         protected T     Stats;
         protected bool  IsReplay;
+        protected bool  WasRewound;
+        protected PlayerSectionSummary Sections;
 
         public YargPlayer Player { get; private set; }
 
@@ -125,12 +136,15 @@ namespace YARG.Menu.ScoreScreen
             _colorizer = GetComponent<ScoreCardColorizer>();
         }
 
-        public void Initialize(bool isHighScore, YargPlayer player, T stats, bool isReplay)
+        public void Initialize(bool isHighScore, YargPlayer player, T stats, bool isReplay,
+            PlayerSectionSummary sections, bool wasRewound)
         {
             IsHighScore = isHighScore;
             Player = player;
             Stats = stats;
             IsReplay  = isReplay;
+            Sections = sections;
+            WasRewound = wasRewound;
         }
 
         public virtual void SetCardContents()
@@ -177,6 +191,11 @@ namespace YARG.Menu.ScoreScreen
 
                 ShowTag("Replay");
             }
+            else if (Sections is { ClosedSetThisRun: true })
+            {
+                _colorizer.SetCardColor(ScoreCardColorizer.ScoreCardColor.Violet);
+                ShowTag(Localize.Key("Menu.ScoreScreen.SectionFullCombo"));
+            }
             else if (Stats.IsFullCombo)
             {
                 _colorizer.SetCardColor(ScoreCardColorizer.ScoreCardColor.Gold);
@@ -214,6 +233,7 @@ namespace YARG.Menu.ScoreScreen
             string timeInStarPower = TimeSpan.FromSeconds(Stats.TimeInStarPower).ToString(@"m\:ss");
             _timeInStarPower.text = ColorizePrimary(timeInStarPower);
             BuildOffsetHistogram();
+            BuildSectionCompletion();
 
             // Set engine preset tag
             var enginePresetId = Player.EnginePreset.Id;
@@ -261,10 +281,150 @@ namespace YARG.Menu.ScoreScreen
                 nonEngineModifiersUsed = true;
             }
 
+            // Session-only, so this is off for every card built from a history entry or a
+            // replay (docs/rewind-design.md, "Score page badge").
+            if (_rewoundTag != null)
+            {
+                _rewoundTag.gameObject.SetActive(WasRewound);
+                if (WasRewound)
+                {
+                    _rewoundTag.SetValues(Localize.Key("Menu.ScoreScreen.Rewound"),
+                        ColoredPillElement.ColoredPillPreset.Rewound);
+                }
+            }
+
             bool anyModifiersUsed = _modifierIconContainer.childCount > 0;
             _modifiersUsedTag.gameObject.SetActive(nonEngineModifiersUsed);
             _modifiersUsedContainer.gameObject.SetActive(anyModifiersUsed);
             _modifiersUsedSeparator.gameObject.SetActive(anyModifiersUsed);
+        }
+
+        /// <summary>
+        /// Fills in the "sections perfected" stat row and the strip of per-section blocks
+        /// underneath it, or hides both when this run earned no section credit.
+        /// </summary>
+        private void BuildSectionCompletion()
+        {
+            if (Sections == null || Sections.ApplicableCount <= 0)
+            {
+                if (_sectionsPerfectedRow != null)
+                {
+                    _sectionsPerfectedRow.gameObject.SetActive(false);
+                }
+
+                if (_sectionStripContainer != null)
+                {
+                    _sectionStripContainer.gameObject.SetActive(false);
+                }
+
+                return;
+            }
+
+            var row = GetOrCreateSectionsPerfectedRow();
+            if (row != null)
+            {
+                row.gameObject.SetActive(true);
+                row.Label.text = Localize.Key("Menu.ScoreScreen.SectionsPerfected");
+                var value = $"{ColorizePrimary(Sections.CompletedCount)} " +
+                    $"{ColorizeSecondary("/")} {ColorizeSecondary(Sections.ApplicableCount)}";
+
+                // Nothing new this run means no "+0" tail; the fraction says it all
+                if (Sections.NewlyCompletedCount > 0)
+                {
+                    value += $" {ColorizeSecondary("·")} " +
+                        $"{ColorizePrimary("+" + Sections.NewlyCompletedCount)}";
+                }
+
+                row.Value.text = value;
+            }
+
+            BuildSectionStrip();
+        }
+
+        /// <remarks>
+        /// Cloned from the max streak row rather than authored on its own, so that the new row
+        /// always matches whatever the surrounding stat rows look like.
+        /// </remarks>
+        private StatInfo GetOrCreateSectionsPerfectedRow()
+        {
+            if (_sectionsPerfectedRow != null)
+            {
+                return _sectionsPerfectedRow;
+            }
+
+            if (_sectionStripContainer == null || _maxStreak == null)
+            {
+                return null;
+            }
+
+            var template = _maxStreak.transform.parent;
+            if (template == null || template.GetComponent<StatInfo>() == null)
+            {
+                return null;
+            }
+
+            _sectionsPerfectedRow = Instantiate(template.gameObject, _sectionStripContainer.parent)
+                .GetComponent<StatInfo>();
+            _sectionsPerfectedRow.name = "Sections Perfected";
+
+            // Sits directly above the strip, which the prefab already places after max streak
+            _sectionsPerfectedRow.transform.SetSiblingIndex(_sectionStripContainer.GetSiblingIndex());
+
+            return _sectionsPerfectedRow;
+        }
+
+        private void BuildSectionStrip()
+        {
+            if (_sectionStripContainer == null)
+            {
+                return;
+            }
+
+            _sectionStripContainer.gameObject.SetActive(true);
+
+            // The strip's height comes from the LayoutElement on the prefab; it is deliberately
+            // not set here so that there is only one source of truth for it
+
+            // The blocks are stretched to fill the strip by the container's horizontal layout
+            // group, so a chart with more sections simply gets thinner blocks
+            var states = Sections.SectionStates;
+            for (int i = 0; i < states.Length; i++)
+            {
+                var block = GetOrCreateSectionBlock(i);
+                block.color = GetSectionBlockColor(states[i]);
+                block.gameObject.SetActive(true);
+            }
+
+            for (int i = states.Length; i < _sectionBlockPool.Count; i++)
+            {
+                _sectionBlockPool[i].gameObject.SetActive(false);
+            }
+        }
+
+        private Color GetSectionBlockColor(SectionCompletionState state)
+        {
+            return state switch
+            {
+                SectionCompletionState.CompletedThisRun => _colorizer.SectionBlockNewColor,
+                SectionCompletionState.CompletedEarlier => _colorizer.SectionBlockEarlierColor,
+                _                                       => _colorizer.SectionBlockMissingColor,
+            };
+        }
+
+        private Image GetOrCreateSectionBlock(int index)
+        {
+            while (_sectionBlockPool.Count <= index)
+            {
+                var blockObject = new GameObject($"Section {_sectionBlockPool.Count}",
+                    typeof(RectTransform), typeof(Image));
+                blockObject.transform.SetParent(_sectionStripContainer, false);
+
+                var blockImage = blockObject.GetComponent<Image>();
+                blockImage.raycastTarget = false;
+                _sectionBlockPool.Add(blockImage);
+            }
+
+            return _sectionBlockPool[index];
         }
 
         private void BuildOffsetHistogram()

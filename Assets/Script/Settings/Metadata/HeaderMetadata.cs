@@ -1,3 +1,5 @@
+using System;
+
 namespace YARG.Settings.Metadata
 {
     public sealed class HeaderMetadata : AbstractMetadata
@@ -6,8 +8,8 @@ namespace YARG.Settings.Metadata
 
         public string HeaderName { get; private set; }
 
-        public HeaderMetadata(string headerName, bool isAdvanced = false)
-            : base(isAdvanced)
+        public HeaderMetadata(string headerName, bool isAdvanced = false, Func<bool> visibleWhen = null)
+            : base(isAdvanced, visibleWhen)
         {
             HeaderName = headerName;
         }

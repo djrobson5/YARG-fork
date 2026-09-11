@@ -3,11 +3,13 @@ using System.Collections.Generic;
 using System.Linq;
 using Cysharp.Text;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.LowLevel;
 using YARG.Assets.Script.Gameplay.Player;
 using YARG.Core.Audio;
 using YARG.Core.Chart;
 using YARG.Core.Extensions;
+using YARG.Core.Logging;
 using YARG.Gameplay.Player;
 using YARG.Integration;
 using YARG.Venue.Characters;
@@ -360,6 +362,7 @@ namespace YARG.Gameplay
 
             string playerType = player switch
             {
+                SixFretGuitarPlayer => "Six Fret Guitar",
                 FiveFretGuitarPlayer => "Five Fret Guitar",
                 FiveLaneKeysPlayer => "Five Lane Keys",
                 DrumsPlayer => "Drums",
