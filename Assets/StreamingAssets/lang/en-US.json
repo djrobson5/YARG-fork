@@ -759,7 +759,11 @@
             },
             "Rewind": {
                 "RowName": "Rewind to Section",
-                "LeadInCaption": "Resumes {0} s before the section with a countdown"
+                "PaneTitle": "Rewind to Section",
+                "Current": "Current",
+                "LeadInCaption": "Resumes {0} {1} before the section with a countdown",
+                "SecondSingular": "second",
+                "SecondPlural": "seconds"
             },
             "Replay": {
                 "SaveColorProfile": "Save Color Profile"

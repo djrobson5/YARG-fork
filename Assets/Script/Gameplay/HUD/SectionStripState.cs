@@ -185,6 +185,33 @@ namespace YARG.Gameplay.HUD
 
         public SectionStripBlockState GetBlockState(int blockIndex) => _blockStates[blockIndex];
 
+        /// <summary>
+        /// The state of the block belonging to a <i>chart section</i> index, for surfaces that
+        /// walk the chart's sections rather than the strip's blocks.
+        /// </summary>
+        /// <returns>
+        /// <c>false</c> when that section has no block, which means it has no notes for this
+        /// player and can never be perfected. Such a section has no result to show.
+        /// </returns>
+        public bool TryGetSectionState(int sectionIndex, out SectionStripBlockState state)
+        {
+            if (sectionIndex < 0 || sectionIndex >= _sectionToBlock.Length)
+            {
+                state = default;
+                return false;
+            }
+
+            int block = _sectionToBlock[sectionIndex];
+            if (block < 0)
+            {
+                state = default;
+                return false;
+            }
+
+            state = _blockStates[block];
+            return true;
+        }
+
         public string GetBlockName(int blockIndex) => _blockNames[blockIndex];
 
         /// <summary>

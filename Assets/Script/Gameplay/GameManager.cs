@@ -309,9 +309,6 @@ namespace YARG.Gameplay
                 ToggleDebugEnabled();
             }
 
-            // Temporary rewind trigger; a no-op outside the editor and development builds
-            CheckRewindDebugInput();
-
             // Skip the rest if paused
             if (_songRunner.Paused)
             {
@@ -551,10 +548,16 @@ namespace YARG.Gameplay
                 _pauseMenu.PopAllMenus();
                 Time.timeScale = 1f;
 
-                // Update the last PauseInfo with the pause length
-                var currentPause = PauseInfo[^1];
-                currentPause.PauseLength = InputManager.InputUpdateTime - _pauseTime;
-                PauseInfo[^1] = currentPause;
+                // Update the last PauseInfo with the pause length. The list can legitimately be
+                // empty here: a rewind fired from the pause menu truncates PauseInfo at the target
+                // and that drops the pause that opened the menu, so a resume taken after one has
+                // nothing of its own to close off (GameManager.TruncatePauseInfo).
+                if (PauseInfo.Count > 0)
+                {
+                    var currentPause = PauseInfo[^1];
+                    currentPause.PauseLength = InputManager.InputUpdateTime - _pauseTime;
+                    PauseInfo[^1] = currentPause;
+                }
 
                 // Don't allow rewinding past the rewind limit, unless a duration was explicitly passed to the resume function
                 var rewindSeconds = Math.Max(0, rewindDuration ?? SongTime - _rewindLimit);

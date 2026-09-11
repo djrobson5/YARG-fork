@@ -880,6 +880,8 @@ namespace YARG.Gameplay.Player
 
         public InstrumentDifficulty<TNote> NoteTrack { get; private set; }
 
+        public override IReadOnlyList<Phrase> TrackPhrases => NoteTrack?.Phrases;
+
         private InstrumentDifficulty<TNote> OriginalNoteTrack { get; set; }
 
         private int _currentMultiplier;

@@ -12,6 +12,19 @@ namespace YARG.Gameplay.HUD
 
         protected override void OnEnable()
         {
+            // Not base.OnEnable(): the fail menu pushes its own (Back-less) scheme after a delay.
+            ResetRewindPane();
+
+            // The rewind row still has to be gated, and the design offers it here
+            // (docs/rewind-design.md, "Fail menu").
+            ApplyRewindRowVisibility();
+
+            // Nothing on the list can be clicked until that scheme is up. The half second exists to
+            // swallow the button mash that failed the song, and until it elapses there is no scheme
+            // at all, so a mouse click on the rewind row would open the picker and then have this
+            // menu's Back-less scheme land on top of the picker's, stranding the player in it.
+            SetPauseListPointerEnabled(false);
+
             HandleNavigationScheme();
         }
 
@@ -24,6 +37,11 @@ namespace YARG.Gameplay.HUD
                 NavigationScheme.Entry.NavigateUp,
                 NavigationScheme.Entry.NavigateDown,
             }, false));
+
+            if (this != null)
+            {
+                SetPauseListPointerEnabled(true);
+            }
         }
         public void EnableNoFail(bool resume)
         {

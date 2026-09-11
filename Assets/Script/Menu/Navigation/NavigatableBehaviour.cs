@@ -31,6 +31,18 @@ namespace YARG.Menu.Navigation
             set => _selectOnHover = value;
         }
 
+        /// <summary>
+        /// Whether a pointer press on this element selects it. Disable this, alongside
+        /// <see cref="SelectOnHover"/>, for a list that is still on screen but no longer has
+        /// focus, so the pointer cannot drag the navigation group back out from under whatever
+        /// took it. Selection driven by the navigation group is unaffected.
+        /// </summary>
+        public bool SelectOnClick
+        {
+            get => _selectOnClick;
+            set => _selectOnClick = value;
+        }
+
         public event Action<NavigatableBehaviour, bool, SelectionOrigin> SelectionStateChanged;
 
         protected virtual void Awake()

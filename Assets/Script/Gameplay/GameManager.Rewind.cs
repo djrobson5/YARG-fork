@@ -68,25 +68,29 @@ namespace YARG.Gameplay
         /// makes the window safe: the notes inside it are already judged, so they do not respawn
         /// and nothing in the window can be judged again.
         /// </remarks>
-        public void RewindToSection(double sectionSongTime)
+        /// <returns>
+        /// <c>true</c> when the run actually moved. A caller that has to unwind the pause around
+        /// the rewind (<see cref="RewindToSectionFromPause"/>) needs to know before it commits.
+        /// </returns>
+        public bool RewindToSection(double sectionSongTime)
         {
             if (_players == null || _players.Count == 0)
             {
-                return;
+                return false;
             }
 
             // A rewind is a live-run action. Practice has its own section restart and the replay
             // viewer has its own scrub.
             if (IsPractice || IsReplay || IsRewindingToSection)
             {
-                return;
+                return false;
             }
 
             if (sectionSongTime > RewindReferenceSongTime)
             {
                 YargLogger.LogFormatWarning("Refusing to rewind forwards (from {0} to {1})",
                     RewindReferenceSongTime, sectionSongTime);
-                return;
+                return false;
             }
 
             // The lead-in is in REAL seconds, so the seek goes back leadIn * SongSpeed chart
@@ -134,27 +138,45 @@ namespace YARG.Gameplay
                 //    the new ones, or they read dead engines for the rest of the run.
                 _failMeter.RebuildPlayers();
 
-                // 4. Band-level state, including the rock meter. The per-player stats are
-                //    re-established by the re-simulation below.
+                // 4. A rewind fired from the fail menu revives the run. EngineManager.ResetState
+                //    below clears only the band-level _playerFailed flag: it never calls
+                //    RevivePlayer, so without this the per-engine ThisPlayerFailed latch and
+                //    TrackPlayer.PlayerHasFailed both survive, the highway stays lowered and
+                //    BasePlayer.OnGameInput drops every input for the rest of the run.
+                //    Deliberately only the reviving subset of UnfailSong: no NoFailChanged(true),
+                //    which would turn No Fail on, and no InvalidateScores, because a rewound run
+                //    stays a normal high score (docs/rewind-design.md, "Fail menu").
+                if (PlayerHasFailed)
+                {
+                    PlayerHasFailed = false;
+                    EngineManager.RevivePlayer();
+                    _mixer.FadeIn(DEFAULT_VOLUME, SONG_START_DELAY);
+                }
+
+                // 5. Band-level state, including the rock meter. The per-player stats are
+                //    re-established by the re-simulation below. Ordered after the revive on
+                //    purpose: RevivePlayer only lifts a failed player to half happiness, and
+                //    ResetHappiness here takes it back to the preset's starting value, so the
+                //    rock meter ends full either way.
                 EngineManager.ResetState();
 
-                // 5. The band combo is rebuilt from the players' OnComboIncrement dispatches
+                // 6. The band combo is rebuilt from the players' OnComboIncrement dispatches
                 //    during the re-simulation, so it has to start from nothing. ResetState above
                 //    already zeroes it; this states the requirement where the loop can see it.
                 BandCombo = 0;
 
-                // 6. Re-simulate the surviving input log into the fresh engines up to the MARKER,
+                // 7. Re-simulate the surviving input log into the fresh engines up to the MARKER,
                 //    then truncate it at the consumed index. Visuals are drawn at the landing.
                 foreach (var player in _players)
                 {
                     player.RewindTo(markerInputTime, VisualTime);
                 }
 
-                // 7. Truncate the pause log at the marker. This also drops the pause that opened
+                // 8. Truncate the pause log at the marker. This also drops the pause that opened
                 //    the rewind, so a rewind never counts toward pause-abuse invalidation.
                 TruncatePauseInfo(sectionSongTime);
 
-                // 8. Deliberately NOT CheckForRewindInvalidation(): it can call InvalidateScores,
+                // 9. Deliberately NOT CheckForRewindInvalidation(): it can call InvalidateScores,
                 //    which drops each player's section state. A rewound run stays a normal high
                 //    score (docs/rewind-design.md, "Interactions with existing fork features").
                 //    Section state is left exactly as it stands; the strip's live percent
@@ -166,8 +188,80 @@ namespace YARG.Gameplay
                 IsRewindingToSection = false;
             }
 
-            // 9. Hold the engine frozen until the clock reaches the marker.
+            // 10. Hold the engine frozen until the clock reaches the marker.
             BeginLeadIn(sectionSongTime, markerInputTime, landingInputTime, leadInSongSeconds);
+            return true;
+        }
+
+        /// <summary>
+        /// Whether the pause menu should offer the rewind row at all.
+        /// </summary>
+        /// <remarks>
+        /// v1 is single player only (<c>docs/rewind-design.md</c>, "Scope and non-goals"), and the
+        /// bot test is the section strip's own <see cref="HasBots"/> rather than a second scan.
+        /// Practice and replay never see the row anyway, because their pause menus are separate
+        /// prefabs that do not carry it; the test is here so the gate reads as one statement.
+        /// <para>
+        /// Song speed is deliberately <i>not</i> tested. A sub-1.0 run is already not a valid high
+        /// score, but it is still a run, and the rule table puts no restriction on it.
+        /// </para>
+        /// <para>
+        /// The reference-time test suppresses the row during the start delay, when song time is
+        /// still negative. Every target would be <i>ahead</i> of the run at that point, so the
+        /// picker would offer a list it could not act on; Restart already covers that case.
+        /// It is the reference time rather than <c>SongTime</c> so that a lead-in that lands
+        /// before zero (a rewind to the first section) keeps the row, since the run's real
+        /// position there is the section marker.
+        /// </para>
+        /// </remarks>
+        public bool CanRewindToSection =>
+            !IsPractice && !IsReplay && !GlobalVariables.State.PlayingWithReplay &&
+            _players is { Count: 1 } && !HasBots &&
+            Chart?.Sections is { Count: > 0 } &&
+            RewindReferenceSongTime >= 0;
+
+        /// <summary>
+        /// Rewinds from the pause menu: unwinds the pause around the rewind, without the
+        /// one-second unpause rewind <see cref="Resume"/> would otherwise apply.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately not routed through <see cref="Resume"/>. That path rewinds by
+        /// <c>PAUSE_REWIND_LENGTH</c>, records the pause length against <c>PauseInfo[^1]</c> and
+        /// can trip <c>CheckForRewindInvalidation</c> - none of which apply here, because the
+        /// lead-in <i>is</i> the transition and <see cref="TruncatePauseInfo"/> has just dropped
+        /// the pause that opened the menu (<c>docs/rewind-design.md</c>, "Pause-abuse
+        /// invalidation").
+        /// <para>
+        /// The order mirrors <see cref="RestartLeadIn"/>: re-read calibration (both it and song
+        /// speed are editable from the pause menu, and the marker and window length are derived
+        /// from them), seek while the runner is still paused, then pop the menus, restore the time
+        /// scale and resume.
+        /// </para>
+        /// </remarks>
+        public void RewindToSectionFromPause(double sectionSongTime)
+        {
+            if (!Paused)
+            {
+                RewindToSection(sectionSongTime);
+                return;
+            }
+
+            UpdateCalibration();
+
+            // The seek runs while the runner is still paused and the menu is still up, exactly as
+            // RestartLeadIn seeks before it resumes. If it refuses, the pause is untouched.
+            if (!RewindToSection(sectionSongTime))
+            {
+                return;
+            }
+
+            _pauseMenu.PopAllMenus();
+            Time.timeScale = 1f;
+            _songRunner.Resume();
+
+            // BeginLeadIn has already raised Rewinding, so ResumeCore leaves the freeze alone and
+            // does not queue the resume inputs: the lead-in owns both.
+            ResumeCore();
         }
 
         /// <summary>

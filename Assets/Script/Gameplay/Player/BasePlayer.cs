@@ -256,6 +256,17 @@ namespace YARG.Gameplay.Player
         }
 
         /// <summary>
+        /// The phrases of this player's own note track, or <c>null</c> for a player that has none.
+        /// </summary>
+        /// <remarks>
+        /// Exists so the rewind picker can find the BRE and coda spans without knowing which
+        /// concrete player it is looking at: a section that starts inside one is not a valid
+        /// rewind target (<c>docs/rewind-design.md</c>, "Section starting inside a BRE/coda").
+        /// The track is the post-modifier one, which is the one actually being played.
+        /// </remarks>
+        public virtual IReadOnlyList<Phrase> TrackPhrases => null;
+
+        /// <summary>
         /// Called once the section state has been assigned, so that players with somewhere to
         /// draw it can pass it along.
         /// </summary>
