@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using YARG.Core.Chart;
 using YARG.Core.Logging;
+using YARG.Gameplay.HUD;
 using YARG.Settings;
 
 namespace YARG.Gameplay
@@ -55,6 +57,12 @@ namespace YARG.Gameplay
         /// Rewinds the run to the start of the section at <paramref name="sectionSongTime"/> and
         /// runs the lead-in.
         /// </summary>
+        /// <param name="sectionIndex">
+        /// The target's index in <c>Chart.Sections</c>. Carried alongside the time rather than
+        /// derived from it: the two are not interchangeable at the ends (the first section rewinds
+        /// to song start, not to its own marker) and two sections can share a <c>Time</c>, so a
+        /// time cannot name a section on its own. The section strip needs the index.
+        /// </param>
         /// <param name="sectionSongTime">
         /// The section marker, in <b>song</b> time, which is how section times come off the chart.
         /// Everything below converts deliberately: <c>SongRunner.InitializeSongTime</c> anchors
@@ -72,7 +80,7 @@ namespace YARG.Gameplay
         /// <c>true</c> when the run actually moved. A caller that has to unwind the pause around
         /// the rewind (<see cref="RewindToSectionFromPause"/>) needs to know before it commits.
         /// </returns>
-        public bool RewindToSection(double sectionSongTime)
+        public bool RewindToSection(int sectionIndex, double sectionSongTime)
         {
             if (_players == null || _players.Count == 0)
             {
@@ -138,26 +146,23 @@ namespace YARG.Gameplay
                 //    the new ones, or they read dead engines for the rest of the run.
                 _failMeter.RebuildPlayers();
 
-                // 4. A rewind fired from the fail menu revives the run. EngineManager.ResetState
-                //    below clears only the band-level _playerFailed flag: it never calls
-                //    RevivePlayer, so without this the per-engine ThisPlayerFailed latch and
-                //    TrackPlayer.PlayerHasFailed both survive, the highway stays lowered and
-                //    BasePlayer.OnGameInput drops every input for the rest of the run.
+                // 4. A rewind fired from the fail menu revives the run. Without this the
+                //    TrackPlayer.PlayerHasFailed latch survives and BasePlayer.OnGameInput drops
+                //    every input for the rest of the run, and the stems stay faded out with
+                //    nothing else to fade them back in. The engine side of the revive is step 8,
+                //    after the re-simulation, because the re-simulation can fail a player again.
                 //    Deliberately only the reviving subset of UnfailSong: no NoFailChanged(true),
                 //    which would turn No Fail on, and no InvalidateScores, because a rewound run
                 //    stays a normal high score (docs/rewind-design.md, "Fail menu").
                 if (PlayerHasFailed)
                 {
                     PlayerHasFailed = false;
-                    EngineManager.RevivePlayer();
                     _mixer.FadeIn(DEFAULT_VOLUME, SONG_START_DELAY);
                 }
 
-                // 5. Band-level state, including the rock meter. The per-player stats are
-                //    re-established by the re-simulation below. Ordered after the revive on
-                //    purpose: RevivePlayer only lifts a failed player to half happiness, and
-                //    ResetHappiness here takes it back to the preset's starting value, so the
-                //    rock meter ends full either way.
+                // 5. Band-level state, including the rock meter, which ResetHappiness takes back
+                //    to the preset's starting level. The per-player stats are re-established by
+                //    the re-simulation below.
                 EngineManager.ResetState();
 
                 // 6. The band combo is rebuilt from the players' OnComboIncrement dispatches
@@ -172,15 +177,57 @@ namespace YARG.Gameplay
                     player.RewindTo(markerInputTime, VisualTime);
                 }
 
-                // 8. Truncate the pause log at the marker. This also drops the pause that opened
-                //    the rewind, so a rewind never counts toward pause-abuse invalidation.
+                // 8. Rock meter, after the re-simulation and not before it. Step 5 took it back
+                //    to the preset's starting level, and step 7 then replayed the surviving
+                //    timeline's whole happiness history into the fresh containers - each one
+                //    subscribes to its own engine's note events - so by here the meter is
+                //    wherever the run had driven it: low, or at zero on a rewind taken from the
+                //    fail menu. The design has it at the starting level after every rewind
+                //    (docs/rewind-design.md, "Rock meter").
+                //
+                //    RevivePlayer first, unconditionally rather than only for a run that came
+                //    from the fail menu: if the re-simulation drove any engine to zero it left
+                //    _playerFailed set and _happinessAdjustment accumulating, and
+                //    InitializeHappiness clears neither. That adjustment is subtracted from the
+                //    band average for the rest of the song, which would hold the refilled meter
+                //    at zero and make the UpdateHappiness at the tail of InitializeHappiness fire
+                //    OnSongFailed over the rewound run. RevivePlayer zeroes both.
+                //
+                //    Then InitializeHappiness rather than a second ResetState, so that the band
+                //    state the re-simulation just rebuilt (stars, combo, codas, unison
+                //    successes) survives.
+                EngineManager.RevivePlayer();
+                EngineManager.InitializeHappiness(
+                    SettingsManager.Settings.NoFail.Value != NoFailMode.Off);
+
+                // 9. The danger look does not come back with the meter. The re-simulation drove
+                //    the fresh container down past the near-fail threshold and re-fired
+                //    OnHappinessNearFail on the way (the pre-rewind latch went with the old
+                //    container at step 2), and the refill above answers it with no over-fail
+                //    event, because ResetHappiness clears only ThisPlayerFailed and Happiness and
+                //    leaves the container's NearFail latch standing. The highway also has to come
+                //    back up for a run that arrived from the fail menu, which is what puts the
+                //    top HUD - and with it the section strip - back on screen.
+                foreach (var player in _players)
+                {
+                    player.ClearRewindFailState();
+                }
+
+                // 10. Truncate the pause log at the marker. This also drops the pause that opened
+                //     the rewind, so a rewind never counts toward pause-abuse invalidation.
                 TruncatePauseInfo(sectionSongTime);
 
-                // 9. Deliberately NOT CheckForRewindInvalidation(): it can call InvalidateScores,
-                //    which drops each player's section state. A rewound run stays a normal high
-                //    score (docs/rewind-design.md, "Interactions with existing fork features").
-                //    Section state is left exactly as it stands; the strip's live percent
-                //    double-counts until the section-strip rewind lands.
+                // 11. Section strip. Sections before the target keep their status, the target and
+                //     everything after go back to the unplayed look, and the highlight lands on
+                //     the target for the whole lead-in. The strip's own feed is held off for the
+                //     whole rewind (BasePlayer.NotifySectionNoteHit), so the hits step 7 replayed
+                //     were not added to the blocks before the target a second time.
+                RewindSectionStrips(sectionIndex);
+
+                // 12. Deliberately NOT CheckForRewindInvalidation(): it can call InvalidateScores,
+                //     which drops each player's section state. A rewound run stays a normal high
+                //     score (docs/rewind-design.md, "Interactions with existing fork features"),
+                //     and step 11 has just handled section state deliberately instead.
             }
             finally
             {
@@ -188,7 +235,7 @@ namespace YARG.Gameplay
                 IsRewindingToSection = false;
             }
 
-            // 10. Hold the engine frozen until the clock reaches the marker.
+            // 13. Hold the engine frozen until the clock reaches the marker.
             BeginLeadIn(sectionSongTime, markerInputTime, landingInputTime, leadInSongSeconds);
             return true;
         }
@@ -238,11 +285,11 @@ namespace YARG.Gameplay
         /// scale and resume.
         /// </para>
         /// </remarks>
-        public void RewindToSectionFromPause(double sectionSongTime)
+        public void RewindToSectionFromPause(int sectionIndex, double sectionSongTime)
         {
             if (!Paused)
             {
-                RewindToSection(sectionSongTime);
+                RewindToSection(sectionIndex, sectionSongTime);
                 return;
             }
 
@@ -250,7 +297,7 @@ namespace YARG.Gameplay
 
             // The seek runs while the runner is still paused and the menu is still up, exactly as
             // RestartLeadIn seeks before it resumes. If it refuses, the pause is untouched.
-            if (!RewindToSection(sectionSongTime))
+            if (!RewindToSection(sectionIndex, sectionSongTime))
             {
                 return;
             }
@@ -442,17 +489,7 @@ namespace YARG.Gameplay
                 return null;
             }
 
-            int index = -1;
-            for (int i = 0; i < sections.Count; i++)
-            {
-                if (sections[i].Time > fromSongTime)
-                {
-                    break;
-                }
-
-                index = i;
-            }
-
+            int index = FindSectionIndexAtTime(sections, fromSongTime);
             if (index < 0)
             {
                 // Before the first section; there is nowhere to go but the start of the song.
@@ -475,6 +512,48 @@ namespace YARG.Gameplay
         }
 
         /// <summary>
+        /// Takes every player's section strip back to the target.
+        /// </summary>
+        /// <remarks>
+        /// Blocks before the target are deliberately left alone, which is what the hit gate in
+        /// <c>BasePlayer.NotifySectionNoteHit</c> is protecting: the re-simulation in step 7 has
+        /// already re-dispatched every surviving hit by the time this runs, and those would have
+        /// been added on top of the counts live play left there (<c>docs/rewind-design.md</c>,
+        /// "Ordered seek checklist" step 6).
+        /// <para>
+        /// A player with no strip state - a bot, a vocalist, a run that cannot earn credit -
+        /// simply has nothing to rewind.
+        /// </para>
+        /// </remarks>
+        private void RewindSectionStrips(int sectionIndex)
+        {
+            foreach (var player in _players)
+            {
+                player.SectionState?.RewindTo(sectionIndex);
+            }
+        }
+
+        /// <summary>
+        /// The index of the last section to have started by <paramref name="songTime"/>, or -1
+        /// when the song has not reached the first one.
+        /// </summary>
+        private static int FindSectionIndexAtTime(IReadOnlyList<Section> sections, double songTime)
+        {
+            int index = -1;
+            for (int i = 0; i < sections.Count; i++)
+            {
+                if (sections[i].Time > songTime)
+                {
+                    break;
+                }
+
+                index = i;
+            }
+
+            return index;
+        }
+
+        /// <summary>
         /// The name of the section starting at (or containing) the given song time, for logging.
         /// </summary>
         private string GetSectionNameAt(double songTime)
@@ -485,18 +564,8 @@ namespace YARG.Gameplay
                 return "<no sections>";
             }
 
-            Section found = null;
-            foreach (var section in sections)
-            {
-                if (section.Time > songTime)
-                {
-                    break;
-                }
-
-                found = section;
-            }
-
-            return found?.Name ?? "<intro>";
+            int index = FindSectionIndexAtTime(sections, songTime);
+            return index < 0 ? "<intro>" : sections[index].Name;
         }
     }
 }

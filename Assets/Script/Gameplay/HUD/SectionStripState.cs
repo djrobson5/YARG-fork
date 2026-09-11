@@ -77,6 +77,17 @@ namespace YARG.Gameplay.HUD
         /// </summary>
         private int _sectionCursor;
 
+        /// <summary>
+        /// Set when the cursor has been parked on a section the song clock has not reached yet, so
+        /// that the section is entered when the clock arrives rather than when the cursor moved.
+        /// </summary>
+        /// <remarks>
+        /// Only a rewind does that: the highlight has to sit on the target for the whole lead-in,
+        /// while the target itself still has to look unplayed until it is actually replayed
+        /// (<c>docs/rewind-design.md</c>, "Rule table: HUD and highway elements").
+        /// </remarks>
+        private bool _cursorEntryPending;
+
         public int BlockCount => _blockStates.Length;
 
         /// <summary>
@@ -245,10 +256,12 @@ namespace YARG.Gameplay.HUD
         /// invalidates scores once it goes too far.
         /// </para>
         /// <para>
-        /// The cursor never regresses either, so a pause-rewind that crosses back over a section
+        /// The cursor never regresses on its own, so a pause-rewind that crosses back over a section
         /// boundary leaves the highlight on the later section until the song time catches up.
         /// That is cosmetic only: the notes replayed over that stretch were already resolved and
-        /// are not dispatched a second time, so no block's state or progress rides on it.
+        /// are not dispatched a second time, so no block's state or progress rides on it. A
+        /// section rewind is the one thing that does move it backwards, deliberately, through
+        /// <see cref="RewindTo"/>.
         /// </para>
         /// </remarks>
         public void UpdateSongTime(double songTime)
@@ -262,8 +275,122 @@ namespace YARG.Gameplay.HUD
 
             if (_sectionCursor != previousCursor)
             {
+                _cursorEntryPending = false;
+                EnterSection(_sectionCursor);
+                return;
+            }
+
+            // A rewind parks the cursor on its target before the clock gets there, so the
+            // highlight is already on it through the lead-in. The section is only entered - and so
+            // only turns clean - once the clock actually arrives. Section 0 is the deliberate
+            // exception: it owns everything before the first marker, so it is entered at the
+            // landing rather than at the marker, exactly as the constructor enters it at song
+            // start rather than at Sections[0].Time.
+            if (_cursorEntryPending &&
+                (_sectionCursor == 0 || songTime >= _sections[_sectionCursor].Time))
+            {
+                _cursorEntryPending = false;
                 EnterSection(_sectionCursor);
             }
+        }
+
+        /// <summary>
+        /// Takes the strip back to how it stood when the run first entered the section at
+        /// <paramref name="sectionIndex"/>, for a mid-song rewind to it.
+        /// </summary>
+        /// <remarks>
+        /// Blocks before the target are left exactly as they are: the surviving timeline did not
+        /// change, so neither did their state or their progress. That is only true because the
+        /// re-simulation is not allowed to feed them a second time - <see cref="OnNoteMissed"/> is
+        /// idempotent, but <see cref="OnNoteHit"/> adds, so replayed hits would roughly double
+        /// every earlier block's percent (<c>docs/rewind-design.md</c>, "Ordered seek checklist"
+        /// step 6). <c>BasePlayer.NotifySectionNoteHit</c> holds that feed off for the duration.
+        /// <para>
+        /// The target and everything after it go back to the unplayed look. A block perfected in
+        /// an earlier run keeps its state, since it is banked and not this run's to take away.
+        /// A target section with no notes of its own has no block to reset, and the highlight
+        /// stays on the last block before it - the same thing the cursor does when it walks into
+        /// such a section normally.
+        /// </para>
+        /// <para>
+        /// End-of-song credit rides on none of this: <c>SectionCompletionScanner</c> reads
+        /// <c>Note.WasHit</c>, which the engine rebuild clears and the re-simulation re-establishes.
+        /// </para>
+        /// </remarks>
+        public void RewindTo(int sectionIndex)
+        {
+            // Create refuses an empty section list, so there is always at least one section here.
+            sectionIndex = Math.Clamp(sectionIndex, 0, _sections.Count - 1);
+
+            // Blocks are numbered in section order, so the first one at or after the target and
+            // every block after it is exactly the set to clear. -1 means no section from the
+            // target on has a block, and there is nothing to clear at all.
+            int firstBlock = FirstBlockFrom(sectionIndex);
+            if (firstBlock >= 0)
+            {
+                for (int block = firstBlock; block < _blockStates.Length; block++)
+                {
+                    if (_blockHits[block] != 0)
+                    {
+                        _blockHits[block] = 0;
+                        BlockProgressChanged?.Invoke(block);
+                    }
+
+                    var state = _blockStates[block];
+                    if (state == SectionStripBlockState.Clean || state == SectionStripBlockState.Dropped)
+                    {
+                        _blockStates[block] = SectionStripBlockState.Needed;
+                        BlockStateChanged?.Invoke(block);
+                    }
+                }
+            }
+
+            _sectionCursor = sectionIndex;
+            _cursorEntryPending = true;
+
+            int current = LastBlockAtOrBefore(sectionIndex);
+            if (current == CurrentBlockIndex)
+            {
+                return;
+            }
+
+            CurrentBlockIndex = current;
+            CurrentBlockChanged?.Invoke(current);
+        }
+
+        /// <summary>
+        /// The first block belonging to a section at or after <paramref name="sectionIndex"/>, or
+        /// -1 when no section from there on has one.
+        /// </summary>
+        private int FirstBlockFrom(int sectionIndex)
+        {
+            for (int i = sectionIndex; i < _sectionToBlock.Length; i++)
+            {
+                if (_sectionToBlock[i] >= 0)
+                {
+                    return _sectionToBlock[i];
+                }
+            }
+
+            return -1;
+        }
+
+        /// <summary>
+        /// The block of the nearest section at or before <paramref name="sectionIndex"/> that has
+        /// one, or -1 when none does. This is where the cursor would have left the highlight had
+        /// it walked to the target the ordinary way.
+        /// </summary>
+        private int LastBlockAtOrBefore(int sectionIndex)
+        {
+            for (int i = sectionIndex; i >= 0; i--)
+            {
+                if (_sectionToBlock[i] >= 0)
+                {
+                    return _sectionToBlock[i];
+                }
+            }
+
+            return -1;
         }
 
         /// <summary>

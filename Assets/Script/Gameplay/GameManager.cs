@@ -1379,6 +1379,18 @@ namespace YARG.Gameplay
                 return;
             }
 
+            // A rewind re-simulates the surviving input log into fresh engines, which replays the
+            // whole happiness history and can take a container to zero on the way. That is a
+            // replayed fail, not a new one: the meter is refilled before the rewind returns
+            // (GameManager.Rewind.cs, step 8) and the per-player side effects are cleared with it
+            // (BasePlayer.ClearRewindFailState). This method is async void, so without the gate
+            // the fail sequence would outlive the rewind and pause the run in the middle of the
+            // lead-in.
+            if (IsRewindingToSection)
+            {
+                return;
+            }
+
             if (!PlayerHasFailed)
             {
                 PlayerHasFailed = true;

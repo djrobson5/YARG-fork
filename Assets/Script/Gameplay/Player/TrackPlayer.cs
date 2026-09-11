@@ -2075,6 +2075,32 @@ namespace YARG.Gameplay.Player
             CameraPositioner.Lower(false);
         }
 
+        /// <inheritdoc/>
+        /// <remarks>
+        /// Three latches, none of which the seek path clears on its own:
+        /// <list type="bullet">
+        /// <item>The highway material's fail state. It is raised by <see cref="OnHappinessNearFail"/>
+        /// - which the re-simulation re-fires as it replays the run's damage into the fresh
+        /// container - and only ever lowered by the matching over-fail event, which the rewind
+        /// cannot count on: <c>EngineManager.EngineContainer.NearFail</c> is a latch that
+        /// <c>ResetHappiness</c> does not clear, so refilling the meter dispatches nothing. (The
+        /// latch itself corrects on the first judged event that finds the meter above the
+        /// near-fail threshold; only the material needs help.)</item>
+        /// <item><see cref="BasePlayer.PlayerHasFailed"/>, which <see cref="OnPlayerRevived"/>
+        /// clears - but only if it is still set when the revive is dispatched.</item>
+        /// <item>The lowered highway. Raising is idempotent, and <c>_didLowerTrack</c> is put back
+        /// in step with it so the next visual update does not try to raise it again.</item>
+        /// </list>
+        /// </remarks>
+        public override void ClearRewindFailState()
+        {
+            TrackMaterial.FailState = 0f;
+
+            PlayerHasFailed = false;
+            _didLowerTrack = false;
+            CameraPositioner.Raise(false);
+        }
+
         protected void OnPlayerRevived()
         {
             if (!PlayerHasFailed)

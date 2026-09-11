@@ -191,14 +191,19 @@ namespace YARG.Gameplay.HUD
                 return;
             }
 
-            double target = _targetTimes[HoveredIndex];
+            int sectionIndex = HoveredIndex;
+            double target = _targetTimes[sectionIndex];
 
             // Close first: the rewind unwinds the pause underneath us, and the pane must have
             // given the navigation scheme and group back before that happens.
             var gameManager = _gameManager;
             Close();
 
-            gameManager.RewindToSectionFromPause(target);
+            // Both halves of the target: the time is where the run seeks to, the index is which
+            // section that is. Only the pane knows the second one - the first section's target
+            // time is song start rather than its own marker, and two sections can share a Time -
+            // so it is handed over rather than recovered from the clock.
+            gameManager.RewindToSectionFromPause(sectionIndex, target);
         }
 
         private void BuildViews()

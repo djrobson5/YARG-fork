@@ -275,6 +275,17 @@ namespace YARG.Gameplay.Player
         }
 
         /// <summary>
+        /// Clears the fail and near-fail look after a rewind has refilled the rock meter.
+        /// </summary>
+        /// <remarks>
+        /// Fork-owned latched view state, like the ones listed in <c>docs/rewind-design.md</c>
+        /// under "Fork-owned pieces that need new code". A no-op for players with no highway.
+        /// </remarks>
+        public virtual void ClearRewindFailState()
+        {
+        }
+
+        /// <summary>
         /// The optimal Star Power path computed for this player at song load, or <c>null</c> when
         /// the overlay is off, the instrument is unsupported, or this is a band run.
         /// </summary>
@@ -341,9 +352,20 @@ namespace YARG.Gameplay.Player
         /// <remarks>
         /// The single place the per-instrument miss paths funnel into, so that adding an
         /// instrument never means adding another hook.
+        /// <para>
+        /// Held off for the duration of a section rewind, like <see cref="NotifySectionNoteHit"/>.
+        /// A miss is idempotent, so this gate is defensive rather than load-bearing: it keeps the
+        /// two feeds symmetric, so that the whole of the strip's input is off for the re-simulation
+        /// rather than half of it.
+        /// </para>
         /// </remarks>
         protected void NotifySectionNoteMissed(uint tick)
         {
+            if (GameManager.IsRewindingToSection)
+            {
+                return;
+            }
+
             SectionState?.OnNoteMissed(tick);
         }
 
@@ -354,9 +376,26 @@ namespace YARG.Gameplay.Player
         /// <remarks>
         /// The mirror image of <see cref="NotifySectionNoteMissed"/>, and the single place the
         /// per-instrument hit paths funnel into.
+        /// <para>
+        /// A section rewind re-simulates the surviving input log into a fresh engine, which
+        /// re-dispatches every hit before the target, and then rewinds the strip deliberately
+        /// (<c>SectionStripState.RewindTo</c>). The rewind clears the target and everything after
+        /// it, but deliberately does <i>not</i> clear the blocks before it - those already hold
+        /// the surviving timeline's own counts from live play. This adds, so letting the replayed
+        /// hits through would roughly double every one of them (<c>docs/rewind-design.md</c>,
+        /// "Ordered seek checklist" step 6); the feed is held off instead. The gate is the
+        /// rewind's own flag rather than <c>GameManager.IsSeekingReplay</c>, which the rewind also
+        /// raises: the double count is a rewind problem, and a run with a live strip is never
+        /// scrubbed any other way.
+        /// </para>
         /// </remarks>
         protected void NotifySectionNoteHit(uint tick, int count)
         {
+            if (GameManager.IsRewindingToSection)
+            {
+                return;
+            }
+
             SectionState?.OnNoteHit(tick, count);
         }
 
