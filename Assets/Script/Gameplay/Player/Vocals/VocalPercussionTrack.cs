@@ -77,16 +77,49 @@ namespace YARG.Gameplay.Player
                 }
 
                 // Go to the next note (and the next phrase if necessary)
-                _noteIndex++;
-                if (!CurrentNoteInBounds)
+                AdvanceNote();
+            }
+        }
+
+        private void AdvanceNote()
+        {
+            _noteIndex++;
+            if (!CurrentNoteInBounds)
+            {
+                // Make sure to skip all of the empty phrases
+                do
                 {
-                    // Make sure to skip all of the empty phrases
-                    do
-                    {
-                        _phraseIndex++;
-                        _noteIndex = 0;
-                    } while (CurrentPhraseInBounds && !CurrentNoteInBounds);
-                }
+                    _phraseIndex++;
+                    _noteIndex = 0;
+                } while (CurrentPhraseInBounds && !CurrentNoteInBounds);
+            }
+        }
+
+        /// <summary>
+        /// Seeks the percussion notes back to the current song time, for a rewind's lead-in.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="Initialize"/> alone would put the cursor at zero and walk the whole song's
+        /// percussion notes back onto the track, so it is followed by a silent advance to the
+        /// landing.
+        /// </remarks>
+        public void RewindTo()
+        {
+            if (_notes is null)
+            {
+                return;
+            }
+
+            Initialize(_notes);
+
+            if (CurrentPhraseInBounds && !CurrentNoteInBounds)
+            {
+                AdvanceNote();
+            }
+
+            while (CurrentNoteInBounds && CurrentNote.Time < GameManager.SongTime)
+            {
+                AdvanceNote();
             }
         }
 

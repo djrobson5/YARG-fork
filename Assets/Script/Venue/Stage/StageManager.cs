@@ -50,6 +50,61 @@ namespace YARG.Venue.Stage
             {
                 _hasStageEvents = true;
             }
+
+            GameManager.SetVenueStageManager(this);
+        }
+
+        /// <summary>
+        /// Seeks the stage effects to <paramref name="time"/>, in either direction.
+        /// </summary>
+        /// <remarks>
+        /// Only the fog latches, so only the fog is reproduced: bonus FX is a one-shot pyro burst
+        /// and is deliberately not re-fired while the events replay, because a seek shows the
+        /// state the stage is in and not the bursts that got it there.
+        /// </remarks>
+        public void ResetTime(double time)
+        {
+            if (!_hasStageEvents)
+            {
+                return;
+            }
+
+            bool fogOn = false;
+
+            _stageEventIndex = 0;
+            while (_stageEventIndex < _stageEvents.Count &&
+                _stageEvents[_stageEventIndex].Time <= time)
+            {
+                switch (_stageEvents[_stageEventIndex].Effect)
+                {
+                    case StageEffect.FogOn:
+                        fogOn = true;
+                        break;
+                    case StageEffect.FogOff:
+                        fogOn = false;
+                        break;
+                }
+
+                _stageEventIndex++;
+            }
+
+            // A burst that was still going when the seek landed belongs to the discarded timeline.
+            foreach (var stageElement in _pyroElements)
+            {
+                stageElement.StopEffect();
+            }
+
+            foreach (var stageElement in _fogElements)
+            {
+                if (fogOn)
+                {
+                    stageElement.StartEffect();
+                }
+                else
+                {
+                    stageElement.StopEffect();
+                }
+            }
         }
 
         private void Update()

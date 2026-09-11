@@ -214,7 +214,10 @@ namespace YARG.Gameplay.Player
 
             engine.OnNoteHit += (_, note) =>
             {
-                if (note.IsPercussion)
+                // The particle burst and its lights are feedback, so they are gated the way the
+                // sibling handlers gate theirs: a re-simulation would otherwise fire one for
+                // every percussion note the surviving timeline ever hit.
+                if (note.IsPercussion && !GameManager.IsSeekingReplay)
                 {
                     _percussionTrack.HitPercussionNote(note);
                 }
@@ -288,6 +291,14 @@ namespace YARG.Gameplay.Player
         protected override void ResetVisuals()
         {
             _lastTargetNote = null;
+
+            // Both are stamped with GameManager.InputTime, which during a re-simulation is the
+            // landing rather than the historical moment, so a replayed sing or hit that ended
+            // "true" would still be inside the threshold at the landing and show the needle with
+            // no target note behind it.
+            _lastSingTime = null;
+            _lastHitTime = null;
+
             _hud.SetFullCombo(IsFc);
         }
 
@@ -333,9 +344,22 @@ namespace YARG.Gameplay.Player
 
         public override void RestartLeadInVisuals(double visualTime)
         {
-            // The vocal track itself does not seek backwards yet, but the phrase cursor must go
-            // back or the HUD reads a phrase the run has not reached again.
+            // The phrase cursor must go back or the HUD reads a phrase the run has not reached
+            // again. UpdatePercussionPhrase walks it forward from -1 on the next update, so the
+            // percussion readout lands on the phrase under way at the landing on its own.
             _phraseIndex = -1;
+
+            // One highway is shared by every harmony part, so the part that owns the countdown
+            // owns the seek too; the percussion track is this player's own.
+            if (_handlesCountdown && GameManager.VocalTrack != null)
+            {
+                GameManager.VocalTrack.RewindTo(visualTime);
+            }
+
+            if (_percussionTrack != null)
+            {
+                _percussionTrack.RewindTo();
+            }
 
             base.RestartLeadInVisuals(visualTime);
         }

@@ -642,6 +642,89 @@ namespace YARG.Gameplay.Player
             SetRange(_vocalsTrack.RangeShifts[0]);
         }
 
+        /// <summary>
+        /// Seeks the vocals highway to <paramref name="visualTime"/>, the start of a rewind's
+        /// lead-in window (<c>docs/rewind-design.md</c>, "Vocals").
+        /// </summary>
+        /// <remarks>
+        /// Modelled on <see cref="ResetPracticeSection"/> - the same pools, lyric container,
+        /// talkie pool and pitch range - but the cursors are seeked forward to
+        /// <paramref name="visualTime"/> rather than left at zero. That difference is the whole
+        /// method: nothing in the vocals spawn path skips an element by hit state, because the
+        /// note, talkie and lyric elements are drawn from the chart alone and carry no judgement,
+        /// so cursors parked at zero would walk the entire song back onto the highway a poolful
+        /// per frame. Notes the run already sang past simply do not come back, which is the seek
+        /// behaviour the instrument highways get from their own hit/miss check.
+        /// <para>
+        /// The two clocks are the ones each loop already reads: the range shifts are stepped
+        /// against visual time as <see cref="Update"/> does, the spawn cursors against song time
+        /// as the spawn loops do.
+        /// </para>
+        /// </remarks>
+        public void RewindTo(double visualTime)
+        {
+            // Skip if no vocals
+            if (!gameObject.activeSelf)
+            {
+                return;
+            }
+
+            // Everything the discarded timeline had on screen goes back to the pools.
+            foreach (var pool in _notePools)
+            {
+                pool.ReturnAllObjects();
+            }
+
+            _lyricContainer.ResetVisuals();
+            _talkiePool.ReturnAllObjects();
+            _phraseLinePool.ReturnAllObjects();
+
+            double songTime = GameManager.SongTime;
+
+            for (int i = 0; i < _scrollingNoteTrackers.Length; i++)
+            {
+                _scrollingNoteTrackers[i]?.SeekTo(songTime, forLyrics: false);
+                _scrollingLyricTrackers[i]?.SeekTo(songTime, forLyrics: true);
+
+                // The static queue is rebuilt from the phrase the seek lands on, so the enqueue
+                // cursor - which indexes the same filtered phrase list the tracker walks - goes
+                // back to just before it.
+                int leftmostPhrase = _staticPhraseTrackers[i]?.SeekTo(songTime) ?? 0;
+                _highestEnqueuedPhrasePairIndices[i] = leftmostPhrase - 1;
+
+                _staticPhraseQueues[i]?.Clear();
+                _rightEdges[i] = DEFAULT_STATIC_LYRICS_RIGHT_EDGE;
+                _noMoreStaticPhrases[i] = false;
+                _staticLyricHoldText[i].Reset();
+
+                _phraseMarkerIndices[i] =
+                    CountPhraseLinesBefore(_vocalsTrack.Parts[i].NotePhrases, songTime);
+            }
+
+            // The pitch range lerps from phrase to phrase, so it is set outright to the range in
+            // force at the landing. StartRangeChange would ease in from whatever range the
+            // discarded timeline was showing, which is the one place a rewind would animate.
+            var ranges = _vocalsTrack.RangeShifts;
+            _nextRangeIndex = 1;
+            while (_nextRangeIndex < ranges.Count && ranges[_nextRangeIndex].Time < visualTime)
+            {
+                _nextRangeIndex++;
+            }
+
+            SetRange(ranges[_nextRangeIndex - 1]);
+        }
+
+        private static int CountPhraseLinesBefore(List<VocalsPhrase> phrases, double time)
+        {
+            int index = 0;
+            while (index < phrases.Count && phrases[index].TimeEnd < time)
+            {
+                index++;
+            }
+
+            return index;
+        }
+
         public void SetPracticeSection(uint start, uint end)
         {
             // Skip if no vocals

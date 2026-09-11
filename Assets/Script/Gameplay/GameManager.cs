@@ -28,7 +28,9 @@ using YARG.Replays;
 using YARG.Scores;
 using YARG.Settings;
 using YARG.Settings.Types;
+using YARG.Venue;
 using YARG.Venue.Characters;
+using YARG.Venue.Stage;
 using YARG.Venue.VenueCamera;
 
 namespace YARG.Gameplay
@@ -95,6 +97,8 @@ namespace YARG.Gameplay
         public CrowdEventHandler CrowdEventHandler  { get; private set; }
         public CameraManager     VenueCameraManager { get; private set; }
         public CharacterManager  VenueCharacterManager { get; private set; }
+        public LightManager      VenueLightManager { get; private set; }
+        public StageManager      VenueStageManager { get; private set; }
 
         public PracticeManager  PracticeManager  { get; private set; }
         public BackgroundManager BackgroundManager { get; private set; }
@@ -365,6 +369,13 @@ namespace YARG.Gameplay
             BackgroundManager.SetTime(_songRunner.GetAudioPlaybackTime(_songRunner.SongTime));
             VenueCameraManager?.ResetTime(time);
             VenueCharacterManager?.ResetTime(time);
+
+            // Venue lights and stage cues only ever walked forward, so before this a backwards
+            // seek left them showing whatever cue the run had reached - the rewind's whole point
+            // being that it does not (docs/rewind-design.md, "Venue lights and stage cues"). They
+            // sit beside the camera and character seeks so the replay viewer's scrub gets it too.
+            VenueLightManager?.ResetTime(time);
+            VenueStageManager?.ResetTime(time);
             if (_lyricBar.gameObject.activeSelf)
             {
                 _lyricBar.SetSongTime(time);
@@ -1245,6 +1256,16 @@ namespace YARG.Gameplay
         {
             VenueCharacterManager = characterManager;
             InitializeCharacterDebug();
+        }
+
+        public void SetVenueLightManager(LightManager lightManager)
+        {
+            VenueLightManager = lightManager;
+        }
+
+        public void SetVenueStageManager(StageManager stageManager)
+        {
+            VenueStageManager = stageManager;
         }
 
         public void SetEditHUD(bool on)

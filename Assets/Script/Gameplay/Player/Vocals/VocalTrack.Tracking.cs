@@ -42,16 +42,7 @@ namespace YARG.Gameplay.Player
 
                 var currentLeftmostPhrase = Phrases[_leftmostPhraseIndex];
 
-                double shiftTime = currentLeftmostPhrase.TimeEnd;
-                if (_leftmostPhraseIndex + 1 < Phrases.Count)
-                {
-                    const double shiftLeadTime = 0.15;
-                    var nextPhrase = Phrases[_leftmostPhraseIndex + 1];
-                    if (nextPhrase.Lyrics.Count > 0)
-                    {
-                        shiftTime = Math.Min(shiftTime, nextPhrase.Lyrics[0].Time - shiftLeadTime);
-                    }
-                }
+                double shiftTime = GetShiftTime(_leftmostPhraseIndex);
 
                 // We haven't passed the last note of the leftmost phrase. If we're in a gap, we need to check if the leftmost phrase
                 // is now imminent
@@ -108,10 +99,53 @@ namespace YARG.Gameplay.Player
                 }
             }
 
+            /// <summary>
+            /// The time at which the phrase at <paramref name="phraseIndex"/> stops being the
+            /// leftmost one.
+            /// </summary>
+            private double GetShiftTime(int phraseIndex)
+            {
+                double shiftTime = Phrases[phraseIndex].TimeEnd;
+                if (phraseIndex + 1 < Phrases.Count)
+                {
+                    const double shiftLeadTime = 0.15;
+                    var nextPhrase = Phrases[phraseIndex + 1];
+                    if (nextPhrase.Lyrics.Count > 0)
+                    {
+                        shiftTime = Math.Min(shiftTime, nextPhrase.Lyrics[0].Time - shiftLeadTime);
+                    }
+                }
+
+                return shiftTime;
+            }
+
             public void Reset()
             {
                 _leftmostPhraseIndex = 0;
                 _inGap = true;
+            }
+
+            /// <summary>
+            /// Puts the cursor where a forward playthrough would have left it at
+            /// <paramref name="time"/>, and reports the phrase it landed on.
+            /// </summary>
+            /// <remarks>
+            /// Deliberately back in the gap state: the next update then announces the leftmost
+            /// phrase as imminent if it is, which is the same path a forward playthrough takes
+            /// into a phrase, and the one that puts the queue back on screen.
+            /// </remarks>
+            public int SeekTo(double time)
+            {
+                _leftmostPhraseIndex = 0;
+                _inGap = true;
+
+                while (_leftmostPhraseIndex + 1 < Phrases.Count &&
+                    time >= GetShiftTime(_leftmostPhraseIndex))
+                {
+                    _leftmostPhraseIndex++;
+                }
+
+                return _leftmostPhraseIndex;
             }
         }
 
@@ -159,6 +193,51 @@ namespace YARG.Gameplay.Player
             {
                 _phraseIndex = 0;
                 _noteOrLyricIndex = 0;
+            }
+
+            /// <summary>
+            /// Puts the cursor where a forward playthrough would have left it at
+            /// <paramref name="time"/>, so that a backwards seek respawns only what is still
+            /// ahead instead of the whole song.
+            /// </summary>
+            /// <remarks>
+            /// <see cref="Reset"/> on its own is not enough: it does not repeat the constructor's
+            /// empty-first-phrase skip, and the spawn loops stall for the rest of the song on a
+            /// cursor parked on one.
+            /// </remarks>
+            public void SeekTo(double time, bool forLyrics)
+            {
+                Reset();
+
+                if (!CurrentPhraseInBounds)
+                {
+                    return;
+                }
+
+                if (forLyrics)
+                {
+                    if (!CurrentLyricInBounds)
+                    {
+                        NextLyric();
+                    }
+
+                    while (CurrentLyricInBounds && CurrentLyric.Time < time)
+                    {
+                        NextLyric();
+                    }
+                }
+                else
+                {
+                    if (!CurrentNoteInBounds)
+                    {
+                        NextNote();
+                    }
+
+                    while (CurrentNoteInBounds && CurrentNote.Time < time)
+                    {
+                        NextNote();
+                    }
+                }
             }
 
             public void NextNote()
