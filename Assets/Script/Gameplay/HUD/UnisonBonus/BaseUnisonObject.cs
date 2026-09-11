@@ -16,11 +16,10 @@ namespace YARG.Gameplay.HUD
         /// Whether this object has a slot for the given engine id.
         /// </summary>
         /// <remarks>
-        /// The arrays are sized once from the engine count, and engine ids are only inside that
-        /// range while every engine is the one registered at song start. A rewind registers fresh
-        /// engines, which take new ids past the end. Until the display learns to re-key itself
-        /// (the unison display does not follow a rewind yet) these guards keep an out-of-range id
-        /// from throwing every frame.
+        /// The arrays are sized from the highest engine id in use, and a rewind registers fresh
+        /// engines whose ids run past the end of the old arrays. <c>UnisonDisplay.RebindEngines</c>
+        /// re-sizes them on that path, so this is a backstop rather than the fix: it keeps an
+        /// id that slips through from throwing every frame.
         /// </remarks>
         protected bool HasParticipantSlot(int engineId) =>
             ParticipantFailState != null && engineId >= 0 && engineId < ParticipantFailState.Length;
@@ -39,9 +38,12 @@ namespace YARG.Gameplay.HUD
 
         public virtual void ResetState()
         {
-            Array.Clear(ParticipantFailState, 0, ParticipantCount);
-            Array.Clear(ParticipantTotalNotes, 0, ParticipantCount);
-            Array.Clear(ParticipantNotesHit, 0, ParticipantCount);
+            // Cleared whole rather than by participant count: the ids in use are not necessarily
+            // the first N slots. After a rewind the one engine in a single player run carries id
+            // 1, so clearing one slot from the front would leave its state standing.
+            Array.Clear(ParticipantFailState, 0, ParticipantFailState.Length);
+            Array.Clear(ParticipantTotalNotes, 0, ParticipantTotalNotes.Length);
+            Array.Clear(ParticipantNotesHit, 0, ParticipantNotesHit.Length);
             ParticipantCount = 0;
         }
 

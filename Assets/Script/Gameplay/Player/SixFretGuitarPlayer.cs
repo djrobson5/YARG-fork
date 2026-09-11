@@ -318,6 +318,8 @@ namespace YARG.Gameplay.Player
 
         protected override void OnSustainEnd(GuitarNote parent, double timeEnded, bool finished)
         {
+            NoteSustainEnded(parent, !parent.IsDisjoint);
+
             foreach (var note in parent.AllNotes)
             {
                 if (parent.IsDisjoint && parent != note) continue;

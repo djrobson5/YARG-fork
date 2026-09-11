@@ -1530,6 +1530,16 @@ namespace YARG.Gameplay
 
         private void OnUnisonPhraseSuccess()
         {
+            // The bonus itself is re-awarded during a rewind's re-simulation, and has to be: the
+            // fresh engine's unison events start un-awarded, so every phrase the surviving
+            // timeline completed pays out into it again. The celebration is not re-shown though -
+            // it is a one-shot transient, and nothing after the re-simulation would take the
+            // success sprite and the scale pop back off again.
+            if (IsSeekingReplay)
+            {
+                return;
+            }
+
             if (_unisonDisplay.gameObject.activeSelf)
             {
                 _unisonDisplay.OnUnisonPhraseSuccess();

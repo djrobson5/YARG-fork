@@ -504,6 +504,18 @@ namespace YARG.Gameplay.HUD
 
         public void ForceReset()
         {
+            // The three latches, cleared before anything reads them. None of them is driven by a
+            // per-frame value: the solo one is only ever lowered by the callback at the tail of
+            // the solo box's hide animation, which ForceReset has just cancelled, and the unison
+            // and coda ones by an end event the seek has thrown away with the old engine
+            // (docs/rewind-design.md, "Fork-owned pieces that need new code" item 9). Left set,
+            // they suppress text notifications and the Star Power path chip for the rest of the
+            // run. Whichever of them is genuinely under way at a rewind's marker is re-asserted
+            // by TrackPlayer once the reset is done.
+            _isSoloActive = false;
+            _isUnisonActive = false;
+            _isCodaActive = false;
+
             _textNotifications.SetActive(true);
 
             SetStarPowerPathChip(false, null);

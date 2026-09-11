@@ -21,6 +21,16 @@ namespace YARG.Gameplay.Visuals
         void OnRewind();
 
         /// <summary>
+        /// Puts the element straight into hit (and, for a sustain, held) state.
+        /// </summary>
+        /// <remarks>
+        /// On the interface so <c>TrackPlayer.TrySpawnHeldSustain</c> can redraw a sustain that a
+        /// rewind left the engine holding across the marker without knowing which instrument it
+        /// belongs to. Every instrument's own hit path calls the same member.
+        /// </remarks>
+        void HitNote();
+
+        /// <summary>
         /// Whether the optimal Star Power path activates on this note, so it should be drawn in
         /// the activation green instead of its own colour
         /// (<c>docs/sp-path-design.md</c> → "Visual redesign, 2026-09-04").

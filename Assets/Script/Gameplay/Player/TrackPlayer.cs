@@ -682,7 +682,13 @@ namespace YARG.Gameplay.Player
             // SongTime, not InputTime: the plan's activation times are chart times, and SongTime
             // is the same clock. InputTime leads it by the calibration offset, which would shift
             // both grace windows by that offset.
-            double time = GameManager.SongTime;
+            //
+            // The reference time rather than SongTime itself, because through a rewind lead-in
+            // the two part company: the engine - and with it the activation count this is about
+            // to compare - sits at the marker while the clock sits a lead-in earlier. Reading the
+            // clock there would call a planned activation taken inside the window "off-plan",
+            // because by that clock its grace window has not been reached yet.
+            double time = GameManager.RewindReferenceSongTime;
 
             while (_spPlanEarlyIndex < activations.Count &&
                 time >= activations[_spPlanEarlyIndex].ActivationTime - SP_PATH_ACTIVATION_GRACE)
@@ -862,6 +868,11 @@ namespace YARG.Gameplay.Player
 
             ShowStarPowerPathGlow(false);
 
+            // The trim latches on a timestamp that only its own Update advances, and that Update
+            // does not run while the object is inactive, so a seek landing mid-animation would
+            // leave it lit for the rest of the run.
+            StarPowerEffect.ForceReset();
+
             HitWindowDisplay.SetHitWindowSize();
         }
     }
@@ -892,6 +903,16 @@ namespace YARG.Gameplay.Player
         private bool _newHighScoreShown;
 
         private double _previousStarPowerAmount;
+
+        /// The solo the engine is inside, or <c>null</c>. Remembered because a rewind force-resets
+        /// the solo box and then has to put back whichever solo the marker lands inside, and the
+        /// engine's own solo list is not reachable from here.
+        private SoloSection _currentSolo;
+
+        /// Notes whose sustain the re-simulation ran to its end. Everything else that was hit and
+        /// still has sustain left at the marker is still being held, which is the set that has to
+        /// be drawn again (<c>docs/rewind-design.md</c>, "Notes on the highway").
+        private readonly HashSet<TNote> _rewindEndedSustains = new();
 
         private bool _wasStarPowerActive;
         private bool _didLowerTrack;
@@ -1256,9 +1277,11 @@ namespace YARG.Gameplay.Player
 
                 OnNoteSpawned(note);
 
-                // Don't spawn hit or missed notes
+                // Don't spawn hit or missed notes - with the one exception of a sustain that a
+                // rewind left the engine still holding across the marker.
                 if (note.WasHit || note.WasMissed)
                 {
+                    TrySpawnHeldSustain(note, spawnedNoteIndex);
                     continue;
                 }
 
@@ -1735,6 +1758,12 @@ namespace YARG.Gameplay.Player
 
             // The unison phrase list belongs to the engine container, which is a new object now.
             InitializeUnisonEvents();
+
+            // Filled by the re-simulation that follows, so both start empty. The solo belongs
+            // to the engine being thrown away; the re-simulation re-announces whichever one the
+            // marker lands inside.
+            _rewindEndedSustains.Clear();
+            _currentSolo = null;
         }
 
         public override void RestartLeadInVisuals(double visualTime)
@@ -1755,7 +1784,170 @@ namespace YARG.Gameplay.Player
 
             ResetLastHitTimes();
 
+            // Before the base call, because the base call draws the first frame and these two are
+            // the previous-value halves of edge detectors read there. Both survive a rewind with
+            // the value the discarded run left in them, so a marker that has Star Power running
+            // (or the bass at groove) when the moment of the rewind did not would read as a fresh
+            // rising edge and fire a transient that never happened: a camera scoop for a deploy
+            // that is being restored rather than taken, and a BASS GROOVE notification after the
+            // queue was cleared. The one-shot flags next to them - hot start, new high score -
+            // are deliberately left alone, being shown once per run and never re-shown
+            // (docs/rewind-design.md, "One-shot notifications").
+            var markerStats = Engine.BaseStats;
+            int markerMaxMultiplier = Engine.BaseParameters.MaxMultiplier *
+                (markerStats.IsStarPowerActive ? 2 : 1);
+
+            _wasStarPowerActive = markerStats.IsStarPowerActive;
+            _previousBassGrooveState = IsBass && markerStats.ScoreMultiplier == markerMaxMultiplier;
+
             base.RestartLeadInVisuals(visualTime);
+
+            // After the reset, not before it: both of these re-assert state the reset has just
+            // cleared, and the reset is inside the base call.
+            SeekUnisonEvents(visualTime);
+            RestoreSoloBox();
+        }
+
+        /// <summary>
+        /// Walks the unison cursors to <paramref name="time"/> without replaying every phrase
+        /// between here and there, and shows the bar again if one is under way.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="UpdateUnisonEvents"/> advances one phrase per frame by design, so cursors
+        /// left at zero after a rewind into the middle of a chart would spend a frame each on
+        /// every phrase already passed, flickering the bar the whole way. The starts and ends
+        /// balance out, so nothing ends up wrong - but nothing is right until the walk finishes
+        /// either, and the readout at the marker is supposed to be exact.
+        /// </remarks>
+        private void SeekUnisonEvents(double time)
+        {
+            while (_unisonEndIndex < _unisonPhrases.Count && _unisonPhrases[_unisonEndIndex].TimeEnd <= time)
+            {
+                _unisonEndIndex++;
+            }
+
+            while (_unisonStartIndex < _unisonPhrases.Count && _unisonPhrases[_unisonStartIndex].Time <= time)
+            {
+                _unisonStartIndex++;
+            }
+
+            // Phrases do not overlap, so the cursors can only be one apart - and that means a
+            // phrase has started and not yet ended.
+            if (_unisonStartIndex > _unisonEndIndex)
+            {
+                OnUnisonStart();
+            }
+        }
+
+        /// <summary>
+        /// Re-shows the solo box when the rewind lands inside a solo.
+        /// </summary>
+        /// <remarks>
+        /// The box is driven by the engine's own solo events, which the re-simulation re-fires as
+        /// it replays the run - and then <c>TrackView.ForceReset</c> takes it back down again,
+        /// along with the hide coroutine of whichever solo ended last. The engine's verdict is the
+        /// one that counts, and the box reads <c>NotesHit</c> straight off the live
+        /// <see cref="SoloSection"/> every frame, so the count it comes back with is the restored
+        /// one (<c>docs/rewind-design.md</c>, "Target boundary inside a solo").
+        /// </remarks>
+        private void RestoreSoloBox()
+        {
+            if (_currentSolo is null || !Engine.IsSoloActive)
+            {
+                return;
+            }
+
+            TrackView.StartSolo(_currentSolo);
+        }
+
+        /// <summary>
+        /// Records that a sustain ran out during a rewind's re-simulation.
+        /// </summary>
+        /// <remarks>
+        /// The engine's own <c>ActiveSustains</c> is protected and this fork does not edit
+        /// <c>YARG.Core</c>, so the set of sustains still held at the marker is derived the other
+        /// way round: hit, length left to run, and no end seen. Called from each instrument's
+        /// sustain-end handler, since the event lives on the concrete engine types.
+        /// </remarks>
+        /// <param name="note">The note the event named.</param>
+        /// <param name="endsWholeChord">
+        /// Whether this one event ended every sustain of the chord, which is what decides how much
+        /// of it to record. A guitar chord sustains as a unit unless it is disjoint, in which case
+        /// - like keys, where each note sustains on its own - the event fires per sustain and only
+        /// the note it named has stopped. Passed in rather than tested here because disjointness
+        /// lives on <c>GuitarNote</c>, not on the note base class.
+        /// </param>
+        protected void NoteSustainEnded(TNote note, bool endsWholeChord)
+        {
+            if (!GameManager.IsRewindingToSection)
+            {
+                return;
+            }
+
+            _rewindEndedSustains.Add(note);
+
+            if (!endsWholeChord)
+            {
+                return;
+            }
+
+            foreach (var child in note.AllNotes)
+            {
+                _rewindEndedSustains.Add(child);
+            }
+        }
+
+        /// <summary>
+        /// Forgets which sustains the re-simulation ended, once the marker has been reached and
+        /// the question no longer arises.
+        /// </summary>
+        protected override void OnLeadInMarkerReached()
+        {
+            _rewindEndedSustains.Clear();
+        }
+
+        /// <summary>
+        /// Draws a sustain that crosses the rewind marker, in held state.
+        /// </summary>
+        /// <remarks>
+        /// The one exception to "judged notes before the marker do not respawn". The note was hit
+        /// on the surviving timeline and the engine is still holding it at the marker, so it has
+        /// to be on the highway when the player gets there - static through the lead-in, then
+        /// ticking or dropping from the marker according to the button state resent there
+        /// (<c>docs/rewind-design.md</c>, "Sustain crossing the boundary").
+        /// <para>
+        /// Generic on purpose: every instrument spawns through the same pool and every note
+        /// element hides its head and lights its tail from <c>HitNote</c>, so nothing here has to
+        /// know which one it is. The decision is taken per chord member rather than per chord,
+        /// because a disjoint guitar chord and every keys chord drop their sustains one at a time:
+        /// only the members still running are drawn, and the rest are left off the highway, which
+        /// is where a hit note with nothing left to hold ends up anyway.
+        /// </para>
+        /// </remarks>
+        private void TrySpawnHeldSustain(TNote note, int noteIndex)
+        {
+            if (double.IsNaN(RewindMarkerSongTime) || !note.WasHit ||
+                note.TimeEnd <= RewindMarkerSongTime)
+            {
+                return;
+            }
+
+            // Set for the whole chord exactly as the ordinary spawn path sets it, so a held
+            // sustain on a planned activation note keeps the path's green.
+            SpawningActivationNote = IsStarPowerPathActivationNote(noteIndex);
+
+            foreach (var child in note.AllNotes)
+            {
+                if (child.TimeEnd <= RewindMarkerSongTime || _rewindEndedSustains.Contains(child))
+                {
+                    continue;
+                }
+
+                SpawnNote(child);
+                (NotePool.GetByKey(child) as INoteElement)?.HitNote();
+            }
+
+            SpawningActivationNote = false;
         }
 
         public override void UpdateLeadInCountdown(double countdownLength, double endSongTime)
@@ -1966,6 +2158,7 @@ namespace YARG.Gameplay.Player
 
         protected virtual void OnSoloStart(SoloSection solo)
         {
+            _currentSolo = solo;
             TrackView.StartSolo(solo);
 
             foreach (var haptic in SantrollerHaptics)
@@ -1976,6 +2169,7 @@ namespace YARG.Gameplay.Player
 
         protected virtual void OnSoloEnd(SoloSection solo)
         {
+            _currentSolo = null;
             TrackView.EndSolo(solo.SoloBonus);
 
             foreach (var haptic in SantrollerHaptics)
@@ -2032,7 +2226,8 @@ namespace YARG.Gameplay.Player
 
         protected virtual void OnStarPowerPhraseHit(TNote note)
         {
-            if (SettingsManager.Settings.EnableTrackEffects.Value)
+            // One flash per phrase earned, not one per phrase the re-simulation replays.
+            if (SettingsManager.Settings.EnableTrackEffects.Value && !GameManager.IsSeekingReplay)
             {
                 StarPowerEffect.gameObject.SetActive(true);
                 StarPowerEffect.PlayAnimation();

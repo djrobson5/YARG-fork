@@ -602,6 +602,8 @@ namespace YARG.Assets.Script.Gameplay.Player
 
         private void OnSustainEnd(GuitarNote note, double timeEnded, bool finished)
         {
+            NoteSustainEnded(note, false);
+
             (NotePool.GetByKey(note) as FiveLaneKeysNoteElement)?.SustainEnd(finished);
 
             // Mute the stem if you let go of the sustain too early.

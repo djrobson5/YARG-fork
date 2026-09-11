@@ -138,6 +138,19 @@ namespace YARG.Gameplay.Player
 
         protected bool PlayerHasFailed;
 
+        /// <summary>
+        /// The section marker a rewind re-simulated to, in <b>song</b> time, for as long as the
+        /// lead-in window is up. <see cref="double.NaN"/> at every other moment.
+        /// </summary>
+        /// <remarks>
+        /// The engine sits here while the highway sits a lead-in earlier, which is the one gap in
+        /// the run where the two clocks disagree - so anything drawing from engine state during
+        /// the window has to measure against this rather than against visual time. Today that is
+        /// the sustain crossing the boundary (<c>docs/rewind-design.md</c>, "Fork-owned pieces
+        /// that need new code" item 7).
+        /// </remarks>
+        protected double RewindMarkerSongTime { get; private set; } = double.NaN;
+
         protected override void GameplayAwake()
         {
             _replayInputs = new List<GameInput>();
@@ -441,13 +454,21 @@ namespace YARG.Gameplay.Player
         /// held frozen through the lead-in, so its state is the state at the marker and the notes
         /// inside the lead-in window stay judged.
         /// </param>
+        /// <param name="markerSongTime">
+        /// The same marker in song time, which is the clock the chart's own note times are on.
+        /// </param>
         /// <param name="landingVisualTime">
         /// Where the highway is drawn from: the start of the lead-in window, a whole lead-in
         /// earlier than the marker, in visual time.
         /// </param>
-        public virtual void RewindTo(double markerInputTime, double landingVisualTime)
+        public virtual void RewindTo(double markerInputTime, double markerSongTime,
+            double landingVisualTime)
         {
             IsFc = true;
+
+            // Set before the visuals are rebuilt below, because rebuilding them is what has to
+            // redraw the sustain crossing the marker.
+            RewindMarkerSongTime = markerSongTime;
 
             // The engine's timeline is input time plus this player's input calibration, because
             // that is the offset UpdateInputs applies on every live update. Re-simulating on the
@@ -569,6 +590,11 @@ namespace YARG.Gameplay.Player
 
             LeadInInputs.Clear();
 
+            // The window is over: engine and highway are back on the same clock, so the crossing
+            // sustain is drawn by the ordinary rules from here.
+            RewindMarkerSongTime = double.NaN;
+            OnLeadInMarkerReached();
+
             if (!ShouldUpdateInputsOnResume)
             {
                 RewoundEngineInputState.Clear();
@@ -614,6 +640,14 @@ namespace YARG.Gameplay.Player
         /// Puts this player's countdown widget back in its reset state once the lead-in is over.
         /// </summary>
         public virtual void ForceResetLeadInCountdown()
+        {
+        }
+
+        /// <summary>
+        /// Called once the lead-in window has closed, for anything a player worked out during the
+        /// re-simulation and only needed for the duration of the window.
+        /// </summary>
+        protected virtual void OnLeadInMarkerReached()
         {
         }
 

@@ -52,6 +52,20 @@ namespace YARG.Gameplay.HUD
             }
         }
 
+        /// <summary>
+        /// Destroys every icon built so far, so the group can be rebuilt against a new set of
+        /// engine ids (a rewind registers fresh engines, which take fresh ids).
+        /// </summary>
+        public void ClearIcons()
+        {
+            foreach ((int _, var icon) in _icons)
+            {
+                Destroy(icon.gameObject);
+            }
+
+            _icons.Clear();
+        }
+
         public override void ResetState()
         {
             base.ResetState();

@@ -143,8 +143,13 @@ namespace YARG.Gameplay
                 }
 
                 // 3. HUD elements that snapshot the engine containers have to be re-pointed at
-                //    the new ones, or they read dead engines for the rest of the run.
+                //    the new ones, or they read dead engines for the rest of the run. The unison
+                //    display is re-keyed here, ahead of the re-simulation, and parked on the
+                //    phrase under way at the MARKER, so that the notes the surviving timeline hit
+                //    inside that phrase are counted as they replay and its readout is exact. Its
+                //    per-frame clock is put back to the landing after the re-simulation, below.
                 _failMeter.RebuildPlayers();
+                _unisonDisplay.RebindEngines(sectionSongTime);
 
                 // 4. A rewind fired from the fail menu revives the run. Without this the
                 //    TrackPlayer.PlayerHasFailed latch survives and BasePlayer.OnGameInput drops
@@ -174,8 +179,14 @@ namespace YARG.Gameplay
                 //    then truncate it at the consumed index. Visuals are drawn at the landing.
                 foreach (var player in _players)
                 {
-                    player.RewindTo(markerInputTime, VisualTime);
+                    player.RewindTo(markerInputTime, sectionSongTime, VisualTime);
                 }
+
+                //    The unison display counted the replayed hits with its clock parked at the
+                //    marker; hand it back the landing so it does not sit out the whole lead-in
+                //    waiting for time to catch up. Deliberately not a second SetSongTime, which
+                //    would re-derive the phrase state and throw those counts away.
+                _unisonDisplay.ResumeFrom(VisualTime);
 
                 // 8. Rock meter, after the re-simulation and not before it. Step 5 took it back
                 //    to the preset's starting level, and step 7 then replayed the surviving
@@ -213,21 +224,34 @@ namespace YARG.Gameplay
                     player.ClearRewindFailState();
                 }
 
-                // 10. Truncate the pause log at the marker. This also drops the pause that opened
+                // 10. Star Power, from engine truth rather than from what the run left behind.
+                //     Two counters are involved and neither rewinds itself: the reverb is a count
+                //     per stem, and StarPowerActivations counts players deployed. The old engine
+                //     was thrown away mid-deploy without ever emitting the closing
+                //     OnStarPowerStatus(false), so both are left one high; the re-simulation then
+                //     replays its own deploys and releases through ChangeStarPowerStatus (which
+                //     balance out, or leave one more standing when Star Power is live at the
+                //     marker) while SetStarPowerFX is suppressed as seek feedback, so the reverb
+                //     never hears about them at all. Setting both from the engines is the only
+                //     reading that is right in every case, including Star Power live at the
+                //     target's start, where the reverb has to come back on with no deploy SFX.
+                RestoreStarPowerState();
+
+                // 11. Truncate the pause log at the marker. This also drops the pause that opened
                 //     the rewind, so a rewind never counts toward pause-abuse invalidation.
                 TruncatePauseInfo(sectionSongTime);
 
-                // 11. Section strip. Sections before the target keep their status, the target and
+                // 12. Section strip. Sections before the target keep their status, the target and
                 //     everything after go back to the unplayed look, and the highlight lands on
                 //     the target for the whole lead-in. The strip's own feed is held off for the
                 //     whole rewind (BasePlayer.NotifySectionNoteHit), so the hits step 7 replayed
                 //     were not added to the blocks before the target a second time.
                 RewindSectionStrips(sectionIndex);
 
-                // 12. Deliberately NOT CheckForRewindInvalidation(): it can call InvalidateScores,
+                // 13. Deliberately NOT CheckForRewindInvalidation(): it can call InvalidateScores,
                 //     which drops each player's section state. A rewound run stays a normal high
                 //     score (docs/rewind-design.md, "Interactions with existing fork features"),
-                //     and step 11 has just handled section state deliberately instead.
+                //     and step 12 has just handled section state deliberately instead.
             }
             finally
             {
@@ -235,9 +259,41 @@ namespace YARG.Gameplay
                 IsRewindingToSection = false;
             }
 
-            // 13. Hold the engine frozen until the clock reaches the marker.
+            // 14. Hold the engine frozen until the clock reaches the marker.
             BeginLeadIn(sectionSongTime, markerInputTime, landingInputTime, leadInSongSeconds);
             return true;
+        }
+
+        /// <summary>
+        /// Puts the Star Power reverb and the band's deploy count back in step with the engines.
+        /// </summary>
+        /// <remarks>
+        /// Silent by design: the reverb comes back for a player who is mid-deploy at the marker,
+        /// but no deploy SFX is played, because no deploy happened - the run is being restored,
+        /// not re-taken (<c>docs/rewind-design.md</c>, "What the player sees when it lands").
+        /// Conversely a player who was deployed before the rewind and is not at the marker ends up
+        /// with everything off, which is what zeroing before the scan buys.
+        /// <para>
+        /// <c>EngineManager</c>'s own <c>_starpowerCount</c> is deliberately left alone: it is fed
+        /// by the containers' subscriptions, which the re-simulation drives from a fresh engine at
+        /// zero, so it balances out on its own.
+        /// </para>
+        /// </remarks>
+        private void RestoreStarPowerState()
+        {
+            ResetStarPowerReverb();
+            StarPowerActivations = 0;
+
+            foreach (var player in _players)
+            {
+                if (!player.BaseStats.IsStarPowerActive)
+                {
+                    continue;
+                }
+
+                StarPowerActivations++;
+                player.SetStarPowerFX(true);
+            }
         }
 
         /// <summary>
@@ -329,9 +385,10 @@ namespace YARG.Gameplay
             // the highway scrolls normally through it.
             //
             // Notes inside the window were judged before the marker, so TrackPlayer.UpdateNotes
-            // does not respawn them. That includes a sustain crossing the boundary: the engine
-            // still holds it (and the resend at the marker decides whether it keeps ticking), but
-            // drawing it again is fork-owned piece 7 and is not in this slice.
+            // does not respawn them. The one exception is a sustain crossing the boundary, which
+            // TrackPlayer.TrySpawnHeldSustain draws in held state for as long as
+            // BasePlayer.RewindMarkerSongTime is set - static through the window, then ticking or
+            // dropping from the marker according to the state the resend hands the engine.
             Rewinding = true;
 
             DriveLeadInCountdown();

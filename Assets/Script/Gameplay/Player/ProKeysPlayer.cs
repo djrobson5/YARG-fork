@@ -330,6 +330,8 @@ namespace YARG.Gameplay.Player
 
         private void OnSustainEnd(ProKeysNote parent, double timeEnded, bool finished)
         {
+            NoteSustainEnded(parent, false);
+
             (NotePool.GetByKey(parent) as ProKeysNoteElement)?.SustainEnd(finished);
 
             _keysArray.SetSustained(parent.Key, false);

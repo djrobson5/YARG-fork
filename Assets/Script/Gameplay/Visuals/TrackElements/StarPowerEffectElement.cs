@@ -31,6 +31,23 @@ namespace YARG.Gameplay.Visuals
             _animTimestamp = 0f;
         }
 
+        /// <summary>
+        /// Takes the trim back to its unplayed state, without waiting out the animation.
+        /// </summary>
+        /// <remarks>
+        /// The timestamp is a latch: <see cref="Update"/> only ever advances it, and only ever
+        /// hides the object once it has run past the animation length. A seek that lands while
+        /// the trim is lit would otherwise leave it lit until the animation happens to finish,
+        /// and the object inactive here means <see cref="Update"/> is not running to finish it.
+        /// </remarks>
+        public void ForceReset()
+        {
+            // Past the end rather than back at the start, so that Update agrees: were the object
+            // re-enabled without a PlayAnimation, its first frame would hide it again.
+            _animTimestamp = ANIM_LENGTH + 1f;
+            gameObject.SetActive(false);
+        }
+
         private void Update()
         {
             if (_animTimestamp > ANIM_LENGTH)
