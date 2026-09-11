@@ -632,7 +632,8 @@
             "RemoveSongOffset": "(Hold) Undo offset save",
             "ViewReplay": "View Replay",
             "SectionsPerfected" : "Sections perfected",
-            "SectionFullCombo" : "Section FC"
+            "SectionFullCombo" : "Section FC",
+            "Rewound" : "Rewound"
         },
         "Settings": {
             "ShowAdvanced": "Show Advanced",

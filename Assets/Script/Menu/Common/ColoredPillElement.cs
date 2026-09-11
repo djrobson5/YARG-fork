@@ -14,7 +14,12 @@ namespace YARG.Menu
             CustomEngine,
             EasierModifier,
             HarderModifier,
-            NeutralModifier
+            NeutralModifier,
+
+            // Appended rather than slotted in beside the other tints: every preset is stored as
+            // its index into the colour arrays on the prefab, so inserting one would repaint the
+            // existing pills.
+            Rewound
         }
 
         [SerializeField]

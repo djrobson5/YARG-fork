@@ -1,6 +1,8 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using YARG.Core.Audio;
 using YARG.Core.Chart;
 using YARG.Core.Logging;
 using YARG.Gameplay.HUD;
@@ -46,6 +48,50 @@ namespace YARG.Gameplay
         /// lead-in is running, since the clock is deliberately behind it.
         /// </summary>
         public double RewindReferenceSongTime => _leadInActive ? _leadInMarkerSongTime : SongTime;
+
+        /// <summary>
+        /// Whether this run has been rewound at least once.
+        /// </summary>
+        /// <remarks>
+        /// Per-run and never cleared, which is all the score card needs: it is read once, when the
+        /// <c>PlayerScoreCard</c> array is built at the end of the song, and it is carried no
+        /// further than the score screen (<c>docs/rewind-design.md</c>, "Score page badge").
+        /// Nothing is persisted, so a history entry or a saved replay of a rewound run is
+        /// indistinguishable from a normal one.
+        /// </remarks>
+        public bool WasRewound { get; private set; }
+
+        /// <summary>
+        /// True from the moment the pause menu is popped for a rewind until the run is live again
+        /// at the start of the lead-in.
+        /// </summary>
+        /// <remarks>
+        /// The window the pause bindings have to ignore. There is no menu on screen and no
+        /// navigation scheme through it, so a press in here would either double-trigger or resume
+        /// into a half-rebuilt run. It ends with the resume, <i>not</i> with the plate: once the
+        /// lead-in is running the player may pause again (which replays the window), and holding
+        /// the gate through the fade-in would silently eat the first half-second of the countdown.
+        /// </remarks>
+        public bool IsRewindFading => _rewindSwapInProgress;
+
+        // Out and in at the same length, 0.3 s of fade in total, which is what the design asks
+        // for. The gap in between is whatever the reset takes - one frame - plus the video hold
+        // below.
+        private const float REWIND_FADE_OUT_SECONDS = 0.15f;
+        private const float REWIND_FADE_IN_SECONDS  = 0.15f;
+
+        // A song-source video seek is a handshake (BackgroundManager._videoSeeking), and while it
+        // is up the run is override-paused, so fading in on a timer would show a still frame. The
+        // plate holds until the handshake clears, and this caps the wait so a video that never
+        // answers cannot leave the screen black.
+        private const float REWIND_FADE_VIDEO_HOLD_SECONDS = 0.5f;
+
+        private RewindFadeOverlay _rewindFade;
+
+        // Re-entrancy guard on the coroutine itself, up for the whole of it including the
+        // fade-in; _rewindSwapInProgress is the shorter window the pause bindings read.
+        private bool _rewindFadeInProgress;
+        private bool _rewindSwapInProgress;
 
         private bool   _leadInActive;
         private double _leadInMarkerSongTime;
@@ -117,6 +163,7 @@ namespace YARG.Gameplay
                 sectionSongTime - leadInSongSeconds, leadInSeconds, leadInSongSeconds);
 
             IsRewindingToSection = true;
+            WasRewound = true;
 
             // Every hit/miss/overhit/Star Power dispatch the re-simulation makes goes through the
             // ordinary handlers, which gate their feedback on this flag. Without it the rewind
@@ -335,36 +382,133 @@ namespace YARG.Gameplay
         /// the pause that opened the menu (<c>docs/rewind-design.md</c>, "Pause-abuse
         /// invalidation").
         /// <para>
-        /// The order mirrors <see cref="RestartLeadIn"/>: re-read calibration (both it and song
-        /// speed are editable from the pause menu, and the marker and window length are derived
-        /// from them), seek while the runner is still paused, then pop the menus, restore the time
-        /// scale and resume.
+        /// The work itself runs behind the fade, in <see cref="RewindToSectionBehindFade"/>, which
+        /// is why this returns immediately and why the gates are tested here rather than only
+        /// inside <see cref="RewindToSection"/>.
         /// </para>
         /// </remarks>
         public void RewindToSectionFromPause(int sectionIndex, double sectionSongTime)
         {
-            if (!Paused)
-            {
-                RewindToSection(sectionIndex, sectionSongTime);
-                return;
-            }
-
-            UpdateCalibration();
-
-            // The seek runs while the runner is still paused and the menu is still up, exactly as
-            // RestartLeadIn seeks before it resumes. If it refuses, the pause is untouched.
-            if (!RewindToSection(sectionIndex, sectionSongTime))
+            if (_rewindFadeInProgress)
             {
                 return;
             }
 
-            _pauseMenu.PopAllMenus();
-            Time.timeScale = 1f;
-            _songRunner.Resume();
+            // Tested up front, before anything is hidden or popped, because the fade commits: the
+            // menus come down at its start so that nothing can take a second input behind the
+            // plate, and there is no good way to put them back. These are the same gates
+            // RewindToSection applies again for itself below.
+            if (!CanRewindToSection || sectionSongTime > RewindReferenceSongTime)
+            {
+                return;
+            }
 
-            // BeginLeadIn has already raised Rewinding, so ResumeCore leaves the freeze alone and
-            // does not queue the resume inputs: the lead-in owns both.
-            ResumeCore();
+            StartCoroutine(RewindToSectionBehindFade(sectionIndex, sectionSongTime));
+        }
+
+        /// <summary>
+        /// Covers the rewind with the black plate and the rewind SFX, and does the swap while it
+        /// is up (<c>docs/rewind-design.md</c>, "What the player sees when it lands").
+        /// </summary>
+        /// <remarks>
+        /// The order is: pop the menus, play the SFX and fade out; rebuild the run while the
+        /// screen is black; then fade back in over the start of the lead-in. Everything visible
+        /// moves inside the black, so there is no half-reset frame. Audio comes back at the
+        /// landing while the plate is still fading, which is deliberate - the lead-in is seconds
+        /// long and the countdown wants the music under it.
+        /// <para>
+        /// A pause taken inside the lead-in does <i>not</i> fade again. <see cref="RestartLeadIn"/>
+        /// only moves the clock back to the start of a window the player is already looking at;
+        /// there is no rebuild to hide, and a plate on every resume would read as a stutter.
+        /// </para>
+        /// </remarks>
+        private IEnumerator RewindToSectionBehindFade(int sectionIndex, double sectionSongTime)
+        {
+            _rewindFadeInProgress = true;
+            _rewindSwapInProgress = true;
+
+            try
+            {
+                _rewindFade ??= RewindFadeOverlay.Create(transform);
+
+                bool wasPaused = Paused;
+                if (wasPaused)
+                {
+                    // Down before the fade starts rather than behind it: the pause list has the
+                    // navigation group back the moment the picker closes, and it must not be able
+                    // to take another Confirm while the screen is going dark. IsRewindFading
+                    // covers the two pause bindings, which are not part of the menu.
+                    _pauseMenu.PopAllMenus();
+                }
+
+                // Once, here, so it plays under the fade rather than after it. The unpause path's
+                // own rewind SFX is not involved: this never goes through Resume.
+                GlobalAudioHandler.PlaySoundEffect(SfxSample.Rewind);
+
+                _rewindFade.FadeTo(1f, REWIND_FADE_OUT_SECONDS);
+                while (_rewindFade.IsFading)
+                {
+                    yield return null;
+                }
+
+                if (wasPaused)
+                {
+                    // Audio Calibration and song speed are both editable from the pause menu, and
+                    // the marker and the window length are derived from them.
+                    UpdateCalibration();
+                }
+
+                if (!RewindToSection(sectionIndex, sectionSongTime))
+                {
+                    // Unreachable: the caller tested the same gates and nothing moves while the
+                    // run is paused. Defence in depth - the menus are already down, so put one
+                    // back rather than leaving a paused run with no way into it. Pause() also
+                    // brings the SFX back through PauseCore, which the refused path would
+                    // otherwise leave to a ResumeCore that never runs.
+                    YargLogger.LogWarning("Rewind refused behind the fade; re-opening the pause menu");
+                    if (wasPaused)
+                    {
+                        Pause();
+                    }
+                }
+                else if (wasPaused)
+                {
+                    Time.timeScale = 1f;
+                    _songRunner.Resume();
+
+                    // BeginLeadIn has already raised Rewinding, so ResumeCore leaves the freeze
+                    // alone and does not queue the resume inputs: the lead-in owns both.
+                    ResumeCore();
+                }
+
+                // The run is live (or back under a menu) from here, so the pause bindings go back
+                // to working while the plate finishes on its own.
+                _rewindSwapInProgress = false;
+
+                // A song-source video answers its seek a frame or several later, and while Wait
+                // For Song Video is on it holds the run override-paused until it does. Fading in
+                // on that would show a frozen highway, so the plate waits it out - capped, because
+                // a video that never answers must not leave the screen black. With the setting off
+                // nothing is held, the property stays false and the plate clears straight away.
+                float held = 0f;
+                while (BackgroundManager != null && BackgroundManager.IsHoldingForVideoSeek &&
+                    held < REWIND_FADE_VIDEO_HOLD_SECONDS)
+                {
+                    held += Time.unscaledDeltaTime;
+                    yield return null;
+                }
+
+                _rewindFade.FadeTo(0f, REWIND_FADE_IN_SECONDS);
+                while (_rewindFade.IsFading)
+                {
+                    yield return null;
+                }
+            }
+            finally
+            {
+                _rewindSwapInProgress = false;
+                _rewindFadeInProgress = false;
+            }
         }
 
         /// <summary>

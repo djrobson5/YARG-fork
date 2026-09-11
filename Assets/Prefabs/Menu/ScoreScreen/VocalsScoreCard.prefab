@@ -470,7 +470,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2885240813551093153, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
       propertyPath: m_Name
-      value: VocalsScoreCard2
+      value: VocalsScoreCard
       objectReference: {fileID: 0}
     - target: {fileID: 2885240813714138371, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
       propertyPath: m_AnchorMax.y
@@ -1292,6 +1292,17 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f4688fdb7df04437aeb418b961361dc5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+--- !u!114 &2047396409098967073 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 2218568648722446026, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
+  m_PrefabInstance: {fileID: 189186651219193579}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3f1f8be2f8474992962f5d86b34fc6a6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::YARG.Menu.ColoredPillElement
 --- !u!114 &2064257112366512602 stripped
 MonoBehaviour:
   m_CorrespondingSourceObject: {fileID: 2163300852465899313, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
@@ -1418,9 +1429,10 @@ MonoBehaviour:
   _basicStatsRect: {fileID: 6635478351132393076}
   _enginePresetTag: {fileID: 3180057802636525416}
   _modifiersUsedTag: {fileID: 3225912943036463781}
+  _rewoundTag: {fileID: 2047396409098967073}
   _modifiersUsedContainer: {fileID: 4579683419180494055}
   _modifiersUsedSeparator: {fileID: 347054890639900675}
-  _sectionStripContainer: {fileID: 5501230000000000010}
+  _sectionStripContainer: {fileID: 5690416636181516009}
 --- !u!114 &3180057802636525416 stripped
 MonoBehaviour:
   m_CorrespondingSourceObject: {fileID: 3351230046687826307, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
@@ -1467,6 +1479,11 @@ RectTransform:
 --- !u!1 &4579683419180494055 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 4408581550247346700, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
+  m_PrefabInstance: {fileID: 189186651219193579}
+  m_PrefabAsset: {fileID: 0}
+--- !u!224 &5690416636181516009 stripped
+RectTransform:
+  m_CorrespondingSourceObject: {fileID: 5501230000000000002, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
   m_PrefabInstance: {fileID: 189186651219193579}
   m_PrefabAsset: {fileID: 0}
 --- !u!114 &5949134869629015161 stripped
@@ -1573,8 +1590,3 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1aa08ab6e0800fa44ae55d278d1423e3, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
---- !u!224 &5501230000000000010 stripped
-RectTransform:
-  m_CorrespondingSourceObject: {fileID: 5501230000000000002, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
-  m_PrefabInstance: {fileID: 189186651219193579}
-  m_PrefabAsset: {fileID: 0}

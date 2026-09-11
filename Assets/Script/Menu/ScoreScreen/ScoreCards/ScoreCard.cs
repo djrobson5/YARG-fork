@@ -97,6 +97,8 @@ namespace YARG.Menu.ScoreScreen
         [SerializeField]
         private ColoredPillElement _modifiersUsedTag;
         [SerializeField]
+        private ColoredPillElement _rewoundTag;
+        [SerializeField]
         private GameObject _modifiersUsedContainer;
         [SerializeField]
         private GameObject _modifiersUsedSeparator;
@@ -124,6 +126,7 @@ namespace YARG.Menu.ScoreScreen
         protected bool  IsHighScore;
         protected T     Stats;
         protected bool  IsReplay;
+        protected bool  WasRewound;
         protected PlayerSectionSummary Sections;
 
         public YargPlayer Player { get; private set; }
@@ -134,13 +137,14 @@ namespace YARG.Menu.ScoreScreen
         }
 
         public void Initialize(bool isHighScore, YargPlayer player, T stats, bool isReplay,
-            PlayerSectionSummary sections)
+            PlayerSectionSummary sections, bool wasRewound)
         {
             IsHighScore = isHighScore;
             Player = player;
             Stats = stats;
             IsReplay  = isReplay;
             Sections = sections;
+            WasRewound = wasRewound;
         }
 
         public virtual void SetCardContents()
@@ -275,6 +279,18 @@ namespace YARG.Menu.ScoreScreen
                 icon.InitializeForModifier(modifier);
 
                 nonEngineModifiersUsed = true;
+            }
+
+            // Session-only, so this is off for every card built from a history entry or a
+            // replay (docs/rewind-design.md, "Score page badge").
+            if (_rewoundTag != null)
+            {
+                _rewoundTag.gameObject.SetActive(WasRewound);
+                if (WasRewound)
+                {
+                    _rewoundTag.SetValues(Localize.Key("Menu.ScoreScreen.Rewound"),
+                        ColoredPillElement.ColoredPillPreset.Rewound);
+                }
             }
 
             bool anyModifiersUsed = _modifierIconContainer.childCount > 0;

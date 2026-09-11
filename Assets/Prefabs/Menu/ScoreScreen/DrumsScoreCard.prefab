@@ -579,7 +579,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2885240813551093153, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
       propertyPath: m_Name
-      value: DrumsScoreCard2
+      value: DrumsScoreCard
       objectReference: {fileID: 0}
     - target: {fileID: 2885240813714138371, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
       propertyPath: m_AnchorMax.y
@@ -1394,6 +1394,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f4688fdb7df04437aeb418b961361dc5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+--- !u!224 &1367457909521048111 stripped
+RectTransform:
+  m_CorrespondingSourceObject: {fileID: 5501230000000000002, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
+  m_PrefabInstance: {fileID: 6819122947273523757}
+  m_PrefabAsset: {fileID: 0}
 --- !u!114 &2341799777366937082 stripped
 MonoBehaviour:
   m_CorrespondingSourceObject: {fileID: 9141702845278425047, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
@@ -1465,6 +1470,17 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 227388f778f736d4fb048a3e9fd3951a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+--- !u!114 &4641966974784468199 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 2218568648722446026, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
+  m_PrefabInstance: {fileID: 6819122947273523757}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3f1f8be2f8474992962f5d86b34fc6a6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::YARG.Menu.ColoredPillElement
 --- !u!114 &4658959078791550236 stripped
 MonoBehaviour:
   m_CorrespondingSourceObject: {fileID: 2163300852465899313, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
@@ -1633,9 +1649,10 @@ MonoBehaviour:
   _basicStatsRect: {fileID: 6667534138086066}
   _enginePresetTag: {fileID: 8080462445594121134}
   _modifiersUsedTag: {fileID: 8126458331043436131}
+  _rewoundTag: {fileID: 4641966974784468199}
   _modifiersUsedContainer: {fileID: 7173119022540619809}
   _modifiersUsedSeparator: {fileID: 6400381312589966533}
-  _sectionStripContainer: {fileID: 5501230000000000010}
+  _sectionStripContainer: {fileID: 1367457909521048111}
   _overhits: {fileID: 3670342607099384801}
   _statInfoPrefab: {fileID: 1126423693335696835, guid: 7ceadb1ec3f67f64e8ca8ca3a866cd96, type: 3}
 --- !u!114 &8550096035807535358 stripped
@@ -1674,10 +1691,5 @@ MonoBehaviour:
 --- !u!1 &8550096036332697315 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 2885240812740932814, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
-  m_PrefabInstance: {fileID: 6819122947273523757}
-  m_PrefabAsset: {fileID: 0}
---- !u!224 &5501230000000000010 stripped
-RectTransform:
-  m_CorrespondingSourceObject: {fileID: 5501230000000000002, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
   m_PrefabInstance: {fileID: 6819122947273523757}
   m_PrefabAsset: {fileID: 0}

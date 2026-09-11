@@ -301,7 +301,7 @@ namespace YARG.Gameplay
 
                 if ((!IsPractice || PracticeManager.HasSelectedSection) &&
                     !DialogManager.Instance.IsDialogShowing &&
-                    !PlayerHasFailed)
+                    !PlayerHasFailed && !IsRewindFading)
                 {
                     SetPaused(!_pauseMenu.IsOpen);
                 }
@@ -728,6 +728,10 @@ namespace YARG.Gameplay
                 Player = player.Player,
                 Stats = player.BaseStats,
                 IsReplay = player.Player.IsReplay,
+
+                // Session-only: this never reaches the score record, the history entry or the
+                // replay (docs/rewind-design.md, "Score page badge").
+                WasRewound = this.WasRewound,
                 Sections = sectionCompletions.TryGetValue(player, out var completion)
                     ? completion.Summary
                     : null,
@@ -1359,7 +1363,7 @@ namespace YARG.Gameplay
                         SetEditHUD(false);
                     }
 
-                    if ((!IsPractice || PracticeManager.HasSelectedSection) && !DialogManager.Instance.IsDialogShowing && !PlayerHasFailed)
+                    if ((!IsPractice || PracticeManager.HasSelectedSection) && !DialogManager.Instance.IsDialogShowing && !PlayerHasFailed && !IsRewindFading)
                     {
                         SetPaused(!_songRunner.Paused);
                     }
@@ -1369,7 +1373,8 @@ namespace YARG.Gameplay
 
         private void OnApplicationFocus(bool hasFocus)
         {
-            if (!hasFocus && !Paused && SettingsManager.Settings.PauseOnFocusLoss.Value)
+            if (!hasFocus && !Paused && !IsRewindFading &&
+                SettingsManager.Settings.PauseOnFocusLoss.Value)
             {
                 SetPaused(true);
             }

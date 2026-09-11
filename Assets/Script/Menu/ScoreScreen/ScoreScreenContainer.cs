@@ -79,6 +79,16 @@ namespace YARG.Menu.ScoreScreen
         public bool  IsHighScore;
         public bool  IsReplay;
 
+        /// <summary>
+        /// Whether the run behind this card was rewound to a section at least once.
+        /// </summary>
+        /// <remarks>
+        /// Session-only, and set only by the run that just finished: nothing is persisted, so a
+        /// card built from a history entry or a replay always reads <c>false</c>
+        /// (<c>docs/rewind-design.md</c>, "Score page badge").
+        /// </remarks>
+        public bool  WasRewound;
+
         public YargPlayer Player;
         public BaseStats  Stats;
 
