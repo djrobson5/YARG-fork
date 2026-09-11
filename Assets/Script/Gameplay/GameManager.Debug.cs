@@ -43,17 +43,14 @@ namespace YARG.Gameplay
             // so the same key can both restart a section and step back through them.
             bool preferPrevious = keyboard.shiftKey.isPressed;
 
-            var target = GetRewindTargetSectionTime(SongTime, preferPrevious);
+            var target = GetRewindTargetSectionTime(RewindReferenceSongTime, preferPrevious);
             if (target == null)
             {
                 YargLogger.LogWarning("Debug rewind: this chart has no sections.");
                 return;
             }
 
-            YargLogger.LogInfo(
-                $"Debug rewind: {SongTime:0.000} -> {target.Value:0.000} (section \"{GetSectionNameAt(target.Value)}\")");
-
-            RewindToTime(target.Value);
+            RewindToSection(target.Value);
 #endif
         }
 

@@ -322,6 +322,11 @@ namespace YARG.Gameplay
             _songRunner.Update();
 
             ApplySongSpeed();
+
+            // Releases the rewind freeze the frame the clock reaches the section marker, before
+            // any player updates, so the engine's first live update is at or after the marker.
+            UpdateRewindLeadIn();
+
             BeatEventHandler.Update(_songRunner.SongTime, _songRunner.VisualTime);
             CrowdEventHandler.Update(_songRunner.SongTime);
 
@@ -509,6 +514,18 @@ namespace YARG.Gameplay
                 return;
             }
 
+            // A pause taken inside a rewind lead-in resumes by replaying the whole lead-in from
+            // the same target, not by the one-second unpause rewind: the engine is still frozen at
+            // the section marker, so nothing was lost (docs/rewind-design.md, "Lead-in" -> Pause
+            // during the lead-in). The pause was never recorded in PauseInfo either, because Pause
+            // skips that while Rewinding is up, so it cannot count toward pause-abuse
+            // invalidation.
+            if (_leadInActive)
+            {
+                RestartLeadIn();
+                return;
+            }
+
             _resumeInProgress = true;
             Rewinding = true;
 
@@ -595,6 +612,13 @@ namespace YARG.Gameplay
             Screen.sleepTimeout = SleepTimeout.NeverSleep;
 
             _isReplaySaved = false;
+
+            if (_leadInActive)
+            {
+                // The lead-in owns the freeze: it clears Rewinding at the marker and feeds the
+                // physical button state there, instead of the queued-inputs resume path.
+                return;
+            }
 
             Rewinding = false;
 

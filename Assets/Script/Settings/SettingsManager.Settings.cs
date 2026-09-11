@@ -537,6 +537,17 @@ namespace YARG.Settings
             public ToggleSetting EnablePracticeSP { get; } = new(false);
             public SliderSetting PracticeRestartDelay { get; } = new(2f, 0.5f, 5f);
 
+            /// <summary>
+            /// How long the rewind lead-in runs for, in <b>real</b> seconds.
+            /// </summary>
+            /// <remarks>
+            /// Real seconds, like <see cref="PracticeRestartDelay"/> and unlike the one-second
+            /// unpause rewind of <c>GameManager.RewindAndResume</c>, so the seek goes back
+            /// <c>value * SongSpeed</c> chart seconds and the wall-clock settle time is the same at
+            /// every song speed (<c>docs/rewind-design.md</c>, "Lead-in").
+            /// </remarks>
+            public SliderSetting RewindLeadIn { get; } = new(2f, 0.5f, 5f, step: 0.5f);
+
             public ToggleSetting ShowBattery { get; } = new(false, ShowBatteryCallback);
             public ToggleSetting ShowTime { get; } = new(false, ShowTimeCallback);
             public ToggleSetting MemoryStats { get; } = new(false, MemoryStatsCallback);

@@ -99,6 +99,24 @@ namespace YARG.Gameplay.Player
         private Dictionary<int, GameInput> LastInputs { get; } = new();
         private Dictionary<int, GameInput> InputsToSendOnResume { get; } = new();
 
+        /// <summary>
+        /// Physical button state seen while a rewind lead-in is up. Deliberately <i>not</i>
+        /// <see cref="InputsToSendOnResume"/>.
+        /// </summary>
+        /// <remarks>
+        /// Inputs arriving in the lead-in window are dropped, never queued
+        /// (<c>docs/rewind-design.md</c>, "Lead-in" -&gt; Engine). This only remembers where the
+        /// player's fingers are, so <see cref="SendLeadInInputsAtMarker"/> can hand the engine the
+        /// current physical state at the marker.
+        /// </remarks>
+        private Dictionary<int, GameInput> LeadInInputs { get; } = new();
+
+        /// <summary>
+        /// What the freshly re-simulated engine believes each action's state to be at the marker:
+        /// the last value of each action in the surviving (truncated) input log.
+        /// </summary>
+        private Dictionary<int, int> RewoundEngineInputState { get; } = new();
+
         protected SyncTrack SyncTrack { get; private set; }
 
         protected bool IsInitialized { get; private set; }
@@ -368,15 +386,24 @@ namespace YARG.Gameplay.Player
         /// <remarks>
         /// Steps 5 of the ordered seek checklist. Call <see cref="RebuildEngineForRewind"/> first.
         /// </remarks>
-        public virtual void RewindTo(double songTime)
+        /// <param name="markerInputTime">
+        /// The section marker, in <i>input</i> time. The engine is re-simulated up to here and then
+        /// held frozen through the lead-in, so its state is the state at the marker and the notes
+        /// inside the lead-in window stay judged.
+        /// </param>
+        /// <param name="landingVisualTime">
+        /// Where the highway is drawn from: the start of the lead-in window, a whole lead-in
+        /// earlier than the marker, in visual time.
+        /// </param>
+        public virtual void RewindTo(double markerInputTime, double landingVisualTime)
         {
             IsFc = true;
 
-            // The engine's timeline is song time plus this player's input calibration, because
+            // The engine's timeline is input time plus this player's input calibration, because
             // that is the offset UpdateInputs applies on every live update. Re-simulating on the
-            // raw song time would leave the engine ahead of (or behind) the first live update by
+            // raw input time would leave the engine ahead of (or behind) the first live update by
             // the calibration amount.
-            double engineTime = songTime + InputCalibration;
+            double engineTime = markerInputTime + InputCalibration;
 
             _replayInputIndex = BaseEngine.ProcessUpToTime(engineTime, ReplayInputs);
 
@@ -388,12 +415,156 @@ namespace YARG.Gameplay.Player
                 _replayInputs.RemoveRange(_replayInputIndex, _replayInputs.Count - _replayInputIndex);
             }
 
+            CaptureRewoundEngineInputState();
+            LeadInInputs.Clear();
+
+            // A rewind fired from the pause menu means the player has been pressing things since
+            // the pause, and those went to InputsToSendOnResume rather than LastInputs. Fold them
+            // in - they are the physical truth - and drop the queue, so the marker resend cannot
+            // re-assert a stale "held" and the orphans cannot flush at some later, unrelated
+            // resume.
+            foreach (var queued in InputsToSendOnResume.Values)
+            {
+                LastInputs[queued.Action] = queued;
+            }
+
+            InputsToSendOnResume.Clear();
+
             SetStemMuteState(false);
 
-            ResetVisuals();
-            UpdateVisuals(songTime);
+            RestartLeadInVisuals(landingVisualTime);
 
             LastCombo = Combo;
+        }
+
+        /// <summary>
+        /// Rebuilds every visual from scratch at <paramref name="visualTime"/>, the start of the
+        /// lead-in window.
+        /// </summary>
+        /// <remarks>
+        /// Split out of <see cref="RewindTo"/> because a pause taken inside the lead-in replays the
+        /// whole window on resume, which has to put the highway back without touching the engine.
+        /// </remarks>
+        public virtual void RestartLeadInVisuals(double visualTime)
+        {
+            ResetVisuals();
+            UpdateVisuals(visualTime);
+        }
+
+        /// <summary>
+        /// Records what the re-simulated engine believes each action's state to be, so the marker
+        /// resend can send only the actions the player's hands actually disagree with.
+        /// </summary>
+        private void CaptureRewoundEngineInputState()
+        {
+            RewoundEngineInputState.Clear();
+
+            // _replayInputs is already truncated to the surviving timeline, so its last value per
+            // action is exactly what ProcessUpToTime left the engine holding.
+            foreach (var input in _replayInputs)
+            {
+                RewoundEngineInputState[input.Action] = input.Integer;
+            }
+        }
+
+        /// <summary>
+        /// Whether <paramref name="action"/> latches - the engine keeps holding it until a release
+        /// arrives - as opposed to a momentary action whose press is an event in its own right.
+        /// </summary>
+        /// <remarks>
+        /// Only held-state actions may be re-asserted at a rewind marker. A strum, a Star Power
+        /// tap or a velocity-carrying pad hit is consumed the instant it is queued, so replaying a
+        /// press would be a phantom event, not a restoration. Defaults to nothing: a player that
+        /// wants presses resent has to name its held actions.
+        /// </remarks>
+        protected virtual bool IsHeldStateAction(int action)
+        {
+            return false;
+        }
+
+        /// <summary>
+        /// Hands the engine the current physical button state, at the section marker.
+        /// </summary>
+        /// <remarks>
+        /// Step 4 of the ordered seek checklist. A sustain crossing the section boundary was
+        /// rebuilt by the re-simulation; if the frets are still held it keeps ticking, and if they
+        /// are not it drops under normal rules. Only the actions whose physical state differs from
+        /// what the engine was left believing are sent, so nothing redundant is queued.
+        /// <para>
+        /// <see cref="ShouldUpdateInputsOnResume"/> is honoured exactly as the unpause resume path
+        /// honours it: drums and vocals have no held state worth restoring, and a resend there
+        /// would be a phantom hit.
+        /// </para>
+        /// <para>
+        /// Where this diverges from <see cref="SendInputsOnResume"/>: that path carries only the
+        /// actions that <i>changed</i> during the pause and still differ from
+        /// <see cref="LastInputs"/>, because the engine it resumes into is the same engine that
+        /// was paused, so anything unchanged is already correct. A rewind resumes into a
+        /// <i>fresh</i> engine re-simulated to a point in the past, so "unchanged" says nothing -
+        /// the comparison has to be against what the re-simulation actually left the engine
+        /// believing, which is <see cref="RewoundEngineInputState"/>. That widens the candidate
+        /// set to every action, which is why the momentary ones are then excluded explicitly by
+        /// <see cref="IsHeldStateAction"/>; the resume path never needed that filter because a
+        /// momentary press that came and went during a pause cancels itself out of its queue.
+        /// </para>
+        /// </remarks>
+        public void SendLeadInInputsAtMarker()
+        {
+            // Whatever arrived during the window was dropped, but it is still the truth about
+            // where the player's hands are.
+            foreach (var captured in LeadInInputs.Values)
+            {
+                LastInputs[captured.Action] = captured;
+            }
+
+            LeadInInputs.Clear();
+
+            if (!ShouldUpdateInputsOnResume)
+            {
+                RewoundEngineInputState.Clear();
+                return;
+            }
+
+            // OnGameInput writes back into LastInputs, so iterate a snapshot.
+            var physicalState = new List<GameInput>(LastInputs.Values);
+            foreach (var physical in physicalState)
+            {
+                if (RewoundEngineInputState.TryGetValue(physical.Action, out int engineValue) &&
+                    engineValue == physical.Integer)
+                {
+                    // The engine already holds this; sending it again would be a spurious event.
+                    continue;
+                }
+
+                // A press may only be re-asserted for a latching action. A strum or a Star Power
+                // tap inside the window whose release lands after the marker would otherwise be
+                // delivered here as a true, which is an overstrum or a phantom deploy - exactly
+                // the judging the window is supposed to drop. A release is always safe to send:
+                // at worst it clears a held belief the player is no longer backing.
+                if (physical.Button && !IsHeldStateAction(physical.Action))
+                {
+                    continue;
+                }
+
+                var input = new GameInput(InputManager.CurrentInputTime, physical.Action, physical.Integer);
+                OnGameInput(ref input);
+            }
+
+            RewoundEngineInputState.Clear();
+        }
+
+        /// <summary>
+        /// Drives this player's countdown widget for a rewind lead-in.
+        /// </summary>
+        public virtual void UpdateLeadInCountdown(double countdownLength, double endSongTime)
+        {
+        }
+
+        /// <summary>
+        /// Puts this player's countdown widget back in its reset state once the lead-in is over.
+        /// </summary>
+        public virtual void ForceResetLeadInCountdown()
+        {
         }
 
         public virtual void SetReplayTime(double time)
@@ -507,6 +678,19 @@ namespace YARG.Gameplay.Player
             // Ignore while paused
             if (GameManager.Paused || GameManager.Rewinding)
             {
+                if (GameManager.IsLeadInActive)
+                {
+                    // Dropped, not queued: nothing pressed during a lead-in is ever judged
+                    // (docs/rewind-design.md, "Lead-in" -> Engine). All that is kept is where the
+                    // buttons are, for the physical-state resend at the marker.
+                    if (ShouldUpdateInputsOnResume)
+                    {
+                        LeadInInputs[input.Action] = input;
+                    }
+
+                    return;
+                }
+
                 if (!ShouldUpdateInputsOnResume)
                 {
                     return;

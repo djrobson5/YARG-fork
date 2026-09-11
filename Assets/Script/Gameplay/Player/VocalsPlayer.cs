@@ -331,13 +331,34 @@ namespace YARG.Gameplay.Player
             Engine.SetSpeed(GameManager.SongSpeed);
         }
 
-        public override void RewindTo(double songTime)
+        public override void RestartLeadInVisuals(double visualTime)
         {
             // The vocal track itself does not seek backwards yet, but the phrase cursor must go
             // back or the HUD reads a phrase the run has not reached again.
             _phraseIndex = -1;
 
-            base.RewindTo(songTime);
+            base.RestartLeadInVisuals(visualTime);
+        }
+
+        public override void UpdateLeadInCountdown(double countdownLength, double endSongTime)
+        {
+            // Vocals share one countdown widget, owned by index 0.
+            if (!_handlesCountdown || GameManager.VocalTrack == null)
+            {
+                return;
+            }
+
+            GameManager.VocalTrack.UpdateLeadInCountdown(countdownLength, endSongTime);
+        }
+
+        public override void ForceResetLeadInCountdown()
+        {
+            if (!_handlesCountdown || GameManager.VocalTrack == null)
+            {
+                return;
+            }
+
+            GameManager.VocalTrack.ForceResetCountdown();
         }
 
         public override void Rewind(double visualTime)

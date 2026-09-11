@@ -96,6 +96,7 @@ namespace YARG.Settings
                 nameof(Settings.VoiceActivatedVocalStarPower),
                 new FieldMetadata(nameof(Settings.EnablePracticeSP), isAdvanced: true),
                 new FieldMetadata(nameof(Settings.PracticeRestartDelay), isAdvanced: true),
+                nameof(Settings.RewindLeadIn),
                 nameof(Settings.NoFail),
                 nameof(Settings.LearningGuides),
                 new FieldMetadata(nameof(Settings.ReduceNoteSpeedByDifficulty)),

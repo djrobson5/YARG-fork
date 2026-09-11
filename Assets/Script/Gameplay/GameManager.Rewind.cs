@@ -1,6 +1,8 @@
 using System;
+using UnityEngine;
 using YARG.Core.Chart;
 using YARG.Core.Logging;
+using YARG.Settings;
 
 namespace YARG.Gameplay
 {
@@ -27,21 +29,46 @@ namespace YARG.Gameplay
         public bool IsRewindingToSection { get; private set; }
 
         /// <summary>
-        /// Jumps the run back to <paramref name="targetSongTime"/> and resumes play there.
+        /// True from the moment a rewind lands until song time reaches the section marker.
         /// </summary>
-        /// <param name="targetSongTime">
-        /// The time to land at, in the same units <see cref="SetSongTime"/> takes. That is an
-        /// <i>input</i> time: <c>SongRunner.InitializeSongTime</c> anchors <c>InputTime</c> to
-        /// this value and derives <c>SongTime</c> from it as
-        /// <c>InputTime + AudioCalibration * SongSpeed</c>. Section times come off the chart in
-        /// song time, and the two differ by the audio calibration; the lead-in slice, which
-        /// subtracts a real-seconds window from a section start, is where that conversion starts
-        /// to matter.
+        /// <remarks>
+        /// The freeze itself is <see cref="Rewinding"/>, which every input and engine gate already
+        /// reads. This says <i>why</i> it is up, which is what tells <c>BasePlayer.OnGameInput</c>
+        /// to drop inputs instead of queueing them for resume, and what stops
+        /// <see cref="ResumeCore"/> from lifting the freeze early.
+        /// </remarks>
+        public bool IsLeadInActive => _leadInActive;
+
+        /// <summary>
+        /// The point in the run a rewind should be measured from: the section marker while a
+        /// lead-in is running, since the clock is deliberately behind it.
+        /// </summary>
+        public double RewindReferenceSongTime => _leadInActive ? _leadInMarkerSongTime : SongTime;
+
+        private bool   _leadInActive;
+        private double _leadInMarkerSongTime;
+        private double _leadInMarkerInputTime;
+        private double _leadInLandingInputTime;
+        private double _leadInSongSeconds;
+
+        /// <summary>
+        /// Rewinds the run to the start of the section at <paramref name="sectionSongTime"/> and
+        /// runs the lead-in.
+        /// </summary>
+        /// <param name="sectionSongTime">
+        /// The section marker, in <b>song</b> time, which is how section times come off the chart.
+        /// Everything below converts deliberately: <c>SongRunner.InitializeSongTime</c> anchors
+        /// <c>InputTime</c> to the value <see cref="SetSongTime"/> is given and derives
+        /// <c>SongTime</c> from it as <c>InputTime + AudioCalibration * SongSpeed</c>, so the
+        /// landing has to be handed over in input time.
         /// </param>
         /// <remarks>
-        /// No lead-in and no countdown yet: the engine goes live at the target immediately.
+        /// The engine is re-simulated to the <i>marker</i> and then frozen there for the whole
+        /// lead-in, while song time, audio and the highway sit a lead-in earlier. That is what
+        /// makes the window safe: the notes inside it are already judged, so they do not respawn
+        /// and nothing in the window can be judged again.
         /// </remarks>
-        public void RewindToTime(double targetSongTime)
+        public void RewindToSection(double sectionSongTime)
         {
             if (_players == null || _players.Count == 0)
             {
@@ -55,14 +82,27 @@ namespace YARG.Gameplay
                 return;
             }
 
-            if (targetSongTime > SongTime)
+            if (sectionSongTime > RewindReferenceSongTime)
             {
                 YargLogger.LogFormatWarning("Refusing to rewind forwards (from {0} to {1})",
-                    SongTime, targetSongTime);
+                    RewindReferenceSongTime, sectionSongTime);
                 return;
             }
 
-            YargLogger.LogFormatInfo("Rewinding from {0:0.000} to {1:0.000}", SongTime, targetSongTime);
+            // The lead-in is in REAL seconds, so the seek goes back leadIn * SongSpeed chart
+            // seconds and the wall-clock settle time is the same at every song speed.
+            double leadInSeconds = SettingsManager.Settings.RewindLeadIn.Value;
+            double leadInSongSeconds = leadInSeconds * SongSpeed;
+
+            double audioCalibrationOffset = _songRunner.AudioCalibration * SongSpeed;
+            double markerInputTime = sectionSongTime - audioCalibrationOffset;
+            double landingInputTime = markerInputTime - leadInSongSeconds;
+
+            YargLogger.LogFormatInfo(
+                "Rewinding from {0:0.000} to section \"{1}\" at {2:0.000} " +
+                "(landing {3:0.000}, lead-in {4:0.00} s real / {5:0.00} s song)",
+                RewindReferenceSongTime, GetSectionNameAt(sectionSongTime), sectionSongTime,
+                sectionSongTime - leadInSongSeconds, leadInSeconds, leadInSongSeconds);
 
             IsRewindingToSection = true;
 
@@ -74,10 +114,12 @@ namespace YARG.Gameplay
 
             try
             {
-                // 1. Song time and audio. Done before the players so notes are not destroyed
-                //    early, exactly as the replay seek path orders it. No lead-in in this slice,
-                //    so there is no start delay: the engine is live at the target.
-                SetSongTime(targetSongTime, 0);
+                // 1. Song time and audio, at the START of the lead-in window. Done before the
+                //    players so notes are not destroyed early, exactly as the replay seek path
+                //    orders it. No start delay: the lead-in is the delay. Negative song time is
+                //    accepted here on purpose - the mixer schedules silence until zero - so the
+                //    first section can own the intro without a clamp.
+                SetSongTime(landingInputTime, 0);
 
                 // 2. Fresh engine per player, with every subscription re-established and the
                 //    engine manager re-pointed at it. Done before ResetState so that the
@@ -101,16 +143,16 @@ namespace YARG.Gameplay
                 //    already zeroes it; this states the requirement where the loop can see it.
                 BandCombo = 0;
 
-                // 6. Re-simulate the surviving input log into the fresh engines, then truncate it
-                //    at the consumed index.
+                // 6. Re-simulate the surviving input log into the fresh engines up to the MARKER,
+                //    then truncate it at the consumed index. Visuals are drawn at the landing.
                 foreach (var player in _players)
                 {
-                    player.RewindTo(targetSongTime);
+                    player.RewindTo(markerInputTime, VisualTime);
                 }
 
-                // 7. Truncate the pause log at the same song time. This also drops the pause that
-                //    opened the rewind, so a rewind never counts toward pause-abuse invalidation.
-                TruncatePauseInfo(targetSongTime);
+                // 7. Truncate the pause log at the marker. This also drops the pause that opened
+                //    the rewind, so a rewind never counts toward pause-abuse invalidation.
+                TruncatePauseInfo(sectionSongTime);
 
                 // 8. Deliberately NOT CheckForRewindInvalidation(): it can call InvalidateScores,
                 //    which drops each player's section state. A rewound run stays a normal high
@@ -122,6 +164,143 @@ namespace YARG.Gameplay
             {
                 IsSeekingReplay = wasSeekingReplay;
                 IsRewindingToSection = false;
+            }
+
+            // 9. Hold the engine frozen until the clock reaches the marker.
+            BeginLeadIn(sectionSongTime, markerInputTime, landingInputTime, leadInSongSeconds);
+        }
+
+        /// <summary>
+        /// Raises the lead-in freeze and shows the first countdown frame.
+        /// </summary>
+        private void BeginLeadIn(double markerSongTime, double markerInputTime,
+            double landingInputTime, double leadInSongSeconds)
+        {
+            _leadInMarkerSongTime = markerSongTime;
+            _leadInMarkerInputTime = markerInputTime;
+            _leadInLandingInputTime = landingInputTime;
+            _leadInSongSeconds = leadInSongSeconds;
+            _leadInActive = true;
+
+            // Step 3 of the ordered seek checklist. Rewinding is the gate BasePlayer.GameplayUpdate
+            // reads to skip UpdateInputs (and therefore BaseEngine.Update) entirely, so the engine
+            // is never handed a time inside the window; UpdateVisuals still runs every frame, so
+            // the highway scrolls normally through it.
+            //
+            // Notes inside the window were judged before the marker, so TrackPlayer.UpdateNotes
+            // does not respawn them. That includes a sustain crossing the boundary: the engine
+            // still holds it (and the resend at the marker decides whether it keeps ticking), but
+            // drawing it again is fork-owned piece 7 and is not in this slice.
+            Rewinding = true;
+
+            DriveLeadInCountdown();
+        }
+
+        /// <summary>
+        /// Advances the lead-in, and releases the engine the frame the clock reaches the marker.
+        /// </summary>
+        /// <remarks>
+        /// Driven from <c>GameManager.Update</c> immediately after <c>SongRunner.Update</c> and
+        /// before the player loop, so the release never lags the marker by more than the frame it
+        /// falls in, and the players' first live update in that same frame is at or after the
+        /// marker.
+        /// </remarks>
+        private void UpdateRewindLeadIn()
+        {
+            if (!_leadInActive)
+            {
+                return;
+            }
+
+            if (InputTime >= _leadInMarkerInputTime)
+            {
+                EndLeadIn();
+                return;
+            }
+
+            DriveLeadInCountdown();
+        }
+
+        /// <summary>
+        /// Lets the engine go live at the section marker.
+        /// </summary>
+        private void EndLeadIn()
+        {
+            _leadInActive = false;
+
+            // Order matters. Clearing the freeze first is what lets the resend below take the live
+            // path through BasePlayer.OnGameInput instead of being dropped again; the engine's
+            // first update happens after both, in the player loop later this same frame, at an
+            // input time at or after the marker it was re-simulated to.
+            Rewinding = false;
+
+            foreach (var player in _players)
+            {
+                player.SendLeadInInputsAtMarker();
+            }
+
+            // One last frame at zero, then hand the widget back in a clean state: the engine's
+            // own wait countdown must not inherit the lead-in's cached digit.
+            DriveLeadInCountdown();
+
+            foreach (var player in _players)
+            {
+                player.ForceResetLeadInCountdown();
+            }
+
+            YargLogger.LogFormatDebug("Rewind lead-in finished at song time {0:0.000} (marker {1:0.000})",
+                SongTime, _leadInMarkerSongTime);
+        }
+
+        /// <summary>
+        /// Replays the whole lead-in from the same target, for a pause taken inside the window.
+        /// </summary>
+        /// <remarks>
+        /// Not the one-second unpause rewind of <see cref="RewindAndResume"/>: the engine is still
+        /// frozen at the marker, so nothing was lost and there is nothing to rewind - the window
+        /// simply runs again from its start. The pause itself never reached
+        /// <see cref="PauseInfo"/>, because <see cref="Pause"/> skips recording one while
+        /// <see cref="Rewinding"/> is up, so it cannot count toward pause-abuse invalidation.
+        /// </remarks>
+        private void RestartLeadIn()
+        {
+            _pauseMenu.PopAllMenus();
+            Time.timeScale = 1f;
+
+            // Audio Calibration and song speed are both editable from the pause menu, and the
+            // marker, the landing and the window length were all derived from them. Pick up the
+            // new calibration, then seek once to settle SongSpeed to whatever was requested (this
+            // is a no-op audio-wise while paused, which prepares but does not play), and only then
+            // recompute - otherwise the release test and the countdown drift apart.
+            UpdateCalibration();
+            SetSongTime(_leadInLandingInputTime, 0);
+
+            _leadInSongSeconds = SettingsManager.Settings.RewindLeadIn.Value * SongSpeed;
+            _leadInMarkerInputTime = _leadInMarkerSongTime - _songRunner.AudioCalibration * SongSpeed;
+            _leadInLandingInputTime = _leadInMarkerInputTime - _leadInSongSeconds;
+
+            // Hard cut back to the start of the window. No DOTween scrub: the jump can span
+            // minutes, and the lead-in is the transition.
+            SetSongTime(_leadInLandingInputTime, 0);
+            _songRunner.Resume();
+
+            foreach (var player in _players)
+            {
+                player.RestartLeadInVisuals(VisualTime);
+            }
+
+            // Keeps the freeze up and re-arms the countdown from the top.
+            BeginLeadIn(_leadInMarkerSongTime, _leadInMarkerInputTime, _leadInLandingInputTime,
+                _leadInSongSeconds);
+
+            ResumeCore();
+        }
+
+        private void DriveLeadInCountdown()
+        {
+            foreach (var player in _players)
+            {
+                player.UpdateLeadInCountdown(_leadInSongSeconds, _leadInMarkerSongTime);
             }
         }
 

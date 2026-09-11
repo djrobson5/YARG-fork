@@ -1735,13 +1735,13 @@ namespace YARG.Gameplay.Player
             InitializeUnisonEvents();
         }
 
-        public override void RewindTo(double songTime)
+        public override void RestartLeadInVisuals(double visualTime)
         {
             BeatlineIndex = 0;
             ResetStarPowerPathCursors();
             ResetNoteCounters();
 
-            ResetTrackEffectOverlay(songTime);
+            ResetTrackEffectOverlay(visualTime);
 
             // The plan itself is a pure function of the chart and survives the rewind, so the
             // cursors above are reset but the path is not recomputed.
@@ -1753,7 +1753,17 @@ namespace YARG.Gameplay.Player
 
             ResetLastHitTimes();
 
-            base.RewindTo(songTime);
+            base.RestartLeadInVisuals(visualTime);
+        }
+
+        public override void UpdateLeadInCountdown(double countdownLength, double endSongTime)
+        {
+            TrackView.UpdateLeadInCountdown(countdownLength, endSongTime);
+        }
+
+        public override void ForceResetLeadInCountdown()
+        {
+            TrackView.ForceResetCountdown();
         }
 
         public override void SetReplayTime(double time)

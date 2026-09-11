@@ -86,6 +86,23 @@ namespace YARG.Gameplay.Player
 
         public override bool ShouldUpdateInputsOnResume => true;
 
+        /// <summary>
+        /// The frets, and nothing else.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="GuitarAction.StrumUp"/>, <see cref="GuitarAction.StrumDown"/> and
+        /// <see cref="GuitarAction.StarPower"/> are momentary - the engine acts on the press
+        /// itself - and <see cref="GuitarAction.Whammy"/> is an axis, so none of them may be
+        /// re-asserted at a rewind marker. Solo frets latch like the main five.
+        /// </remarks>
+        protected override bool IsHeldStateAction(int action)
+        {
+            var guitarAction = (GuitarAction) action;
+            return guitarAction is
+                >= GuitarAction.Fret1 and <= GuitarAction.Fret6 or
+                >= GuitarAction.Fret11 and <= GuitarAction.Fret15;
+        }
+
         /// See <see cref="StarMultiplierThresholds"/>
         private static float[] GuitarStarMultiplierThresholds => new[]
         {

@@ -352,6 +352,18 @@ namespace YARG.Gameplay.HUD
             _countdownDisplay.UpdateCountdown(countdownLength, endTime);
         }
 
+        /// <inheritdoc cref="CountdownDisplay.UpdateLeadInCountdown"/>
+        public void UpdateLeadInCountdown(double countdownLength, double endSongTime)
+        {
+            _countdownDisplay.UpdateLeadInCountdown(countdownLength, endSongTime);
+        }
+
+        /// <inheritdoc cref="CountdownDisplay.ForceReset"/>
+        public void ForceResetCountdown()
+        {
+            _countdownDisplay.ForceReset();
+        }
+
         /// <summary>
         /// Hands the strip the player's section state, or <c>null</c> to hide it.
         /// </summary>

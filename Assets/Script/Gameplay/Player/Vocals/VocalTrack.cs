@@ -456,6 +456,28 @@ namespace YARG.Gameplay.Player
             _countdownDisplay.UpdateCountdown(countdownLength, endTime);
         }
 
+        /// <inheritdoc cref="CountdownDisplay.UpdateLeadInCountdown"/>
+        public void UpdateLeadInCountdown(double countdownLength, double endSongTime)
+        {
+            if (_countdownDisplay == null)
+            {
+                return;
+            }
+
+            _countdownDisplay.UpdateLeadInCountdown(countdownLength, endSongTime);
+        }
+
+        /// <inheritdoc cref="CountdownDisplay.ForceReset"/>
+        public void ForceResetCountdown()
+        {
+            if (_countdownDisplay == null)
+            {
+                return;
+            }
+
+            _countdownDisplay.ForceReset();
+        }
+
         private void Update()
         {
             double time = GameManager.VisualTime;

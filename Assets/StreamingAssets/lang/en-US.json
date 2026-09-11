@@ -757,6 +757,10 @@
             "Quickplay": {
                 "SaveReplay": "Save Replay"
             },
+            "Rewind": {
+                "RowName": "Rewind to Section",
+                "LeadInCaption": "Resumes {0} s before the section with a countdown"
+            },
             "Replay": {
                 "SaveColorProfile": "Save Color Profile"
             },
@@ -1627,6 +1631,10 @@
             "PracticeRestartDelay": {
                 "Name": "Practice Restart Delay",
                 "Description": "The amount of time (in seconds) to delay the beginning of a section in Practice Mode."
+            },
+            "RewindLeadIn": {
+                "Name": "Rewind Lead-In",
+                "Description": "How long (in seconds) the audio and highway run before the section marker when rewinding to a section, with a countdown."
             },
             "PreviewVolume": {
                 "Name": "Preview Volume",
