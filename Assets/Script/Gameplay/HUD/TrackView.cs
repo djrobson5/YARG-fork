@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using YARG.Core.Engine;
 using YARG.Gameplay.Visuals;
 using YARG.Helpers.Extensions;
+using YARG.Helpers.UI;
 using YARG.Player;
 
 namespace YARG.Gameplay.HUD
@@ -30,6 +32,13 @@ namespace YARG.Gameplay.HUD
         private PlayerNameDisplay _playerNameDisplay;
         [SerializeField]
         private SectionStrip _sectionStrip;
+
+        [SerializeField]
+        private TrackPlayerMenu _playerMenuPrefab;
+
+        private TrackPlayerMenu _playerMenu;
+
+        public bool IsPlayerMenuOpen => _playerMenu?.IsOpen == true;
 
 
         private HighwayCameraRendering _highwayRenderer;
@@ -290,6 +299,11 @@ namespace YARG.Gameplay.HUD
             SetHighwayOffsetX(hasCustomPosition ? _highwayDraggable.CurrentPosition.x : 0f);
 
             var trackBounds = _highwayRenderer.GetTrackBoundsScreenSpace(highwayIndex);
+            if (_playerMenu != null && _playerMenu.gameObject.activeSelf)
+            {
+                UpdatePlayerMenuPosition(highwayIndex);
+            }
+
             if (trackBounds == null)
             {
                 _highwayEditContainer.position = _hiddenPosition;
@@ -314,6 +328,20 @@ namespace YARG.Gameplay.HUD
                 ? _highwayDraggable.CurrentPosition.x
                 : localCenter.Value.x;
             _highwayEditContainer.anchoredPosition = new Vector2(targetX, localCenter.Value.y);
+        }
+
+        private bool UpdatePlayerMenuPosition(int highwayIndex)
+        {
+            var bounds = _highwayRenderer.GetTrackBoundsScreenSpaceRaised(highwayIndex);
+            var baseX = _highwayRenderer.GetTrackBottomScreenX(highwayIndex);
+            if (!baseX.HasValue || bounds.width <= 0f)
+            {
+                _playerMenu.HideImmediate();
+                return false;
+            }
+
+            _playerMenu.SetLayout(baseScreenX: baseX.Value, trackWidth: bounds.width);
+            return true;
         }
 
         private void OnHighwayDraggablePositionChanged(Vector2 position)
@@ -492,15 +520,33 @@ namespace YARG.Gameplay.HUD
             _textNotifications.ShowStarPowerReady();
         }
 
-        public void ShowStrongFinish()
+        public void ShowStrongFinish() => _textNotifications.ShowStrongFinish();
+
+        public void ShowPlayerName(YargPlayer player) => _playerNameDisplay.ShowPlayer(player);
+
+        public void CreatePlayerMenu(YargPlayer player, GameManager gameManager)
         {
-            _textNotifications.ShowStrongFinish();
+            _playerMenu = Instantiate(_playerMenuPrefab, transform);
+            _playerMenu.Initialize(player, gameManager);
+            _playerMenu.HideImmediate();
         }
 
-        public void ShowPlayerName(YargPlayer player)
+        public void OpenPlayerMenu(IReadOnlyList<PlayerMenuItem> items)
         {
-            _playerNameDisplay.ShowPlayer(player);
+            if (!UpdatePlayerMenuPosition(_highwayIndex))
+            {
+                return;
+            }
+
+            _playerMenu.SetItems(items);
+            _playerMenu.Open();
         }
+
+        public void ClosePlayerMenu() => _playerMenu?.Close();
+
+        public void RefreshPlayerMenu() => _playerMenu?.Refresh();
+
+        public void SetPlayerMenuItems(IReadOnlyList<PlayerMenuItem> items) => _playerMenu?.SetItems(items);
 
         public void ForceReset()
         {

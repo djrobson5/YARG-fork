@@ -189,6 +189,7 @@ namespace YARG.Gameplay.HUD
             // Fade in
             yield return _canvasGroup
                 .DOFade(1f, FADE_ANIM_LENGTH)
+                .SetLink(gameObject)
                 .WaitForCompletion();
         }
 
@@ -197,6 +198,7 @@ namespace YARG.Gameplay.HUD
             // Fade out
             yield return _canvasGroup
                 .DOFade(0f, FADE_ANIM_LENGTH)
+                .SetLink(gameObject)
                 .WaitForCompletion();
 
             gameObject.SetActive(false);
@@ -210,6 +212,13 @@ namespace YARG.Gameplay.HUD
                 StopCoroutine(_currentCoroutine);
                 _currentCoroutine = null;
             }
+
+            _canvasGroup.DOKill();
+        }
+
+        private void OnDisable()
+        {
+            StopCurrentCoroutine();
         }
     }
 }

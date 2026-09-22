@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using YARG.Core.Input;
@@ -11,6 +11,9 @@ namespace YARG.Gameplay.HUD
 {
     public class GenericPause : GameplayBehaviour
     {
+        protected bool HasNavigationScheme { get; set; }
+        protected override bool DisableUntilSongStarts => false;
+
         /// <summary>
         /// The pause list's own navigation group, so the rewind row can be pulled out of it when
         /// the run is not eligible.
@@ -57,13 +60,20 @@ namespace YARG.Gameplay.HUD
 
             ApplyRewindRowVisibility();
 
+            if (Navigator.Instance == null)
+            {
+                return;
+            }
+
             _ = Navigator.Instance.PushScheme(new NavigationScheme(new()
             {
                 NavigationScheme.Entry.NavigateSelect,
                 new NavigationScheme.Entry(MenuAction.Red, "Menu.Common.Back", Back),
+                new NavigationScheme.Entry(MenuAction.Start, "Menu.Pause.Generic.Resume", Back, hide: true),
                 NavigationScheme.Entry.NavigateUp,
                 NavigationScheme.Entry.NavigateDown,
             }, false));
+            HasNavigationScheme = true;
         }
 
         protected virtual void OnDisable()
@@ -73,7 +83,15 @@ namespace YARG.Gameplay.HUD
             // with this component, which is the wrong way round.
             ResetRewindPane();
 
-            Navigator.Instance.PopScheme();
+            if (HasNavigationScheme)
+            {
+                if (Navigator.Instance != null)
+                {
+                    Navigator.Instance.PopScheme();
+                }
+
+                HasNavigationScheme = false;
+            }
         }
 
         public virtual void Back()
