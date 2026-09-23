@@ -371,8 +371,14 @@ Code in `Assets/Script/Scores/Sync/`, Unity-free and sqlite-free, compiled by li
   - The General tab order is Updates → Score Sync → Calibration.
   - The settings JSON round trip works, and an older settings file loads as Off with no folder.
   - This PC's live dropdown lists Off, OneDrive, Google Drive, Custom Folder.
-- **Not yet checked:** how the rows look (needs the GUI editor or a build), and clicking
-  through the rows and the dialog in the running game.
+- **Checked in the GUI editor (2026-09-22)**, in play mode on the editor's dev data:
+  - a Custom Folder pointed at a throwaway folder: Sync Now exported 6 games to
+    `<folder>\YARG Score Sync\<machine>-<id>.yargsync`;
+  - the dialog showed "Scores Synced" and "No other PCs have synced to this folder yet.";
+  - the status line read "Today 8:15 PM · Up to date";
+  - the folder row showed the full subfolder path.
+
+  Still unexercised: an import from another PC's file, which slice 5's two-PC test covers.
 
 ## Gates
 
