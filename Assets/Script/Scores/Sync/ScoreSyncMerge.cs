@@ -115,7 +115,10 @@ namespace YARG.Scores.Sync
             var localProfileIds = new HashSet<Guid>(local.Profiles.Select(p => p.Id));
             var localPlayerIds = new HashSet<Guid>(local.Players.Select(p => p.Id));
 
-            // First profile wins when two local profiles share a name, so the choice is stable
+            // First profile wins when two local profiles share a name, so the choice is stable.
+            // Only profiles that existed before this merge are matched by name: two players the
+            // source PC keeps apart (a same-named profile, or a deleted profile's scores) stay
+            // apart here too, unless a local profile joins them
             var localProfilesByName = new Dictionary<string, Guid>();
             foreach (var profile in local.Profiles)
             {
@@ -149,10 +152,6 @@ namespace YARG.Scores.Sync
                 {
                     match = ProfileMatch.Created;
                     localId = profile.Id;
-
-                    // Later source profiles with the same name are the same player
-                    localProfileIds.Add(profile.Id);
-                    localProfilesByName.Add(NormalizeName(profile.Name), profile.Id);
                 }
 
                 plan.PlayerIdMap.Add(profile.Id, localId);
@@ -166,7 +165,7 @@ namespace YARG.Scores.Sync
 
             // IDs the file references without a profile (a profile deleted on the source PC
             // whose scores remain). These never create a profile: they keep their ID unless a
-            // local profile has the same name
+            // pre-existing local profile has the same name
             var sourcePlayerNames = new Dictionary<Guid, string>();
             foreach (var player in source.Players)
             {

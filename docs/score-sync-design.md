@@ -174,7 +174,7 @@ Planned rows:
 ## Slice 1 notes (done 2026-09-22)
 
 Code in `Assets/Script/Scores/Sync/`, Unity-free and sqlite-free, compiled by link into
-`tools/ScoreSyncTests` (72 tests). What slice 1 settled that the sections above leave open:
+`tools/ScoreSyncTests` (74 tests). What slice 1 settled that the sections above leave open:
 
 - **Types.** `ScoreSyncData` holds the five row lists; `ScoreSyncFile` adds the header. Rows are
   `SyncProfile`, `SyncPlayer`, `SyncGame` (with nested `SyncPlayerScore`s),
@@ -202,7 +202,17 @@ Code in `Assets/Script/Scores/Sync/`, Unity-free and sqlite-free, compiled by li
   - A source profile whose ID is only in the local `Players` table (profile deleted on this
     PC) has no local profile, so it follows "else create" and the profile comes back. Open
     question for the user; changing it is one condition in `ResolvePlayers`.
-  - Two source profiles with the same new name create one profile; the second maps to the first.
+  - Name matching only considers profiles that existed on this PC before the merge. Two players
+    the source keeps apart (two same-named profiles, or a deleted profile's scores next to a
+    current profile of the same name) stay apart unless a local profile joins them. Found on
+    the real nightly data, which has an old deleted "Les Paul" beside the current one.
+- **Real-data run (2026-09-22).** A scratch harness loaded copies of this PC's `nightly`
+  (550 games, 5 profiles, 6 players) and `dev` (6 games, 27 completions, 3 progress rows)
+  data through Microsoft.Data.Sqlite into the core: lossless round trip, 66 KB export for the
+  nightly set, no changes on self-import, 556 games on both sides after merging each way,
+  idempotent second imports, and a fresh PC fully populated from one merged export. The
+  database stores `Date` as ticks (`bigint`), GUIDs as text and checksums as blobs, which is
+  what slice 2's mapping reads.
   - Section progress: a local row is recounted even when the source has no row for its key,
     if the merge added completions to it. On equal `LastUpdated`, the local row's
     `SectionCount` wins.

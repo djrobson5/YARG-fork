@@ -214,8 +214,9 @@ namespace YARG.ScoreSyncTests
         }
 
         [Test]
-        public void TwoSourceProfilesWithOneNewNameCreateOneProfile()
+        public void SameNamedSourceProfilesStayApartWhenNeitherExistsLocally()
         {
+            // The source PC keeps two "Carol" profiles apart, so this PC does too
             var carol2 = Guid.NewGuid();
             var local = new ScoreSyncData();
             var source = new ScoreSyncData();
@@ -225,9 +226,50 @@ namespace YARG.ScoreSyncTests
 
             var plan = ScoreSyncMerge.Plan(local, source);
 
-            Assert.That(plan.ProfilesToCreate, Has.Count.EqualTo(1));
-            Assert.That(plan.PlayerIdMap[carol2], Is.EqualTo(Carol));
-            Assert.That(plan.GamesToInsert.Single().PlayerScores.Single().PlayerId, Is.EqualTo(Carol));
+            Assert.That(plan.ProfilesToCreate.Select(p => p.Id), Is.EquivalentTo(new[] { Carol, carol2 }));
+            Assert.That(plan.GamesToInsert.Single().PlayerScores.Single().PlayerId, Is.EqualTo(carol2));
+        }
+
+        [Test]
+        public void SameNamedSourceProfilesJoinOnALocalProfile()
+        {
+            var local = LocalWithAlice();
+            var aliceTwo = Guid.NewGuid();
+            var source = new ScoreSyncData();
+            source.Profiles.Add(Profile(AliceOnLaptop, "Alice"));
+            source.Profiles.Add(Profile(aliceTwo, "alice"));
+
+            var plan = ScoreSyncMerge.Plan(local, source);
+
+            Assert.That(plan.ProfilesToCreate, Is.Empty);
+            Assert.That(plan.PlayerIdMap[AliceOnLaptop], Is.EqualTo(Alice));
+            Assert.That(plan.PlayerIdMap[aliceTwo], Is.EqualTo(Alice));
+        }
+
+        [Test]
+        public void DeletedProfileScoresDoNotJoinAProfileCreatedByTheSameImport()
+        {
+            // The shape of the real nightly data: an old deleted "Les Paul" whose scores and
+            // Players row remain, plus a current "Les Paul" profile with a new ID. This PC has
+            // neither. The current profile is created; the old ID keeps its scores apart, as
+            // on the source PC
+            var oldLesPaul = Guid.NewGuid();
+            var lesPaul = Guid.NewGuid();
+            var local = LocalWithAlice();
+            var source = new ScoreSyncData();
+            source.Profiles.Add(Profile(lesPaul, "Les Paul"));
+            source.Players.Add(Player(oldLesPaul, "Les Paul"));
+            source.Players.Add(Player(lesPaul, "Les Paul"));
+            source.Games.Add(Game(SongA, T0 + 1, 10, Score(oldLesPaul, 10)));
+            source.Games.Add(Game(SongA, T0 + 2, 20, Score(lesPaul, 20)));
+
+            var plan = ScoreSyncMerge.Plan(local, source);
+
+            Assert.That(plan.ProfilesToCreate.Single().Id, Is.EqualTo(lesPaul));
+            Assert.That(plan.PlayerIdMap[oldLesPaul], Is.EqualTo(oldLesPaul));
+            Assert.That(plan.PlayersToInsert.Select(p => p.Id), Is.EquivalentTo(new[] { oldLesPaul, lesPaul }));
+            Assert.That(ScorePlayers(new ScoreSyncData { Games = plan.GamesToInsert }),
+                Is.EquivalentTo(new[] { oldLesPaul, lesPaul }));
         }
 
         [Test]
