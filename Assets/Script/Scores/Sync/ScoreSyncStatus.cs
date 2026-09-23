@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text.RegularExpressions;
@@ -13,6 +14,7 @@ namespace YARG.Scores.Sync
         public const string OFF = "Score sync is off.";
         public const string NO_FOLDER = "No sync folder is set.";
         public const string NEVER_SYNCED = "Not synced on this PC yet.";
+        public const string SYNCING = "Syncing…";
 
         // The "-" plus the first 8 hex digits of the device GUID that ScoreSyncDevice appends
         private static readonly Regex DeviceIdSuffix = new("-[0-9a-fA-F]{8}$");
@@ -72,6 +74,45 @@ namespace YARG.Scores.Sync
                 1 => $"Yesterday {time}",
                 _ => local.ToString("g", culture),
             };
+        }
+
+        /// <summary>
+        /// The toast after an automatic import from one PC: "Added 14 scores from DESKTOP-GAMING",
+        /// plus any created profiles (", and a new profile: Riffmaster"). Null when the import
+        /// added nothing, so no toast is shown.
+        /// </summary>
+        public static string ImportToast(string deviceName, int gamesAdded, int sectionRecordsAdded,
+            IReadOnlyList<string> createdProfiles)
+        {
+            int created = createdProfiles?.Count ?? 0;
+            if (gamesAdded <= 0 && sectionRecordsAdded <= 0 && created == 0)
+            {
+                return null;
+            }
+
+            string added = (gamesAdded, sectionRecordsAdded) switch
+            {
+                (> 0, > 0) => $"{Count(gamesAdded, "score")} and {Count(sectionRecordsAdded, "section record")}",
+                (> 0, _)   => Count(gamesAdded, "score"),
+                (_, > 0)   => Count(sectionRecordsAdded, "section record"),
+                _          => null,
+            };
+
+            string names = created > 0 ? string.Join(", ", createdProfiles) : null;
+            if (added is null)
+            {
+                return $"{(created == 1 ? "New profile" : "New profiles")} from {deviceName}: {names}";
+            }
+
+            string toast = $"Added {added} from {deviceName}";
+            if (created > 0)
+            {
+                toast += $", and {(created == 1 ? "a new profile" : "new profiles")}: {names}";
+            }
+
+            return toast;
+
+            static string Count(int count, string noun) => count == 1 ? $"1 {noun}" : $"{count} {noun}s";
         }
 
         /// <summary>

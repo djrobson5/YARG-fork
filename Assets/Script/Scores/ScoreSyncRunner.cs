@@ -2,9 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using Cysharp.Threading.Tasks;
+using UnityEngine;
 using YARG.Core.Logging;
 using YARG.Helpers;
+using YARG.Menu.Persistent;
+using YARG.Menu.Settings;
 using YARG.Scores.Sync;
+using YARG.Settings;
 
 namespace YARG.Scores
 {
@@ -101,83 +107,220 @@ namespace YARG.Scores
     }
 
     /// <summary>
-    /// Runs export and import against a sync root (docs/score-sync-design.md, slice 3). The
-    /// provider, folder setting and triggers come later (slices 4 and 5).
+    /// Runs export and import against the sync folder (docs/score-sync-design.md): Sync Now, the
+    /// export after a recorded score, and the import at startup.
     /// </summary>
     /// <remarks>
-    /// Main-thread calls, since they go through <see cref="ScoreContainer"/>. Slice 5 moves the
-    /// file I/O off the main thread.
+    /// Called on the main thread. The database and profile work stays there, since it goes
+    /// through <see cref="ScoreContainer"/>; everything that touches the sync folder runs on the
+    /// thread pool, because opening another PC's file can mean a slow cloud download. One run at
+    /// a time: a run waits for the one in flight to finish.
     /// </remarks>
     public static class ScoreSyncRunner
     {
+        private static readonly SemaphoreSlim _gate = new(1, 1);
+        private static readonly object _deviceLock = new();
+        private static ScoreSyncDevice _device;
+
+        /// <summary>An export is waiting for the gate. Main thread only.</summary>
+        private static bool _exportQueued;
+
         private static string DataDirectory => PathHelper.PersistentDataPath;
 
-        public static ScoreSyncDevice Device => ScoreSyncDevice.LoadOrCreate(DataDirectory, Environment.MachineName);
+        public static ScoreSyncDevice Device
+        {
+            get
+            {
+                lock (_deviceLock)
+                {
+                    return _device ??= ScoreSyncDevice.LoadOrCreate(DataDirectory, Environment.MachineName);
+                }
+            }
+        }
+
+        /// <summary>A run is in flight, for the status line.</summary>
+        public static bool IsRunning { get; private set; }
+
+        /// <summary>A Sync Now is waiting or running, so another press does nothing.</summary>
+        public static bool IsSyncNowPending { get; private set; }
 
         /// <summary>
-        /// Exports, then imports: what Sync Now does.
+        /// Whether the automatic triggers run: Windows only, a provider chosen and a folder set.
         /// </summary>
-        public static ScoreSyncRunResult SyncNow(string syncRoot)
-        {
-            var result = new ScoreSyncRunResult();
-            if (!CheckRoot(syncRoot, result))
-            {
-                return Finish(result);
-            }
+        public static bool IsEnabled =>
+            Application.platform is RuntimePlatform.WindowsPlayer or RuntimePlatform.WindowsEditor
+            && !SettingsManager.Settings.SyncProvider.Value.IsOff
+            && !string.IsNullOrWhiteSpace(SettingsManager.Settings.SyncFolder.Value);
 
+        /// <summary>
+        /// Exports, then imports: what Sync Now does. Never throws.
+        /// </summary>
+        public static async UniTask<ScoreSyncRunResult> SyncNow(string syncRoot)
+        {
+            IsSyncNowPending = true;
             try
             {
-                result.ExportedFile = WriteExport(syncRoot);
+                await Enter();
+                try
+                {
+                    var result = new ScoreSyncRunResult();
+                    if (!await CheckRoot(syncRoot, result))
+                    {
+                        return Finish(result);
+                    }
+
+                    try
+                    {
+                        result.ExportedFile = await WriteExport(syncRoot);
+                    }
+                    catch (Exception e)
+                    {
+                        YargLogger.LogException(e, "Failed to export scores for sync.");
+                        result.Error = $"Couldn't write this PC's scores to the sync folder: {e.Message}";
+                        return Finish(result);
+                    }
+
+                    await ImportInto(syncRoot, result, waitOutsideGameplay: false);
+                    return Finish(result);
+                }
+                catch (Exception e)
+                {
+                    YargLogger.LogException(e, "Score sync failed.");
+                    return Finish(new ScoreSyncRunResult { Error = $"Score sync failed: {e.Message}" });
+                }
+                finally
+                {
+                    Exit();
+                }
+            }
+            finally
+            {
+                IsSyncNowPending = false;
+            }
+        }
+
+        /// <summary>
+        /// Exports this PC's scores in the background, after a song recorded one. Requests made
+        /// while an export waits to start are covered by that export; a request made while one
+        /// runs exports once more at the end.
+        /// </summary>
+        public static void RequestExport()
+        {
+            if (!IsEnabled || _exportQueued)
+            {
+                return;
+            }
+
+            _exportQueued = true;
+            ExportInBackground().Forget();
+        }
+
+        /// <summary>
+        /// Imports every other PC's changed export in the background. Anything added is announced
+        /// in a toast; a failure is only a status message.
+        /// </summary>
+        public static void ImportAtStartup()
+        {
+            if (!IsEnabled)
+            {
+                return;
+            }
+
+            ImportInBackground().Forget();
+        }
+
+        private static async UniTaskVoid ExportInBackground()
+        {
+            await Enter();
+            // Scores recorded from here on are not in this export, so they queue another
+            _exportQueued = false;
+            try
+            {
+                string syncRoot = SettingsManager.Settings.SyncFolder.Value;
+                var result = new ScoreSyncRunResult();
+                if (await CheckRoot(syncRoot, result))
+                {
+                    try
+                    {
+                        await WriteExport(syncRoot);
+                    }
+                    catch (Exception e)
+                    {
+                        YargLogger.LogException(e, "Failed to export scores for sync.");
+                        result.Error = $"Couldn't write this PC's scores to the sync folder: {e.Message}";
+                    }
+                }
+
+                Finish(result);
             }
             catch (Exception e)
             {
-                YargLogger.LogException(e, "Failed to export scores for sync.");
-                result.Error = $"Couldn't write this PC's scores to the sync folder: {e.Message}";
-                return Finish(result);
+                YargLogger.LogException(e, "Score sync export failed.");
             }
-
-            ImportInto(syncRoot, result);
-            return Finish(result);
+            finally
+            {
+                Exit();
+            }
         }
 
-        /// <summary>
-        /// Writes this PC's export file. Returns an error message, or null on success.
-        /// </summary>
-        public static string Export(string syncRoot)
+        private static async UniTaskVoid ImportInBackground()
         {
-            var result = new ScoreSyncRunResult();
-            if (!CheckRoot(syncRoot, result))
-            {
-                return result.Error;
-            }
-
+            await Enter();
             try
             {
-                WriteExport(syncRoot);
-                return null;
+                string syncRoot = SettingsManager.Settings.SyncFolder.Value;
+                var result = new ScoreSyncRunResult();
+                if (await CheckRoot(syncRoot, result))
+                {
+                    await ImportInto(syncRoot, result, waitOutsideGameplay: true);
+                }
+
+                Finish(result);
+
+                foreach (var import in result.Imports.Where(i => i.Succeeded))
+                {
+                    string toast = ScoreSyncStatus.ImportToast(import.DeviceName, import.GamesAdded,
+                        import.SectionRecordsAdded, import.CreatedProfileNames);
+                    if (toast is not null)
+                    {
+                        ToastManager.ToastSuccess(toast);
+                    }
+                }
             }
             catch (Exception e)
             {
-                YargLogger.LogException(e, "Failed to export scores for sync.");
-                return $"Couldn't write this PC's scores to the sync folder: {e.Message}";
+                YargLogger.LogException(e, "Score sync import at startup failed.");
             }
-        }
-
-        /// <summary>
-        /// Imports every other PC's export that changed since it was last imported.
-        /// </summary>
-        public static ScoreSyncRunResult ImportAll(string syncRoot)
-        {
-            var result = new ScoreSyncRunResult();
-            if (CheckRoot(syncRoot, result))
+            finally
             {
-                ImportInto(syncRoot, result);
+                Exit();
             }
-
-            return Finish(result);
         }
 
-        private static bool CheckRoot(string syncRoot, ScoreSyncRunResult result)
+        private static async UniTask Enter()
+        {
+            await _gate.WaitAsync();
+            await UniTask.SwitchToMainThread();
+            IsRunning = true;
+            RefreshSettingsStatus();
+        }
+
+        private static void Exit()
+        {
+            IsRunning = false;
+            _gate.Release();
+            RefreshSettingsStatus();
+        }
+
+        private static void RefreshSettingsStatus()
+        {
+            if (SettingsMenu.Instance != null)
+            {
+                SettingsMenu.Instance.OnSettingChanged();
+            }
+        }
+
+        private static async UniTask<bool> CheckRoot(string syncRoot, ScoreSyncRunResult result)
         {
             if (string.IsNullOrWhiteSpace(syncRoot))
             {
@@ -185,7 +328,8 @@ namespace YARG.Scores
                 return false;
             }
 
-            if (!Directory.Exists(syncRoot))
+            // A cloud drive that is still starting up can be slow to answer
+            if (!await UniTask.RunOnThreadPool(() => Directory.Exists(syncRoot)))
             {
                 result.Error = $"The sync folder doesn't exist: {syncRoot}";
                 return false;
@@ -194,38 +338,104 @@ namespace YARG.Scores
             return true;
         }
 
-        private static string WriteExport(string syncRoot)
+        private static async UniTask<string> WriteExport(string syncRoot)
         {
-            var device = Device;
+            // The database and profile list are read here on the main thread; the file is
+            // serialized and written on the thread pool
             var data = ScoreContainer.GetSyncExportData();
-            var file = new ScoreSyncFile
+            string appVersion = GlobalVariables.Instance.CurrentVersion;
+
+            return await UniTask.RunOnThreadPool(() =>
             {
-                Format = ScoreSyncFile.CURRENT_FORMAT,
-                DeviceId = device.DeviceId,
-                DeviceName = device.MachineName,
-                ExportedAt = DateTime.UtcNow,
-                AppVersion = GlobalVariables.Instance.CurrentVersion,
-                Profiles = data.Profiles,
-                Players = data.Players,
-                Games = data.Games,
-                SectionCompletions = data.SectionCompletions,
-                SectionProgress = data.SectionProgress,
-            };
+                var device = Device;
+                var file = new ScoreSyncFile
+                {
+                    Format = ScoreSyncFile.CURRENT_FORMAT,
+                    DeviceId = device.DeviceId,
+                    DeviceName = device.MachineName,
+                    ExportedAt = DateTime.UtcNow,
+                    AppVersion = appVersion,
+                    Profiles = data.Profiles,
+                    Players = data.Players,
+                    Games = data.Games,
+                    SectionCompletions = data.SectionCompletions,
+                    SectionProgress = data.SectionProgress,
+                };
 
-            string path = ScoreSyncFolder.WriteExport(syncRoot, device.ExportFileName, file);
+                string path = ScoreSyncFolder.WriteExport(syncRoot, device.ExportFileName, file);
 
-            var state = ScoreSyncState.Load(DataDirectory);
-            state.LastExportUtc = file.ExportedAt;
-            state.Save(DataDirectory);
+                var state = ScoreSyncState.Load(DataDirectory);
+                state.LastExportUtc = file.ExportedAt;
+                state.Save(DataDirectory);
 
-            YargLogger.LogInfo($"Exported {file.Games.Count} games for score sync to {path}.");
-            return path;
+                YargLogger.LogInfo($"Exported {file.Games.Count} games for score sync to {path}.");
+                return path;
+            });
         }
 
-        private static void ImportInto(string syncRoot, ScoreSyncRunResult result)
+        private readonly struct PendingImport
+        {
+            public readonly ScoreSyncFolder.SourceFile Source;
+            public readonly ScoreSyncFile File;
+
+            public PendingImport(ScoreSyncFolder.SourceFile source, ScoreSyncFile file)
+            {
+                Source = source;
+                File = file;
+            }
+        }
+
+        private static async UniTask ImportInto(string syncRoot, ScoreSyncRunResult result, bool waitOutsideGameplay)
+        {
+            var (state, pending) = await UniTask.RunOnThreadPool(() => ReadSources(syncRoot, result));
+            if (state is null)
+            {
+                return;
+            }
+
+            // Merging holds the main thread for a moment, which a song in progress would feel
+            if (pending.Count > 0 && waitOutsideGameplay)
+            {
+                await UniTask.WaitUntil(() => GlobalVariables.Instance.CurrentScene != SceneIndex.Gameplay);
+            }
+
+            foreach (var item in pending)
+            {
+                var import = ScoreContainer.ImportSyncFile(item.File);
+                result.Imports.Add(import);
+                if (import.Succeeded)
+                {
+                    state.RecordImported(item.Source, item.File);
+                }
+                else
+                {
+                    result.SkippedFiles.Add($"{item.Source.FileName}: {import.Error}");
+                }
+            }
+
+            state.LastSyncUtc = DateTime.UtcNow;
+            state.LastResult = result.Summary();
+            state.LastResultUtc = state.LastSyncUtc;
+            try
+            {
+                state.Save(DataDirectory);
+            }
+            catch (Exception e)
+            {
+                // Costs a re-read next time, nothing else
+                YargLogger.LogException(e, "Failed to save the score sync state.");
+            }
+        }
+
+        /// <summary>
+        /// Lists and reads the other PCs' files: the part that can wait on a cloud download.
+        /// Returns a null state when the folder could not be listed.
+        /// </summary>
+        private static (ScoreSyncState, List<PendingImport>) ReadSources(string syncRoot, ScoreSyncRunResult result)
         {
             var device = Device;
             var state = ScoreSyncState.Load(DataDirectory);
+            var pending = new List<PendingImport>();
 
             List<ScoreSyncFolder.SourceFile> sources;
             try
@@ -235,7 +445,7 @@ namespace YARG.Scores
             catch (Exception e)
             {
                 result.Error = $"Couldn't list the sync folder: {e.Message}";
-                return;
+                return (null, pending);
             }
 
             foreach (var source in sources)
@@ -272,30 +482,10 @@ namespace YARG.Scores
                     continue;
                 }
 
-                var import = ScoreContainer.ImportSyncFile(file);
-                result.Imports.Add(import);
-                if (import.Succeeded)
-                {
-                    state.RecordImported(source, file);
-                }
-                else
-                {
-                    result.SkippedFiles.Add($"{source.FileName}: {import.Error}");
-                }
+                pending.Add(new PendingImport(source, file));
             }
 
-            state.LastSyncUtc = DateTime.UtcNow;
-            state.LastResult = result.Summary();
-            state.LastResultUtc = state.LastSyncUtc;
-            try
-            {
-                state.Save(DataDirectory);
-            }
-            catch (Exception e)
-            {
-                // Costs a re-read next time, nothing else
-                YargLogger.LogException(e, "Failed to save the score sync state.");
-            }
+            return (state, pending);
         }
 
         private static ScoreSyncRunResult Finish(ScoreSyncRunResult result)

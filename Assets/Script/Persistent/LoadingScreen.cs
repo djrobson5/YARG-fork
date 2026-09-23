@@ -11,6 +11,7 @@ using YARG.Localization;
 using YARG.Menu.Navigation;
 using YARG.Menu.Persistent;
 using YARG.Player;
+using YARG.Scores;
 using YARG.Settings;
 using YARG.Song;
 
@@ -96,6 +97,10 @@ namespace YARG
             {
                 SongContainer.ClearSongCacheDirty();
             }
+
+            // Scores and profiles loaded long before this; waiting for the song library too
+            // keeps the import's cache refresh from racing the scan. Runs in the background.
+            ScoreSyncRunner.ImportAtStartup();
         }
 
         private static async UniTask UpdateSourcesAndGenres(LoadingContext context)

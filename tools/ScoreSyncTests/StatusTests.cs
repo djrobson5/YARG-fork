@@ -100,6 +100,27 @@ namespace YARG.ScoreSyncTests
                 Is.EqualTo("Yesterday 8:02 AM · Up to date"));
         }
 
+        [TestCase(14, 0, new string[0], "Added 14 scores from DESKTOP-GAMING")]
+        [TestCase(1, 0, new string[0], "Added 1 score from DESKTOP-GAMING")]
+        [TestCase(0, 3, new string[0], "Added 3 section records from DESKTOP-GAMING")]
+        [TestCase(2, 1, new string[0], "Added 2 scores and 1 section record from DESKTOP-GAMING")]
+        [TestCase(14, 0, new[] { "Riffmaster" },
+            "Added 14 scores from DESKTOP-GAMING, and a new profile: Riffmaster")]
+        [TestCase(14, 0, new[] { "A", "B" }, "Added 14 scores from DESKTOP-GAMING, and new profiles: A, B")]
+        [TestCase(0, 0, new[] { "A" }, "New profile from DESKTOP-GAMING: A")]
+        public void ImportToast(int games, int sections, string[] created, string expected)
+        {
+            Assert.That(ScoreSyncStatus.ImportToast("DESKTOP-GAMING", games, sections, created),
+                Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void ImportToastNothingAdded()
+        {
+            Assert.That(ScoreSyncStatus.ImportToast("X", 0, 0, Array.Empty<string>()), Is.Null);
+            Assert.That(ScoreSyncStatus.ImportToast("X", 0, 0, null), Is.Null);
+        }
+
         [TestCase("DESKTOP-GAMING-3f9a1c2e.yargsync", "DESKTOP-GAMING")]
         [TestCase("LAPTOP-7B04D1E8.yargsync", "LAPTOP")]
         [TestCase("LAPTOP.yargsync", "LAPTOP")]

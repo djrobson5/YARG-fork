@@ -193,17 +193,23 @@ namespace YARG.Settings
             /// <summary>
             /// Exports this PC's scores, imports every other PC's, and reports each PC in a dialog.
             /// </summary>
-            public void SyncScoresNow()
+            public async void SyncScoresNow()
             {
-                if (DialogManager.Instance.IsDialogShowing || SyncProvider.Value.IsOff)
+                if (DialogManager.Instance.IsDialogShowing || SyncProvider.Value.IsOff ||
+                    ScoreSyncRunner.IsSyncNowPending)
                 {
                     return;
                 }
 
-                var result = ScoreSyncRunner.SyncNow(SyncFolder.Value);
+                // Never throws; the status line shows "Syncing…" meanwhile and then reads the
+                // state the run saved
+                var result = await ScoreSyncRunner.SyncNow(SyncFolder.Value);
 
-                // The status line reads the state the run just saved
-                SettingsMenu.Instance.OnSettingChanged();
+                // ShowMessage throws if another dialog opened meanwhile
+                if (DialogManager.Instance.IsDialogShowing)
+                {
+                    return;
+                }
 
                 DialogManager.Instance.ShowMessage(
                     Localize.Key(result.Error is null

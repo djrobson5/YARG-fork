@@ -903,6 +903,9 @@ namespace YARG.Gameplay
                 HasBots = HasBots,
             }, playerEntries);
 
+            // In the background, so the score screen is not held up (docs/score-sync-design.md)
+            ScoreSyncRunner.RequestExport();
+
             return true;
         }
 

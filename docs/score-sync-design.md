@@ -380,6 +380,38 @@ Code in `Assets/Script/Scores/Sync/`, Unity-free and sqlite-free, compiled by li
 
   Still unexercised: an import from another PC's file, which slice 5's two-PC test covers.
 
+## Slice 5 notes (2026-09-22)
+
+- **`ScoreSyncRunner` is now asynchronous.** Every run goes through one gate
+  (`SemaphoreSlim`), so an export, the startup import and Sync Now never overlap and the state
+  file has one writer. Inside a run:
+  - the database reads and merges (`GetSyncExportData`, `ImportSyncFile`) stay on the main
+    thread, as slice 2 requires;
+  - everything that touches the sync folder runs on the thread pool: the folder check, writing
+    the export, and listing and reading the other PCs' files (the part that can wait on a cloud
+    download).
+- **Export after a recorded score.** `RecordScores` calls `ScoreSyncRunner.RequestExport()`
+  after `ScoreContainer.RecordScore`. A request while an export waits for the gate is covered by
+  that export; a request once it has started queues exactly one more. An export failure only
+  goes to the status line.
+- **Import at startup.** `LoadingScreen` calls `ScoreSyncRunner.ImportAtStartup()` after the
+  song scan, so the import's cache refresh (stars cache, score caches) never races the scan.
+  The files are read in the background; if the player is already in a song by then, the merge
+  waits until the gameplay scene is left, since a 550-game merge holds the main thread for
+  about 0.6 s. Each PC's import that added anything gets a toast from
+  `ScoreSyncStatus.ImportToast` ("Added 14 scores from DESKTOP-GAMING, and a new profile:
+  Riffmaster"). Failures are status-line only.
+- Both triggers run only when `ScoreSyncRunner.IsEnabled`: Windows, a provider other than Off,
+  and a folder set.
+- **Sync Now** awaits the runner. A second press while one is pending does nothing. The status
+  line reads "Syncing…" while any run is in flight (`ScoreSyncRunner.IsRunning`), and the
+  settings menu refreshes when a run starts and ends. The dialog is skipped if another dialog
+  opened meanwhile.
+- **Checked:** fast compile, the headless editor's full compile, `tools/ScoreSyncTests` (127 tests, including the toast text),
+  `SpPathTests` (49).
+- **Not yet exercised:** the triggers in the running game, and any import from another PC's
+  file. That is slice 6's two-PC test.
+
 ## Gates
 
 - Fast compile check (CLAUDE.md) after every C# edit.

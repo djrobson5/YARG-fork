@@ -9,6 +9,7 @@ using YARG.Core.Audio;
 using YARG.Core.Logging;
 using YARG.Core.Utility;
 using YARG.Helpers;
+using YARG.Scores;
 using YARG.Scores.Sync;
 using YARG.Settings.Metadata;
 using YARG.Settings.Types;
@@ -77,6 +78,11 @@ namespace YARG.Settings
 
         private static string ScoreSyncStatusLine()
         {
+            if (IsScoreSyncOn() && ScoreSyncRunner.IsRunning)
+            {
+                return ScoreSyncStatus.SYNCING;
+            }
+
             string root = Settings.SyncFolder.Value;
             return ScoreSyncStatus.Line(IsScoreSyncOn(), root, !string.IsNullOrEmpty(root) && Directory.Exists(root),
                 ScoreSyncState.Load(PathHelper.PersistentDataPath), DateTime.Now);
