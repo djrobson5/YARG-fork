@@ -1,0 +1,112 @@
+using System;
+using System.Globalization;
+using NUnit.Framework;
+using YARG.Scores.Sync;
+
+namespace YARG.ScoreSyncTests
+{
+    public class StatusTests
+    {
+        private CultureInfo _previousCulture;
+
+        [SetUp]
+        public void SetUp()
+        {
+            _previousCulture = CultureInfo.CurrentCulture;
+            CultureInfo.CurrentCulture = new CultureInfo("en-US");
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            CultureInfo.CurrentCulture = _previousCulture;
+        }
+
+        private static readonly DateTime Now = new(2026, 9, 22, 22, 30, 0, DateTimeKind.Local);
+
+        [Test]
+        public void Today()
+        {
+            Assert.That(ScoreSyncStatus.DescribeLocal(new DateTime(2026, 9, 22, 21, 14, 0), Now),
+                Is.EqualTo("Today 9:14 PM"));
+        }
+
+        [Test]
+        public void Yesterday()
+        {
+            Assert.That(ScoreSyncStatus.DescribeLocal(new DateTime(2026, 9, 21, 8, 2, 0), Now),
+                Is.EqualTo("Yesterday 8:02 AM"));
+        }
+
+        [Test]
+        public void OlderShowsTheDate()
+        {
+            Assert.That(ScoreSyncStatus.DescribeLocal(new DateTime(2026, 9, 18, 8, 2, 0), Now),
+                Is.EqualTo("9/18/2026 8:02 AM"));
+        }
+
+        [Test]
+        public void JustAfterMidnightIsYesterday()
+        {
+            var now = new DateTime(2026, 9, 23, 0, 5, 0);
+            Assert.That(ScoreSyncStatus.DescribeLocal(new DateTime(2026, 9, 22, 23, 50, 0), now),
+                Is.EqualTo("Yesterday 11:50 PM"));
+        }
+
+        [Test]
+        public void LineWhenOff()
+        {
+            Assert.That(ScoreSyncStatus.Line(false, @"C:\x", true, new ScoreSyncState(), Now),
+                Is.EqualTo(ScoreSyncStatus.OFF));
+        }
+
+        [Test]
+        public void LineWithoutFolder()
+        {
+            Assert.That(ScoreSyncStatus.Line(true, "", false, new ScoreSyncState(), Now),
+                Is.EqualTo(ScoreSyncStatus.NO_FOLDER));
+        }
+
+        [Test]
+        public void LineWithMissingFolder()
+        {
+            Assert.That(ScoreSyncStatus.Line(true, @"G:\My Drive", false, new ScoreSyncState(), Now),
+                Is.EqualTo(@"The sync folder doesn't exist: G:\My Drive"));
+        }
+
+        [Test]
+        public void LineNeverSynced()
+        {
+            Assert.That(ScoreSyncStatus.Line(true, @"C:\x", true, new ScoreSyncState(), Now),
+                Is.EqualTo(ScoreSyncStatus.NEVER_SYNCED));
+        }
+
+        [Test]
+        public void LineWithResult()
+        {
+            var when = new DateTime(2026, 9, 22, 21, 14, 0, DateTimeKind.Local).ToUniversalTime();
+            var state = new ScoreSyncState { LastResult = "Up to date", LastResultUtc = when };
+            Assert.That(ScoreSyncStatus.Line(true, @"C:\x", true, state, Now),
+                Is.EqualTo("Today 9:14 PM · Up to date"));
+        }
+
+        [Test]
+        public void LineFallsBackToLastSyncTime()
+        {
+            // A state written before LastResultUtc existed
+            var when = new DateTime(2026, 9, 21, 8, 2, 0, DateTimeKind.Local).ToUniversalTime();
+            var state = new ScoreSyncState { LastResult = "Up to date", LastSyncUtc = when };
+            Assert.That(ScoreSyncStatus.Line(true, @"C:\x", true, state, Now),
+                Is.EqualTo("Yesterday 8:02 AM · Up to date"));
+        }
+
+        [TestCase("DESKTOP-GAMING-3f9a1c2e.yargsync", "DESKTOP-GAMING")]
+        [TestCase("LAPTOP-7B04D1E8.yargsync", "LAPTOP")]
+        [TestCase("LAPTOP.yargsync", "LAPTOP")]
+        [TestCase("-3f9a1c2e.yargsync", "-3f9a1c2e")]
+        public void DeviceNameFromFileName(string fileName, string expected)
+        {
+            Assert.That(ScoreSyncStatus.DeviceNameFromFileName(fileName), Is.EqualTo(expected));
+        }
+    }
+}

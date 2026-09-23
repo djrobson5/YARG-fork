@@ -26,6 +26,9 @@ namespace YARG.Scores.Sync
         /// <summary>The last result or error, for the status line.</summary>
         public string LastResult;
 
+        /// <summary>When <see cref="LastResult"/> was recorded, success or not.</summary>
+        public DateTime? LastResultUtc;
+
         public class ImportedSource
         {
             /// <summary>File size and write time as listed: checked without opening the file.</summary>

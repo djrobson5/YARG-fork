@@ -69,6 +69,25 @@ namespace YARG.Scores.Sync
         }
 
         /// <summary>
+        /// The sync root for a folder picked with Browse. Picking the <c>YARG Score Sync</c>
+        /// folder itself means its parent, so the files don't end up one level deeper.
+        /// </summary>
+        public static string RootFromBrowsedFolder(string folder)
+        {
+            string trimmed = folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (string.Equals(Path.GetFileName(trimmed), FOLDER_NAME, StringComparison.OrdinalIgnoreCase))
+            {
+                string parent = Path.GetDirectoryName(trimmed);
+                if (!string.IsNullOrEmpty(parent))
+                {
+                    return parent;
+                }
+            }
+
+            return folder;
+        }
+
+        /// <summary>
         /// Writes this PC's export into the sync folder, replacing its previous export in one
         /// step so a sync client never uploads a half-written file.
         /// </summary>

@@ -167,14 +167,29 @@ also holds the last export time and the last result for the status line.
 
 ## UI
 
-Settings → **General**, a `Score Sync` section directly below `Updates`. As with the
-earlier features, this is mocked up from real prefab values and reviewed before slice 4.
-Planned rows:
+Settings → **General**, a `Score Sync` section directly below `Updates`, Windows only.
+Mocked up from real prefab values and reviewed before slice 4; decisions locked 2026-09-22:
 
-1. **Sync Provider**: dropdown with Off / OneDrive / Google Drive / Custom Folder.
-2. **Sync Folder**: path and Browse (`FileExplorerHelper.OpenChooseFolder`), greyed when Off.
-3. **Sync Now**: button, greyed when Off.
-4. A status line: last sync time, and the last result or error.
+1. **Sync Provider**: dropdown with Off / OneDrive / Google Drive / Custom Folder. When several
+   OneDrive accounts are signed in, the list has **one entry per account**, "OneDrive (email)",
+   instead of a separate account row. A saved account that isn't signed in on this PC stays in
+   the list so the setting still reads correctly. Picking an entry detects its folder; loading
+   the settings never re-detects.
+2. **Sync Folder**: the `FileInfoSetting` row shape: the path, a Browse button, and an **Open
+   Folder** button that opens it in Explorer. The row shows the **full subfolder path**
+   (`<root>\YARG Score Sync`); the setting stores the root. Browsing to the `YARG Score Sync`
+   folder itself stores its parent. No folder reads "Not found. Choose the folder with Browse."
+   ("No folder chosen" for Custom Folder).
+3. **Sync Now**: button row.
+4. **Status line**: a compact dim text line under Sync Now (layout A in the mockup), with a
+   **relative time** ("Today 9:14 PM", "Yesterday 8:02 AM", else the date) and the last result
+   or error.
+
+When the provider is **Off**, rows 2–4 are **greyed out** (the spec's original choice), not
+hidden. Button rows could only hide, so `ButtonRowMetadata` gains an `editableWhen`.
+
+The **Sync Now dialog lists each other PC**: its counts, or "up to date", then any created
+profiles and each skipped file with its reason. A failed pass shows the error instead.
 
 ## Slices
 
@@ -187,7 +202,7 @@ Planned rows:
 3. **Folder layer.** Device identity, per-device file naming, atomic write, scanning other
    devices' files, the unchanged-file skip, provider detection (including the Google Drive check
    on a real install).
-4. **Settings UI.** Mockup first, then the four rows.
+4. **Settings UI.** Mockup first, then the four rows and the Sync Now dialog.
 5. **Automatic triggers.** Export after a recorded score, import at startup, the result toast
    (naming any profiles the import created).
 6. **Release build and a two-PC test** on the user's machines.
@@ -311,6 +326,53 @@ Code in `Assets/Script/Scores/Sync/`, Unity-free and sqlite-free, compiled by li
   A standalone .NET run also confirmed `File.Move`, `File.Replace` and overwrite on both.
 - **Not yet exercised:** `ScoreSyncRunner` end to end, since it needs the running game's
   `ScoreContainer`. Slice 5's in-game test covers it.
+
+## Slice 4 notes (done 2026-09-22)
+
+- **Settings** (`SettingsManager.Settings.cs`, General region): `SyncProvider`
+  (`ScoreSyncProviderSetting`, a `DropdownSetting<ScoreSyncChoice>`), `SyncFolder`
+  (`ScoreSyncFolderSetting`, the root as a string), and the `SyncScoresNow` button. The rows in
+  `SettingsManager.cs` are visible only on `WindowsPlayer`/`WindowsEditor`.
+- **Provider dropdown.** Entries come from `ScoreSyncChoice.Entries`. The dropdown re-detects the
+  OneDrive accounts when drawn, reusing the result for 2 s because it asks for `Count` once per
+  entry. Folder detection runs only in `SelectIndex`, the user's pick. Settings load calls every
+  `OnChange`, so detection there would undo a Browse override. The saved value is
+  `{Provider, Account}`.
+- **Folder row.** New prefab `Visuals/ScoreSyncFolderSetting.prefab`, addressable
+  `Setting/ScoreSyncFolder`. It is a copy of `FileInfoSetting.prefab`:
+  - the red delete icon is replaced by an **Open Folder** `SmallRoundButton` (150 wide);
+  - Browse moves left;
+  - the path text is 830 wide, right-aligned, one line with an ellipsis, not uppercased.
+
+  The visual is `ScoreSyncFolderSettingVisual`. A missing folder shows in yellow `#FFBB0D` and
+  greys the Open Folder button. Explorer gets the path in quotes, since cloud folder names have
+  spaces.
+- **Greying.** `ButtonRowMetadata.EditableWhen` feeds the new `SettingsButton.SetEditable`
+  (50% alpha, buttons off, and `Confirm` ignored so a controller can't enter the row).
+  `StatusTextMetadata` is the status line: `SettingsText.prefab` shortened to 70, left-aligned,
+  55% alpha (half that while off). It is recomputed on every `OnSettingChanged`.
+- **Status text** is `ScoreSyncStatus.Line` (Unity-free, tested). `ScoreSyncState` gained
+  `LastResultUtc`, set for errors too, so a failure also gets a time. Older state files fall
+  back to `LastSyncUtc`.
+- **Sync Now dialog.** Built by `ScoreSyncRunResult.DialogMessage`:
+  - one line per imported PC;
+  - one per unchanged PC. A PC whose file was not opened is named from its file name
+    (`ScoreSyncStatus.DeviceNameFromFileName`);
+  - created profiles, then each skipped file.
+
+  Titles: "Scores Synced" / "Sync Failed".
+- **Sync Now still runs on the main thread**, as the runner has since slice 3. A slow cloud
+  download holds the menu until it finishes. Slice 5 moves the file I/O off the main thread.
+- **Checked:**
+  - `tools/ScoreSyncTests`: 119 tests, including the new `ChoiceTests` and `StatusTests`.
+  - Fast compile and the headless editor's full recompile are green.
+  - A `run_script` sweep of the new prefab passed: no missing scripts, Browse and Open Folder
+    wired to the new visual, addressable present.
+  - The General tab order is Updates → Score Sync → Calibration.
+  - The settings JSON round trip works, and an older settings file loads as Off with no folder.
+  - This PC's live dropdown lists Off, OneDrive, Google Drive, Custom Folder.
+- **Not yet checked:** how the rows look (needs the GUI editor or a build), and clicking
+  through the rows and the dialog in the running game.
 
 ## Gates
 

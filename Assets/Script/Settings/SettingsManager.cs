@@ -9,6 +9,7 @@ using YARG.Core.Audio;
 using YARG.Core.Logging;
 using YARG.Core.Utility;
 using YARG.Helpers;
+using YARG.Scores.Sync;
 using YARG.Settings.Metadata;
 using YARG.Settings.Types;
 using YARG.Song;
@@ -64,6 +65,23 @@ namespace YARG.Settings
             return UpdateChecker.IsReleaseBuild && !GlobalVariables.OfflineMode;
         }
 
+        /// <summary>
+        /// Score sync is built and tested for Windows only (docs/score-sync-design.md).
+        /// </summary>
+        private static bool IsScoreSyncAvailable()
+        {
+            return Application.platform is RuntimePlatform.WindowsPlayer or RuntimePlatform.WindowsEditor;
+        }
+
+        private static bool IsScoreSyncOn() => !Settings.SyncProvider.Value.IsOff;
+
+        private static string ScoreSyncStatusLine()
+        {
+            string root = Settings.SyncFolder.Value;
+            return ScoreSyncStatus.Line(IsScoreSyncOn(), root, !string.IsNullOrEmpty(root) && Directory.Exists(root),
+                ScoreSyncState.Load(PathHelper.PersistentDataPath), DateTime.Now);
+        }
+
         public static readonly List<Tab> DisplayedSettingsTabs = new()
         {
             new MetadataTab("General", icon: "Engine")
@@ -72,6 +90,19 @@ namespace YARG.Settings
                 // mode. See docs/updater-design.md.
                 new HeaderMetadata("Updates", visibleWhen: IsUpdateCheckAvailable),
                 new ButtonRowMetadata(nameof(Settings.CheckForUpdates), IsUpdateCheckAvailable),
+
+                // Windows only. The rows below the provider grey out while it is Off.
+                new HeaderMetadata("ScoreSync", visibleWhen: IsScoreSyncAvailable),
+                new FieldMetadata(nameof(Settings.SyncProvider), visibleWhen: IsScoreSyncAvailable),
+                new FieldMetadata(nameof(Settings.SyncFolder), visibleWhen: IsScoreSyncAvailable),
+                new ButtonRowMetadata(nameof(Settings.SyncScoresNow), IsScoreSyncAvailable)
+                {
+                    EditableWhen = IsScoreSyncOn,
+                },
+                new StatusTextMetadata(ScoreSyncStatusLine, IsScoreSyncAvailable)
+                {
+                    EditableWhen = IsScoreSyncOn,
+                },
 
                 new HeaderMetadata("Calibration"),
                 new ButtonRowMetadata(nameof(Settings.OpenCalibrator)),

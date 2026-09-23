@@ -170,6 +170,11 @@ MonoBehaviour:
     m_ReadOnly: 0
     m_SerializedLabels: []
     FlaggedDuringContentUpdateRestriction: 0
+  - m_GUID: 89b36775f8467614cae03a93bf13c99b
+    m_Address: Setting/ScoreSyncFolder
+    m_ReadOnly: 0
+    m_SerializedLabels: []
+    FlaggedDuringContentUpdateRestriction: 0
   - m_GUID: 8b68a573841c0df43b615b07a9fa8a80
     m_Address: VocalNeedleTexture/1
     m_ReadOnly: 0

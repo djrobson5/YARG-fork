@@ -17,7 +17,14 @@ namespace YARG.Settings.Metadata
         private static GameObject _buttonPrefab;
         private static GameObject _textPrefab;
 
+        // The status line is SettingsText shortened to a single dim line
+        private const float STATUS_TEXT_HEIGHT = 70f;
+        private const float STATUS_TEXT_ALPHA = 0.55f;
+        private const float DIMMED_ALPHA = 0.5f;
+
         private Dictionary<string, BaseSettingVisual> _settingVisuals = new();
+        private readonly List<(SettingsButton Button, ButtonRowMetadata Metadata)> _buttonRows = new();
+        private readonly List<(TextMeshProUGUI Text, StatusTextMetadata Metadata)> _statusTexts = new();
         private readonly List<AbstractMetadata> _settings = new();
 
         public IReadOnlyList<AbstractMetadata> Settings => _settings;
@@ -30,6 +37,8 @@ namespace YARG.Settings.Metadata
         public override void BuildSettingTab(Transform container, NavigationGroup navGroup)
         {
             _settingVisuals.Clear();
+            _buttonRows.Clear();
+            _statusTexts.Clear();
 
             var showAdvanced = SettingsMenu.Instance.ShowAdvanced;
             var settingIndex = 0;
@@ -77,6 +86,12 @@ namespace YARG.Settings.Metadata
                         buttonGroup.SetInfo(buttonRow.Buttons);
                         navGroup.AddNavigatable(buttonGroup);
 
+                        if (buttonRow.EditableWhen is not null)
+                        {
+                            buttonGroup.SetEditable(buttonRow.IsEditable);
+                            _buttonRows.Add((buttonGroup, buttonRow));
+                        }
+
                         break;
                     }
                     case TextMetadata text:
@@ -94,6 +109,26 @@ namespace YARG.Settings.Metadata
                         go.GetComponentInChildren<TextMeshProUGUI>().text =
                             Localize.Key("Settings.Text", text.TextName);
 
+                        break;
+                    }
+                    case StatusTextMetadata status:
+                    {
+                        if (_textPrefab == null)
+                        {
+                            _textPrefab = Addressables
+                                .LoadAssetAsync<GameObject>("SettingTab/Text")
+                                .WaitForCompletion();
+                        }
+                        var go = Object.Instantiate(_textPrefab, container);
+                        var rect = (RectTransform) go.transform;
+                        rect.sizeDelta = new Vector2(rect.sizeDelta.x, STATUS_TEXT_HEIGHT);
+
+                        var text = go.GetComponentInChildren<TextMeshProUGUI>();
+                        text.horizontalAlignment = HorizontalAlignmentOptions.Left;
+                        text.alpha = STATUS_TEXT_ALPHA;
+
+                        _statusTexts.Add((text, status));
+                        RefreshStatusText(text, status);
                         break;
                     }
                     case FieldMetadata field:
@@ -124,6 +159,22 @@ namespace YARG.Settings.Metadata
                 pair.Value.SetEditable(setting.IsEditable);
                 pair.Value.RefreshVisual();
             }
+
+            foreach (var (button, metadata) in _buttonRows)
+            {
+                button.SetEditable(metadata.IsEditable);
+            }
+
+            foreach (var (text, metadata) in _statusTexts)
+            {
+                RefreshStatusText(text, metadata);
+            }
+        }
+
+        private static void RefreshStatusText(TextMeshProUGUI text, StatusTextMetadata metadata)
+        {
+            text.text = metadata.Text();
+            text.alpha = metadata.IsEditable ? STATUS_TEXT_ALPHA : STATUS_TEXT_ALPHA * DIMMED_ALPHA;
         }
 
         // For collection initializer support

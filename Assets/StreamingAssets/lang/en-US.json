@@ -271,6 +271,14 @@
                 "Description": "The options about to be displayed represent a work in progress. These features are subject to change, may contain bugs, and <b>could even cause major problems if enabled</b>.",
                 "Confirm": "I Understand"
             },
+            "ScoreSync": {
+                "Synced": {
+                    "Title": "Scores Synced"
+                },
+                "Failed": {
+                    "Title": "Sync Failed"
+                }
+            },
             "Updates": {
                 "OpenReleasePage": "Open Release Page",
                 "DownloadUpdate": "Download Update",
@@ -1194,7 +1202,8 @@
             "CrowdFX": "Crowd FX",
             "OutputConfiguration": "Output Configuration",
             "Accessibility": "Accessibility",
-            "Updates": "Updates"
+            "Updates": "Updates",
+            "ScoreSync": "Score Sync"
         },
         "Button": {
             "CopyCurrentSongJsonFilePath": "Copy Current Song Json File Path",
@@ -1211,7 +1220,8 @@
             "OpenPersistentDataPath": "Open Persistent Data Path",
             "RemoveRemoteContent": "Remove Cached Content",
             "OpenAsioControlPanel": "Open ASIO Control Panel",
-            "CheckForUpdates": "Check for Updates"
+            "CheckForUpdates": "Check for Updates",
+            "SyncScoresNow": "Sync Now"
         },
         "Setting": {
             "AllowDuplicateSongs": {
@@ -1715,6 +1725,14 @@
             "ShowStarPowerPath": {
                 "Name": "Show Star Power Path",
                 "Description": "Rings the notes where a perfect run should activate Star Power to score the most points, and counts down to them in a chip above your track. 5-fret guitar and bass only, and only when you are playing alone. The path assumes a full combo with no whammy, so it is a target rather than a promise."
+            },
+            "SyncProvider": {
+                "Name": "Sync Provider",
+                "Description": "Shares scores between your PCs through a cloud folder. The desktop app of OneDrive or Google Drive must be installed on every PC. Each PC writes its own file and merges the others' in; nothing is ever deleted."
+            },
+            "SyncFolder": {
+                "Name": "Sync Folder",
+                "Description": "Where the score files are kept. Picking a provider finds its folder; use Browse to choose another."
             },
             "StarPowerPathColor": {
                 "Name": "Star Power Path Color",

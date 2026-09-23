@@ -180,6 +180,39 @@ namespace YARG.Settings
             #region General
 
             /// <summary>
+            /// The folder score sync reads and writes; see docs/score-sync-design.md.
+            /// </summary>
+            public ScoreSyncFolderSetting SyncFolder { get; } = new();
+
+            /// <summary>
+            /// Off, or where the sync folder lives. Picking an entry detects its folder into
+            /// <see cref="SyncFolder"/>.
+            /// </summary>
+            public ScoreSyncProviderSetting SyncProvider { get; }
+
+            /// <summary>
+            /// Exports this PC's scores, imports every other PC's, and reports each PC in a dialog.
+            /// </summary>
+            public void SyncScoresNow()
+            {
+                if (DialogManager.Instance.IsDialogShowing || SyncProvider.Value.IsOff)
+                {
+                    return;
+                }
+
+                var result = ScoreSyncRunner.SyncNow(SyncFolder.Value);
+
+                // The status line reads the state the run just saved
+                SettingsMenu.Instance.OnSettingChanged();
+
+                DialogManager.Instance.ShowMessage(
+                    Localize.Key(result.Error is null
+                        ? "Menu.Dialog.ScoreSync.Synced.Title"
+                        : "Menu.Dialog.ScoreSync.Failed.Title"),
+                    result.DialogMessage());
+            }
+
+            /// <summary>
             /// Asks GitHub whether a newer <c>-sectionfc</c> release exists and reports the
             /// answer in a dialog. Manual only, never automatic; see docs/updater-design.md.
             /// </summary>
@@ -772,6 +805,9 @@ namespace YARG.Settings
 
             public SettingContainer()
             {
+                SyncProvider = new(SyncFolder);
+                SyncFolder.EditableWhen = () => !SyncProvider.Value.IsOff;
+
                 AutomaticPlaybackBuffer = new(true, AutomaticPlaybackBufferChanged);
                 PlaybackBufferLength.EditableWhen = () => !AutomaticPlaybackBuffer.Value;
                 MuteOnlyWhenAllPlayersMiss.EditableWhen = () => MuteOnMiss.Value != AudioFxMode.Off;

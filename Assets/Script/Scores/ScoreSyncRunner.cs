@@ -25,6 +25,9 @@ namespace YARG.Scores
 
         public int UnchangedFiles;
 
+        /// <summary>The PCs whose files had nothing new, for the Sync Now dialog.</summary>
+        public List<string> UnchangedDevices = new();
+
         public string Summary()
         {
             if (Error is not null)
@@ -50,6 +53,50 @@ namespace YARG.Scores
             }
 
             return summary;
+        }
+
+        /// <summary>
+        /// The Sync Now dialog: one line per other PC, then created profiles and skipped files.
+        /// </summary>
+        public string DialogMessage()
+        {
+            if (Error is not null)
+            {
+                return Error;
+            }
+
+            var lines = new List<string> { "This PC's scores were written to the sync folder.", string.Empty };
+
+            foreach (var import in Imports.Where(i => i.Succeeded))
+            {
+                lines.Add(import.GamesAdded == 0 && import.SectionRecordsAdded == 0
+                    ? $"{import.DeviceName}: nothing new"
+                    : $"{import.DeviceName}: {import.GamesAdded} scores, {import.SectionRecordsAdded} section records");
+            }
+
+            foreach (string device in UnchangedDevices)
+            {
+                lines.Add($"{device}: up to date");
+            }
+
+            if (lines.Count == 2 && SkippedFiles.Count == 0)
+            {
+                lines.Add("No other PCs have synced to this folder yet.");
+            }
+
+            var created = Imports.SelectMany(i => i.CreatedProfileNames).ToList();
+            if (created.Count > 0)
+            {
+                string label = created.Count == 1 ? "New profile" : "New profiles";
+                lines.Add($"{label}: {string.Join(", ", created)} (set up bindings before playing)");
+            }
+
+            foreach (string skipped in SkippedFiles)
+            {
+                lines.Add($"Skipped {skipped}");
+            }
+
+            return string.Join("\n", lines);
         }
     }
 
@@ -196,6 +243,7 @@ namespace YARG.Scores
                 if (state.IsUnchanged(source))
                 {
                     result.UnchangedFiles++;
+                    result.UnchangedDevices.Add(ScoreSyncStatus.DeviceNameFromFileName(source.FileName));
                     continue;
                 }
 
@@ -220,6 +268,7 @@ namespace YARG.Scores
                 {
                     state.RecordImported(source, file);
                     result.UnchangedFiles++;
+                    result.UnchangedDevices.Add(file.DeviceName);
                     continue;
                 }
 
@@ -237,6 +286,7 @@ namespace YARG.Scores
 
             state.LastSyncUtc = DateTime.UtcNow;
             state.LastResult = result.Summary();
+            state.LastResultUtc = state.LastSyncUtc;
             try
             {
                 state.Save(DataDirectory);
@@ -256,6 +306,7 @@ namespace YARG.Scores
                 {
                     var state = ScoreSyncState.Load(DataDirectory);
                     state.LastResult = result.Error;
+                    state.LastResultUtc = DateTime.UtcNow;
                     state.Save(DataDirectory);
                 }
                 catch (Exception)
