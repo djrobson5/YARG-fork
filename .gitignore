@@ -43,9 +43,10 @@ ExportedObj/
 .consulo/
 *.csproj
 !/Native/YargAudio/tests/GainIntegration/GainIntegration.csproj
-# The Star Power path verification harness (docs/sp-path-design.md §3) is fork-owned
-# and hand-written, not Unity-generated, so it has to survive the blanket *.csproj rule.
+# The fork-owned test harnesses (Star Power path, docs/sp-path-design.md §3; score sync) are
+# hand-written, not Unity-generated, so they have to survive the blanket *.csproj rule.
 !tools/SpPathTests/*.csproj
+!tools/ScoreSyncTests/*.csproj
 /Native/YargAudio/tests/GainIntegration/[Bb]in/
 /Native/YargAudio/tests/GainIntegration/[Oo]bj/
 /scripts/NativeBuild/[Bb]in/

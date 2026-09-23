@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Tests for the score sync merge core (docs/score-sync-design.md, slice 1).
+
+    Same shape as tools/SpPathTests: net8.0 because that is the local SDK, referencing the
+    netstandard2.1 YARG.Core for its enums, with the Unity-free files under
+    Assets/Script/Scores/Sync/ compiled by link. Those files must stay free of UnityEngine and
+    of sqlite-net.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <!-- Off so this project fails the same way Unity would on a file that forgot a using. -->
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>YARG.ScoreSyncTests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="NUnit" Version="4.2.2" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\YARG.Core\YARG.Core\YARG.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\Assets\Script\Scores\Sync\**\*.cs" LinkBase="Sync" />
+  </ItemGroup>
+
+</Project>
