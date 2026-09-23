@@ -100,9 +100,17 @@ Record matching is idempotent: importing the same file twice changes nothing the
 
 ### Skipping unchanged files
 
-`<PersistentDataPath>/score-sync-state.json` records, per source device ID, the `ExportedAt` of
-the last file imported successfully. A file whose `ExportedAt` has not moved is not re-read. The
-state also holds the last export time and the last result for the status line.
+`<PersistentDataPath>/score-sync-state.json` records, per source file, its size and write time
+as listed plus the `DeviceId` and `ExportedAt` inside it, at the last successful import. The
+skip happens in two stages:
+
+1. A file whose listed size and write time have not moved is not opened at all. Listing never
+   downloads an on-demand or streamed file, so this stage is cheap and works offline.
+2. A file that did move is read, and its merge is still skipped if that device's `ExportedAt`
+   was already imported, for instance when a sync client only touched the file.
+
+A file that fails to read or import is not recorded, so it is tried again next time. The state
+also holds the last export time and the last result for the status line.
 
 ### Safety
 
@@ -139,12 +147,19 @@ state also holds the last export time and the last result for the status line.
   pointed at `C:\Users\<user>\OneDrive`, a leftover folder from a personal account that is no
   longer signed in (registry `Personal` key with empty `UserEmail`/`UserFolder`, folder not a
   sync root). The account actually syncing was a work/school account (`Business1`), which the
-  environment variable does not name (`OneDriveCommercial` was empty). A live sync root also
-  carries the `ReparsePoint` attribute; the stale folder did not, which is a useful extra check.
-- **Google Drive for desktop:** by default a virtual drive (usually `G:`) with a `My Drive`
-  folder at its root. Detection scans ready drives for that layout. **To verify in slice 3**
-  on a real install, including mirror mode (where My Drive is a normal local folder); if detection
-  proves unreliable, Google Drive falls back to asking for the folder.
+  environment variable does not name (`OneDriveCommercial` was empty). The registry rule
+  alone picks the right account; verified in-editor on 2026-09-22. The live root's
+  `ReparsePoint` attribute is **not** used: PowerShell shows it (cloud-files tag `0x9000701a`),
+  but .NET's `File.GetAttributes` does not, because Windows hides cloud placeholders from
+  processes that don't opt in.
+- **Google Drive for desktop:** in streaming mode (the default) a virtual drive with a `My Drive`
+  folder at its root. Detection scans ready drives for `<root>\My Drive`, drives labelled
+  "Google Drive" first. It then checks `%USERPROFILE%\My Drive`, mirror mode's default folder.
+  - **Streaming mode was verified 2026-09-22 on a fresh install:** `G:`, volume label "Google
+    Drive", reported as FAT32, plain `My Drive` directory. Settings are in
+    `HKCU\Software\Google\DriveFS`, but none of them name the mount point directly, so the
+    drive scan is the detection.
+  - **Mirror mode is unverified.** When nothing is found, the user picks the folder with Browse.
 - Detection runs when the provider is chosen, and the result is stored as the folder setting.
   It is not re-detected on every launch, so an override sticks.
 - A folder that does not exist or is not writable makes the status line say so. Nothing else
@@ -180,7 +195,7 @@ Planned rows:
 ## Slice 1 notes (done 2026-09-22)
 
 Code in `Assets/Script/Scores/Sync/`, Unity-free and sqlite-free, compiled by link into
-`tools/ScoreSyncTests` (74 tests). What slice 1 settled that the sections above leave open:
+`tools/ScoreSyncTests` (74 tests at the time). What slice 1 settled that the sections above leave open:
 
 - **Types.** `ScoreSyncData` holds the five row lists; `ScoreSyncFile` adds the header. Rows are
   `SyncProfile`, `SyncPlayer`, `SyncGame` (with nested `SyncPlayerScore`s),
@@ -267,6 +282,35 @@ Code in `Assets/Script/Scores/Sync/`, Unity-free and sqlite-free, compiled by li
 - **Not yet exercised:** `ImportSyncFile` itself (backup files, `PlayerContainer` profile
   creation, cache refresh). It needs the running game, so it gets its first run in slice 5's
   in-game test.
+
+## Slice 3 notes (done 2026-09-22)
+
+- **Unity-free, in `Assets/Script/Scores/Sync/` and covered by `tools/ScoreSyncTests`** (97 tests):
+  - `ScoreSyncDevice`: identity file, export file name, and machine names cleaned into valid
+    file names. A corrupt identity file is replaced; that only changes the export file name,
+    and the union merge makes the old file harmless.
+  - `ScoreSyncState`: the two-stage skip described above.
+  - `ScoreSyncFolder`: write the export atomically (`.tmp` + `File.Replace`, or a move when
+    there is no file yet); list other PCs' files (only the exact `.yargsync` extension, own
+    file left out); read one with every sharing flag. A missing, locked or offline file is
+    `Unavailable`, distinct from `Invalid`.
+  - `ScoreSyncProviders`: the detection rules, which take registry and drive data as input.
+- **Game side:**
+  - `ScoreSyncProviderProbe` reads the registry and the drives. That code is compiled only on
+    Windows, so it finds nothing elsewhere.
+  - `ScoreSyncRunner` has `SyncNow(root)`, `Export(root)` and `ImportAll(root)` on the main
+    thread. It returns a `ScoreSyncRunResult` whose `Summary()` feeds the status line.
+  - A file carrying this PC's own `DeviceId` under another name (a sync client's conflict
+    copy) is recorded and never imported.
+- **Checked live** with `tools/ScoreSyncStoreCheck/FolderCheck.cs` in the headless editor on
+  this PC:
+  - detection found only the signed-in UO work/school OneDrive and `G:\My Drive`;
+  - in both, write, list, read, unchanged-skip, re-export and own-file exclusion all work, and
+    the check folder is removed afterwards.
+
+  A standalone .NET run also confirmed `File.Move`, `File.Replace` and overwrite on both.
+- **Not yet exercised:** `ScoreSyncRunner` end to end, since it needs the running game's
+  `ScoreContainer`. Slice 5's in-game test covers it.
 
 ## Gates
 

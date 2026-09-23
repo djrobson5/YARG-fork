@@ -1,4 +1,4 @@
-# ScoreSyncStoreCheck: score sync against real databases
+# ScoreSyncStoreCheck: score sync against real databases and folders
 
 The database-level check for score sync (`docs/score-sync-design.md`, slice 2). It drives
 `ScoreSyncStore` inside the headless editor, so it runs the game's own sqlite-net and native
@@ -36,4 +36,16 @@ It returns a log ending in `ALL OK` or `N FAILURES`. It covers:
 - both databases converging;
 - a failure forced mid-apply (a trigger on `SectionCompletions`) rolling back every row.
 
-This folder is not a project: the file compiles only inside the editor, through `run_script`.
+## FolderCheck.cs: the sync folders (slice 3)
+
+```
+unity command run_script --file tools/ScoreSyncStoreCheck/FolderCheck.cs --entry ScoreSyncFolderCheck.Run --timeout 150
+```
+
+It prints what OneDrive and Google Drive detection finds on this PC; compare that with the
+accounts actually signed in. Then, in each detected root, it runs a write, list, read,
+unchanged-skip and re-export cycle, using a small synthetic export in a throwaway
+`YARG Score Sync Check` folder, and deletes that folder. It never touches real scores. The
+sync clients do upload the check folder briefly.
+
+These folders are not projects: the files compile only inside the editor, through `run_script`.
