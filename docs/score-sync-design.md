@@ -19,7 +19,7 @@ folder in sync with the cloud, and the game only reads and writes files in that 
 | Provider choice | A setting: `Off` (default), `OneDrive`, `Google Drive`, `Custom Folder`. Picking a provider auto-detects its folder; the folder can always be overridden with Browse. `Custom Folder` covers any other sync tool (Dropbox, a NAS share, a USB stick). |
 | Trigger | **Automatic and manual.** Export after every song that records a score; import at startup; a **Sync Now** button in Settings that does both; a status line with the last sync time and result. |
 | Replays | **Not synced.** Scores only. A synced game record keeps its `ReplayFileName`; the history screen already reports a missing replay file gracefully (`ReplayViewType.cs`, "The replay for this song does not exist!"). |
-| Unknown profiles | **Match by ID, then by name, else create.** A source profile whose ID exists locally is the same player. Otherwise a local profile with the same name (trimmed, case-insensitive) is the same player, and the source ID is remapped to the local one. Otherwise the profile is created locally **with the source's ID**, so later syncs match it by ID. |
+| Unknown profiles | **Match by ID, then by name, else create.** A source profile whose ID exists locally is the same player. Otherwise a local profile with the same name (trimmed, case-insensitive) is the same player, and the source ID is remapped to the local one. Otherwise the profile is created locally **with the source's ID**, so later syncs match it by ID. No prompt; the import toast names each created profile. |
 | Merge direction | Always a **union**. Nothing local is ever deleted or overwritten by an import. Deleting a score on one PC does not delete it on the others. |
 | YARG.Core | Untouched, as with every fork feature. |
 | Account in use | The user syncs through their work/school (UO) OneDrive, knowingly. Moving to another account later is only a folder change: every export is the PC's full history, so the first export into a new folder carries everything, and nothing lives only in the old one. |
@@ -124,6 +124,11 @@ state also holds the last export time and the last result for the status line.
 - **Sync Now** exports, then imports, then shows a short result dialog: games added, section
   records added, profiles created or matched, files skipped and why.
 - After an import that added anything, a toast says so ("Added 14 scores from DESKTOP-GAMING").
+  If the import created profiles, the toast names them ("Added 14 scores from DESKTOP-GAMING,
+  and a new profile: Riffmaster"; "new profiles: A, B" for several). Profiles are still created
+  without asking (decided 2026-09-22); the toast is how an automatic startup import tells the
+  user that a profile appeared, since only Sync Now shows a result dialog. A created profile
+  has no bindings or presets, so it needs setting up before it is played on.
 
 ### Folder detection
 
@@ -168,7 +173,8 @@ Planned rows:
    devices' files, the unchanged-file skip, provider detection (including the Google Drive check
    on a real install).
 4. **Settings UI.** Mockup first, then the four rows.
-5. **Automatic triggers.** Export after a recorded score, import at startup, the result toast.
+5. **Automatic triggers.** Export after a recorded score, import at startup, the result toast
+   (naming any profiles the import created).
 6. **Release build and a two-PC test** on the user's machines.
 
 ## Slice 1 notes (done 2026-09-22)
