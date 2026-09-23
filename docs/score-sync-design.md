@@ -223,10 +223,57 @@ Code in `Assets/Script/Scores/Sync/`, Unity-free and sqlite-free, compiled by li
     if the merge added completions to it. On equal `LastUpdated`, the local row's
     `SectionCount` wins.
 
+## Slice 2 notes (done 2026-09-22)
+
+- **`ScoreSyncStore`** (`Assets/Script/Scores/ScoreSyncStore.cs`) maps the sqlite-net records
+  to and from the `Sync*` types. `Read(db, profiles)` reads every row. `Merge(db, profiles,
+  source)` reads, plans and applies inside one `RunInTransaction`, so the plan always matches
+  the rows it is applied to. It takes profiles as a parameter and never touches
+  `PlayerContainer`, which is what lets it run against a database copy outside the game.
+  Games are inserted one by one so each player score gets its new `GameRecordId`. Dates cross
+  as raw ticks both ways (sqlite-net stores `DateTime` as ticks).
+- **`ScoreDatabase`** gained a "Score sync" region: `QueryAllPlayers`,
+  `QueryAllSectionCompletions`, `QueryAllSectionProgress`, `InsertPlayerRecords` (never renames,
+  unlike `InsertPlayerRecord`), and `UpdateSectionCompletionDate`.
+- **`ScoreContainer.Sync.cs`** is what the game calls:
+  - `GetSyncExportData()` returns the export payload.
+  - `ImportSyncFile(file)` returns a `ScoreSyncImportResult` and never throws. It makes the
+    first-import backups (`scores.db.pre-sync.bak`, `profiles.json.pre-sync.bak`, never
+    replaced), merges, then creates profiles through `PlayerContainer.AddProfile` +
+    `SaveProfiles`, then refreshes the band high scores, the score and section caches, and the
+    stars cache. The result carries the counts for the dialog and `CreatedProfileNames` for the
+    toast.
+  - Both are main-thread calls, because they use the live connection, the profile list and the
+    caches. Slice 5 does the serializing and file I/O off the main thread.
+- **Profiles:**
+  - Bots are left out of the sync entirely. Their scores are never saved, and a bot sent to
+    another PC would arrive as a human.
+  - Profiles this version could not load (`UnloadedProfiles`) count as existing IDs during an
+    import, so a sync never creates a second profile with a taken ID.
+  - A created profile gets the profile-list defaults (note speed 5, highway length 1) plus
+    the source's game mode, instrument and difficulty.
+  - Scores are committed before profiles are created. If profile creation fails, the scores
+    stay under their IDs and the next import creates the profile again.
+- **Checked** with `tools/ScoreSyncStoreCheck` (run inside the headless editor via
+  `run_script`) against copies of this PC's nightly and dev data. Everything below passed:
+  - reads match the raw row counts;
+  - self-import writes nothing;
+  - each set imported into the other, with a second import writing nothing;
+  - exact ticks and fields;
+  - both databases converge;
+  - a failure forced mid-apply rolls back every row.
+
+  A full 550-game import takes about 0.6 s.
+- **Not yet exercised:** `ImportSyncFile` itself (backup files, `PlayerContainer` profile
+  creation, cache refresh). It needs the running game, so it gets its first run in slice 5's
+  in-game test.
+
 ## Gates
 
 - Fast compile check (CLAUDE.md) after every C# edit.
 - `dotnet test tools/ScoreSyncTests/ScoreSyncTests.csproj` from slice 1 on.
 - `dotnet test tools/SpPathTests/SpPathTests.csproj` stays green.
+- From slice 2 on, `tools/ScoreSyncStoreCheck` in the headless editor (see its README) ends in
+  `ALL OK`.
 - The settings prefab work in slice 4 is verified structurally through the headless editor
   (`unity command eval_file`) and visually in the GUI editor.

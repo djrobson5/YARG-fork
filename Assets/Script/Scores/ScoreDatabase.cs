@@ -270,6 +270,60 @@ namespace YARG.Scores
 
         #endregion
 
+        #region Score sync
+
+        public List<PlayerInfoRecord> QueryAllPlayers()
+        {
+            return Query<PlayerInfoRecord>("SELECT * FROM Players");
+        }
+
+        public List<SectionCompletionRecord> QueryAllSectionCompletions()
+        {
+            return Query<SectionCompletionRecord>("SELECT * FROM SectionCompletions ORDER BY Id");
+        }
+
+        public List<SectionProgressRecord> QueryAllSectionProgress()
+        {
+            return Query<SectionProgressRecord>("SELECT * FROM SectionProgress ORDER BY Id");
+        }
+
+        /// <summary>
+        /// Inserts <c>Players</c> rows as-is. Unlike <see cref="InsertPlayerRecord"/>, this never
+        /// renames an existing row, so the caller must only pass IDs that are not present yet.
+        /// </summary>
+        public void InsertPlayerRecords(IEnumerable<PlayerInfoRecord> records)
+        {
+            InsertAll(records);
+        }
+
+        /// <summary>
+        /// Moves a section completion's first-completed date, identified by its full key.
+        /// </summary>
+        public void UpdateSectionCompletionDate(byte[] songChecksum, Guid playerId, Instrument instrument,
+            Difficulty difficulty, int harmonyIndex, int sectionIndex, DateTime firstCompletedDate)
+        {
+            int rows = _db.Execute(
+                @"UPDATE SectionCompletions
+                SET FirstCompletedDate = ?
+                WHERE SongChecksum = ?
+                    AND PlayerId = ?
+                    AND Instrument = ?
+                    AND Difficulty = ?
+                    AND HarmonyIndex = ?
+                    AND SectionIndex = ?",
+                firstCompletedDate,
+                songChecksum,
+                playerId,
+                (int) instrument,
+                (int) difficulty,
+                harmonyIndex,
+                sectionIndex
+            );
+            YargLogger.LogFormatTrace("Updated {0} rows in score database.", rows);
+        }
+
+        #endregion
+
         #region Query helper methods
 
         private static string BuildInstrumentInClause(IReadOnlyList<Instrument> instruments)
