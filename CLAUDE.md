@@ -2,16 +2,23 @@
 
 Personal fork of [YARG](https://github.com/YARC-Official/YARG) (Yet Another Rhythm Game, Unity/C#) for building a custom feature.
 
-## Model dispatch rules
+## Model workflow (Opus 5.5, 2026-09-22)
 
-These rules apply to every session in this repo.
+These rules apply to every session in this repo. They replace the Fable/Opus split: Fable is retired from the workflow for now, since Opus 5.5 out-benchmarks Fable 5.1 on coding, agentic and design-adjacent work at lower cost.
 
-- **Fable orchestrates only.** The top-level session plans, coordinates, reviews results, and talks to the user. It does not do research or write code directly.
-- **Opus does research and coding.** Spawn an Agent with `model: "opus"` for any codebase exploration, design investigation, or code change.
-- **Fable is the fallback.** If an Opus agent reports it is stuck or produces poor results after a reasonable attempt, spawn a `subagent_type: "fork"` agent (which runs on Fable) to take over that task.
-- **Sonnet does rote work.** Spawn an Agent with `model: "sonnet"` for deterministic tasks: git actions (clone, branch, commit, push, status), file moves, running builds or test commands, and similar mechanical steps.
+- **Opus 5.5 is the main model** for everything with judgment in it: design docs, architecture decisions, research, coding, review and integration, root-causing. Coding is done inline by default; there is no orchestrator/coder handoff.
+- **Opus subagents are optional**, for genuinely independent parallel pieces or to keep large file sweeps out of the main context. Use the Agent tool with `subagent_type: "opus-medium"`, and re-dispatch a struggling piece as `"opus-high"` (user-level `~/.claude/agents/`; the Agent tool has no effort param, so effort comes from these definitions). Forks inherit the session's model and effort. Cap batches at 3 agents. Briefs are self-contained: files to touch, target behavior, gates to run (the dotnet fast check below; `dotnet test tools/SpPathTests/SpPathTests.csproj` for Star Power changes), and pointers to the relevant `docs/` design files.
+- **Effort ladder: `medium` by default; escalate to `high` when the model struggles**: two failed attempts at green gates, thrashing (rewrites without convergence), or a failure that turns out to be a design problem. Escalation is per piece, not session-wide; drop back to medium once the piece is green. `xhigh`/`max` are not part of the ladder.
+- **Sonnet does rote work.** Spawn an Agent with `model: "sonnet"` for anything with no judgment in it: WebFetch/WebSearch lookups, basic git actions (status, log, diff, branch listing, fetching a ref), running a build or test and reporting the output, file moves, and similar one-shot chores. Same batch cap and self-contained briefs as Opus. If the task turns out to need a decision (a merge conflict, an ambiguous diff, a failing build to interpret), the agent reports back and the piece moves up to Opus 5.5; Sonnet never decides. Never Sonnet for commits, pushes, releases, or any file edit; those stay with Opus 5.5.
 
-When in doubt about which model fits, prefer the cheaper one and escalate on failure.
+### Prompting Opus 5 / 5.5
+
+Invoke `/opus5-prompts` when writing an agent brief or any prompt that runs on Opus 5 or 5.5. Rules for this repo:
+
+- **Don't add verification steps to prompts.** No "double-check", "re-verify" or "use a subagent to verify"; the model self-verifies, and these cause over-verification. Design docs still list their gates; what goes away is telling the model to verify inside a prompt.
+- **Keep the subagent cap explicit in briefs.** Opus 5 over-delegates. Restate the batches-of-3 ceiling, plus: no subagents for verification, and no splitting one small job across several agents.
+- **Review prompts are coverage-first.** Never "flag important issues" or "only high-severity"; Opus 5 obeys literally and drops real findings. Ask for everything with confidence and severity, and filter downstream.
+- **Never ask an agent to write out its reasoning**; Opus 5.5 can refuse that as `reasoning_extraction`.
 
 ## Repo notes
 
