@@ -92,6 +92,46 @@ namespace YARG.Gameplay.HUD
             _progressBar.fillAmount = (float) (timeRemaining / countdownLength);
         }
 
+        /// <summary>
+        /// Drives the widget for a rewind lead-in, counting down to the section marker.
+        /// </summary>
+        /// <param name="countdownLength">
+        /// The whole lead-in window, in song seconds (<c>leadIn * SongSpeed</c>), so the ring
+        /// empties exactly once over the window.
+        /// </param>
+        /// <param name="endSongTime">The section marker, in song time.</param>
+        /// <remarks>
+        /// Deliberately not <see cref="UpdateCountdown"/>: a lead-in is forced on regardless of the
+        /// player's Countdown Display setting, and both the 1.5 s early-hide and the
+        /// <see cref="CountdownDisplayMode.Disabled"/> style are bypassed, so the countdown runs
+        /// all the way to the marker at every lead-in length
+        /// (<c>docs/rewind-design.md</c>, "Lead-in" -&gt; Countdown).
+        /// <para>
+        /// The digits are always in <i>real</i> seconds and always numeric: the setting is in real
+        /// seconds, and a 0.5 to 5 s window has no meaningful measure count.
+        /// </para>
+        /// </remarks>
+        public void UpdateLeadInCountdown(double countdownLength, double endSongTime)
+        {
+            double timeRemaining = endSongTime - GameManager.SongTime;
+
+            // No HIDE_DELAY here: the widget stays up until the marker itself.
+            ToggleDisplay(timeRemaining > 0);
+
+            if (!gameObject.activeSelf || timeRemaining <= 0)
+            {
+                return;
+            }
+
+            float songSpeed = GameManager.SongSpeed;
+            double realSecondsRemaining = songSpeed > 0 ? timeRemaining / songSpeed : timeRemaining;
+            SetCountdownValue((int) Math.Ceiling(realSecondsRemaining));
+
+            _progressBar.fillAmount = countdownLength > 0
+                ? Mathf.Clamp01((float) (timeRemaining / countdownLength))
+                : 0f;
+        }
+
         public void ForceReset()
         {
             StopCurrentCoroutine();
@@ -149,6 +189,7 @@ namespace YARG.Gameplay.HUD
             // Fade in
             yield return _canvasGroup
                 .DOFade(1f, FADE_ANIM_LENGTH)
+                .SetLink(gameObject)
                 .WaitForCompletion();
         }
 
@@ -157,6 +198,7 @@ namespace YARG.Gameplay.HUD
             // Fade out
             yield return _canvasGroup
                 .DOFade(0f, FADE_ANIM_LENGTH)
+                .SetLink(gameObject)
                 .WaitForCompletion();
 
             gameObject.SetActive(false);
@@ -170,6 +212,13 @@ namespace YARG.Gameplay.HUD
                 StopCoroutine(_currentCoroutine);
                 _currentCoroutine = null;
             }
+
+            _canvasGroup.DOKill();
+        }
+
+        private void OnDisable()
+        {
+            StopCurrentCoroutine();
         }
     }
 }

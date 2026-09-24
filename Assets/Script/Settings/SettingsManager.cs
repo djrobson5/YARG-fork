@@ -9,8 +9,11 @@ using YARG.Core.Audio;
 using YARG.Core.Logging;
 using YARG.Core.Utility;
 using YARG.Helpers;
+using YARG.Scores;
+using YARG.Scores.Sync;
 using YARG.Settings.Metadata;
 using YARG.Settings.Types;
+using YARG.Song;
 
 namespace YARG.Settings
 {
@@ -39,14 +42,74 @@ namespace YARG.Settings
 
         private static bool _settingsCanBeSaved = true;
 
+        /// <summary>
+        /// Whether <see cref="SaveSettings"/> will actually write to disk. It is false when the
+        /// settings file failed to load or a migration decided the existing file must not be
+        /// overwritten, in which case every save is silently dropped. Callers that persist a flag
+        /// they depend on later (for example the song cache dirty flag) can check this to warn.
+        /// </summary>
+        public static bool SettingsCanBeSaved => SettingContainer.IsInitialized && Settings is not null
+            && _settingsCanBeSaved;
+
         public static string OutputDeviceAtStartup { get; private set; } = "Default";
 
         public static SettingContainer Settings { get; private set; }
+
+        /// <summary>
+        /// Whether the "Check for Updates" row should appear at all. It is meaningless
+        /// outside of a CI release build (where <see cref="UnityEngine.Application.version"/>
+        /// is the project's bundle version rather than a release tag), and offline mode
+        /// suppresses every outgoing request.
+        /// </summary>
+        private static bool IsUpdateCheckAvailable()
+        {
+            return UpdateChecker.IsReleaseBuild && !GlobalVariables.OfflineMode;
+        }
+
+        /// <summary>
+        /// Score sync is built and tested for Windows only (docs/score-sync-design.md).
+        /// </summary>
+        private static bool IsScoreSyncAvailable()
+        {
+            return Application.platform is RuntimePlatform.WindowsPlayer or RuntimePlatform.WindowsEditor;
+        }
+
+        private static bool IsScoreSyncOn() => !Settings.SyncProvider.Value.IsOff;
+
+        private static string ScoreSyncStatusLine()
+        {
+            if (IsScoreSyncOn() && ScoreSyncRunner.IsRunning)
+            {
+                return ScoreSyncStatus.SYNCING;
+            }
+
+            string root = Settings.SyncFolder.Value;
+            return ScoreSyncStatus.Line(IsScoreSyncOn(), root, !string.IsNullOrEmpty(root) && Directory.Exists(root),
+                ScoreSyncState.Load(PathHelper.PersistentDataPath), DateTime.Now);
+        }
 
         public static readonly List<Tab> DisplayedSettingsTabs = new()
         {
             new MetadataTab("General", icon: "Engine")
             {
+                // Hidden outside of CI release builds (nothing to compare) and in offline
+                // mode. See docs/updater-design.md.
+                new HeaderMetadata("Updates", visibleWhen: IsUpdateCheckAvailable),
+                new ButtonRowMetadata(nameof(Settings.CheckForUpdates), IsUpdateCheckAvailable),
+
+                // Windows only. The rows below the provider grey out while it is Off.
+                new HeaderMetadata("ScoreSync", visibleWhen: IsScoreSyncAvailable),
+                new FieldMetadata(nameof(Settings.SyncProvider), visibleWhen: IsScoreSyncAvailable),
+                new FieldMetadata(nameof(Settings.SyncFolder), visibleWhen: IsScoreSyncAvailable),
+                new ButtonRowMetadata(nameof(Settings.SyncScoresNow), IsScoreSyncAvailable)
+                {
+                    EditableWhen = IsScoreSyncOn,
+                },
+                new StatusTextMetadata(ScoreSyncStatusLine, IsScoreSyncAvailable)
+                {
+                    EditableWhen = IsScoreSyncOn,
+                },
+
                 new HeaderMetadata("Calibration"),
                 new ButtonRowMetadata(nameof(Settings.OpenCalibrator)),
                 nameof(Settings.AudioCalibration),
@@ -70,6 +133,7 @@ namespace YARG.Settings
                 nameof(Settings.VoiceActivatedVocalStarPower),
                 new FieldMetadata(nameof(Settings.EnablePracticeSP), isAdvanced: true),
                 new FieldMetadata(nameof(Settings.PracticeRestartDelay), isAdvanced: true),
+                nameof(Settings.RewindLeadIn),
                 nameof(Settings.NoFail),
                 nameof(Settings.LearningGuides),
                 new FieldMetadata(nameof(Settings.ReduceNoteSpeedByDifficulty)),
@@ -88,6 +152,7 @@ namespace YARG.Settings
                 new FieldMetadata(nameof(Settings.ShowCursorTimer), isAdvanced: true),
                 nameof(Settings.PauseOnDeviceDisconnect),
                 nameof(Settings.PauseOnFocusLoss),
+                nameof(Settings.PauseOnMenuOpen),
                 nameof(Settings.MuteOnFocusLoss),
                 nameof(Settings.WrapAroundNavigation),
                 nameof(Settings.DiscordRichPresence),
@@ -99,15 +164,18 @@ namespace YARG.Settings
                 nameof(Settings.AllowDuplicateSongs),
                 nameof(Settings.UseFullDirectoryForPlaylists),
                 nameof(Settings.Genrelizer),
-                new HeaderMetadata("MusicLibrary"),
-                nameof(Settings.MaxSongRating),
-                nameof(Settings.CensorMatureContent),
+                new HeaderMetadata("LibraryDisplay"),
                 nameof(Settings.ShowFavoriteButton),
                 nameof(Settings.DifficultyRings),
                 nameof(Settings.HighScoreInfo),
-                new FieldMetadata(nameof(Settings.ShowPercentDecimals), isAdvanced: true),
                 nameof(Settings.HighScoreHistory),
+                new FieldMetadata(nameof(Settings.ShowPercentDecimals), isAdvanced: true),
+                new HeaderMetadata("SortingAndFiltering"),
+                nameof(Settings.MaxSongRating),
+                nameof(Settings.CensorMatureContent),
+                nameof(Settings.SecondaryAlbumSort),
                 new FieldMetadata(nameof(Settings.SongLengthLabels), isAdvanced: true),
+                nameof(Settings.TrackSectionCompletion),
                 new HeaderMetadata("PlayAShow"),
                 nameof(Settings.EnablePlayAShow),
                 nameof(Settings.PlayAShowTimeout),
@@ -144,6 +212,7 @@ namespace YARG.Settings
 
                 new HeaderMetadata("Gameplay"),
                 nameof(Settings.MuteOnMiss),
+                nameof(Settings.MuteOnlyWhenAllPlayersMiss),
                 nameof(Settings.UseStarpowerFx),
                 nameof(Settings.UseVenueSfx),
                 nameof(Settings.OverstrumAndOverhitSoundEffects),
@@ -208,6 +277,12 @@ namespace YARG.Settings
                 nameof(Settings.GraphicalProgressOnScoreBox),
                 nameof(Settings.GraphicalSongProgressTint),
                 nameof(Settings.KeepSongInfoVisible),
+                nameof(Settings.ShowSectionStrip),
+                nameof(Settings.ShowStarPowerPath),
+                nameof(Settings.StarPowerPathColor),
+                nameof(Settings.StarPowerPathChipLeadIn),
+                nameof(Settings.StarPowerPathChipHold),
+                nameof(Settings.StarPowerPathFretGlow),
             },
             new PresetsTab("Presets", icon: "Customization"),
             new AllSettingsTab(),
@@ -379,7 +454,7 @@ namespace YARG.Settings
         {
             // If the game tries to save the settings before they are loaded, it can wipe the settings file
             // (such as closing the game before they load)
-            if (SettingContainer.IsInitialized && Settings is not null && _settingsCanBeSaved)
+            if (SettingsCanBeSaved)
             {
                 var json = JObject.Parse(JsonConvert.SerializeObject(Settings, JsonSettings));
                 SettingsMigration.SetCurrentSchemaVersion(json);

@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Threading;
 using System.Threading.Tasks;
+using Cysharp.Threading.Tasks;
 using Newtonsoft.Json;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -16,6 +18,9 @@ using YARG.Integration.RB3E;
 using YARG.Integration.Sacn;
 using YARG.Integration.StageKit;
 using YARG.Input.Bindings;
+using YARG.Localization;
+using YARG.Menu.Data;
+using YARG.Menu.Dialogs;
 using YARG.Menu.Filters;
 using YARG.Menu.History;
 using YARG.Menu.MusicLibrary;
@@ -37,6 +42,15 @@ namespace YARG.Settings
     {
         RangeLabels,
         LegacyLabels,
+    }
+
+    public enum SecondaryAlbumSortMode
+    {
+        AlbumsByTitleSongsByTitle,
+        AlbumsByTitleSongsByTrack,
+        AlbumsByYearSongsByTitle,
+        AlbumsByYearSongsByTrack,
+        Off,
     }
 
     public enum ShowMeanSongOffsetCalibrationMode
@@ -151,9 +165,363 @@ namespace YARG.Settings
             public Dictionary<CharacterType,CustomCharacterInfo> CustomCharacters = new();
             public List<CustomCharacterInfo> HiddenCharacters = new();
 
+            /// <summary>
+            /// Set when the in-memory song library and <c>songcache.bin</c> have been allowed to
+            /// disagree — today only by deleting a song, which removes its files and its entry from
+            /// memory but cannot rewrite the cache incrementally. While this is set, startup runs a
+            /// full song scan instead of the quick one, because the quick scan does not stat files
+            /// and would resurrect the deleted song as an unplayable ghost entry. Cleared and saved
+            /// by whichever full scan runs next. See docs/delete-song-design.md.
+            /// </summary>
+            public bool SongCacheDirty = false;
+
             #endregion
 
             #region General
+
+            /// <summary>
+            /// The folder score sync reads and writes; see docs/score-sync-design.md.
+            /// </summary>
+            public ScoreSyncFolderSetting SyncFolder { get; } = new();
+
+            /// <summary>
+            /// Off, or where the sync folder lives. Picking an entry detects its folder into
+            /// <see cref="SyncFolder"/>.
+            /// </summary>
+            public ScoreSyncProviderSetting SyncProvider { get; }
+
+            /// <summary>
+            /// Exports this PC's scores, imports every other PC's, and reports each PC in a dialog.
+            /// </summary>
+            public async void SyncScoresNow()
+            {
+                if (DialogManager.Instance.IsDialogShowing || SyncProvider.Value.IsOff ||
+                    ScoreSyncRunner.IsSyncNowPending)
+                {
+                    return;
+                }
+
+                // Never throws; the status line shows "Syncing…" meanwhile and then reads the
+                // state the run saved
+                var result = await ScoreSyncRunner.SyncNow(SyncFolder.Value);
+
+                // ShowMessage throws if another dialog opened meanwhile
+                if (DialogManager.Instance.IsDialogShowing)
+                {
+                    return;
+                }
+
+                DialogManager.Instance.ShowMessage(
+                    Localize.Key(result.Error is null
+                        ? "Menu.Dialog.ScoreSync.Synced.Title"
+                        : "Menu.Dialog.ScoreSync.Failed.Title"),
+                    result.DialogMessage());
+            }
+
+            /// <summary>
+            /// Asks GitHub whether a newer <c>-sectionfc</c> release exists and reports the
+            /// answer in a dialog. Manual only, never automatic; see docs/updater-design.md.
+            /// </summary>
+            public async void CheckForUpdates()
+            {
+                // ShowMessage throws if a dialog is already up, and this is an async void, so
+                // that exception would go unobserved. A press while the answer is still on
+                // screen (or still in the air) does nothing.
+                if (DialogManager.Instance.IsDialogShowing)
+                {
+                    return;
+                }
+
+                try
+                {
+                    var result = await UpdateChecker.CheckForUpdate();
+
+                    // Another dialog may have opened while the request was in the air.
+                    if (DialogManager.Instance.IsDialogShowing)
+                    {
+                        return;
+                    }
+
+                    // The build description ("HEAD b4213 (51d52d8)") is worth showing when
+                    // there is no update to talk about, and noise next to a concrete new tag.
+                    string buildDescription = GlobalVariables.Instance.CurrentVersion;
+
+                    switch (result.Status)
+                    {
+                        case UpdateChecker.UpdateStatus.UpdateAvailable:
+                        {
+                            var dialog = DialogManager.Instance.ShowMessage(
+                                Localize.Key("Menu.Dialog.Updates.UpdateAvailable.Title"),
+                                Localize.KeyFormat("Menu.Dialog.Updates.UpdateAvailable.Description",
+                                    result.InstalledTag, result.LatestTag));
+
+                            AddOpenReleasePageButton(dialog, result.ReleaseUrl);
+
+#if UNITY_STANDALONE_WIN
+                            // Only Windows releases ship an asset this can install. Everywhere
+                            // else the dialog is the release-page link and nothing more.
+                            if (result.HasDownloadableAsset)
+                            {
+                                var downloadable = result;
+                                dialog.AddDialogButton(
+                                    "Menu.Dialog.Updates.DownloadUpdate",
+                                    MenuData.Colors.ConfirmButton,
+                                    () => DownloadUpdate(downloadable));
+                            }
+#endif
+
+                            break;
+                        }
+                        case UpdateChecker.UpdateStatus.UpToDate:
+                        {
+                            DialogManager.Instance.ShowMessage(
+                                Localize.Key("Menu.Dialog.Updates.UpToDate.Title"),
+                                Localize.KeyFormat("Menu.Dialog.Updates.UpToDate.Description",
+                                    result.InstalledTag, buildDescription));
+                            break;
+                        }
+                        case UpdateChecker.UpdateStatus.NoReleases:
+                        {
+                            DialogManager.Instance.ShowMessage(
+                                Localize.Key("Menu.Dialog.Updates.Failed.Title"),
+                                Localize.KeyFormat("Menu.Dialog.Updates.Failed.NoReleases",
+                                    result.InstalledTag, buildDescription));
+                            break;
+                        }
+                        case UpdateChecker.UpdateStatus.RateLimited:
+                        {
+                            DialogManager.Instance.ShowMessage(
+                                Localize.Key("Menu.Dialog.Updates.Failed.Title"),
+                                Localize.KeyFormat("Menu.Dialog.Updates.Failed.RateLimited",
+                                    result.InstalledTag, buildDescription));
+                            break;
+                        }
+                        default:
+                        {
+                            DialogManager.Instance.ShowMessage(
+                                Localize.Key("Menu.Dialog.Updates.Failed.Title"),
+                                Localize.KeyFormat("Menu.Dialog.Updates.Failed.Description",
+                                    result.InstalledTag, buildDescription));
+                            break;
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    // Nothing here may throw out of an async void.
+                    YargLogger.LogException(e, "Failed to show the update check result.");
+                }
+            }
+
+            private static void AddOpenReleasePageButton(Dialog dialog, string releaseUrl)
+            {
+                if (string.IsNullOrEmpty(releaseUrl))
+                {
+                    return;
+                }
+
+                dialog.AddDialogButton(
+                    "Menu.Dialog.Updates.OpenReleasePage",
+                    MenuData.Colors.ConfirmButton,
+                    () =>
+                    {
+                        Application.OpenURL(releaseUrl);
+                        DialogManager.Instance.ClearDialog();
+                    });
+            }
+
+#if UNITY_STANDALONE_WIN
+            /// <summary>
+            /// Downloads, verifies and stages the release asset, reporting progress in the
+            /// dialog's own message text. Nothing here writes to the install directory.
+            /// </summary>
+            private static async void DownloadUpdate(UpdateChecker.UpdateCheckResult result)
+            {
+                // A download already running owns the dialog and the files on disk. Joining it
+                // here would only mean two progress callbacks fighting over one message field.
+                if (UpdateDownloader.IsDownloading)
+                {
+                    return;
+                }
+
+                using var cancellation = new CancellationTokenSource();
+
+                try
+                {
+                    // Replace the Update Available dialog with the progress one. ShowMessage
+                    // throws if a dialog is already up.
+                    DialogManager.Instance.ClearDialog();
+
+                    var dialog = DialogManager.Instance.ShowMessage(
+                        Localize.Key("Menu.Dialog.Updates.Downloading.Title"),
+                        Localize.KeyFormat("Menu.Dialog.Updates.Downloading.Description", result.LatestTag, 0));
+
+                    // There is no progress dialog type in the project, so the message text is
+                    // rewritten in place. The callback runs on the player loop, so touching TMP
+                    // from it is safe.
+                    int lastPercent = -1;
+                    var progress = Progress.Create<float>(value =>
+                    {
+                        // The forced Close button destroys the dialog. That is the only cancel
+                        // affordance there is, so treat it as one.
+                        if (dialog == null || !dialog.IsOpen)
+                        {
+                            cancellation.Cancel();
+                            return;
+                        }
+
+                        int percent = Mathf.Clamp(Mathf.FloorToInt(value * 100f), 0, 100);
+                        if (percent == lastPercent)
+                        {
+                            return;
+                        }
+
+                        lastPercent = percent;
+                        dialog.Message.text = percent >= 100
+                            ? Localize.KeyFormat("Menu.Dialog.Updates.Downloading.Extracting", result.LatestTag)
+                            : Localize.KeyFormat("Menu.Dialog.Updates.Downloading.Description",
+                                result.LatestTag, percent);
+                    });
+
+                    var stage = await UpdateDownloader.DownloadAndStage(result, progress, cancellation.Token);
+
+                    // The user closed the progress dialog, or something else took the screen
+                    // while the download was in the air. Either way, say nothing.
+                    if (stage.Status == UpdateDownloader.StageStatus.Cancelled ||
+                        dialog == null || !dialog.IsOpen)
+                    {
+                        return;
+                    }
+
+                    DialogManager.Instance.ClearDialog();
+
+                    if (stage.Status == UpdateDownloader.StageStatus.Staged)
+                    {
+                        ShowUpdateReadyDialog(result, stage.StagingPath);
+                        return;
+                    }
+
+                    string messageKey = stage.Status switch
+                    {
+                        UpdateDownloader.StageStatus.NoAsset       => "Menu.Dialog.Updates.DownloadFailed.NoAsset",
+                        UpdateDownloader.StageStatus.SizeMismatch  => "Menu.Dialog.Updates.DownloadFailed.SizeMismatch",
+                        UpdateDownloader.StageStatus.ExtractFailed => "Menu.Dialog.Updates.DownloadFailed.ExtractFailed",
+                        UpdateDownloader.StageStatus.StageIoError  => "Menu.Dialog.Updates.DownloadFailed.StageIoError",
+                        UpdateDownloader.StageStatus.InvalidLayout => "Menu.Dialog.Updates.DownloadFailed.InvalidLayout",
+                        _                                          => "Menu.Dialog.Updates.DownloadFailed.Description",
+                    };
+
+                    // A disk or permission failure is about the folder, not the release, so it
+                    // is the only message that wants a path rather than a tag.
+                    string message = stage.Status == UpdateDownloader.StageStatus.StageIoError
+                        ? Localize.KeyFormat(messageKey, UpdateDownloader.UpdatesRoot)
+                        : Localize.KeyFormat(messageKey, result.LatestTag);
+
+                    var failedDialog = DialogManager.Instance.ShowMessage(
+                        Localize.Key("Menu.Dialog.Updates.DownloadFailed.Title"), message);
+
+                    AddOpenReleasePageButton(failedDialog, result.ReleaseUrl);
+                }
+                catch (Exception e)
+                {
+                    // Nothing here may throw out of an async void.
+                    YargLogger.LogException(e, "Failed to download and stage the update.");
+                }
+            }
+
+            /// <summary>
+            /// The dialog shown once a build is staged: what was downloaded, where it is, and —
+            /// when this build can actually replace itself — the button that does it.
+            /// </summary>
+            private static void ShowUpdateReadyDialog(UpdateChecker.UpdateCheckResult result, string stagingPath)
+            {
+                // Without an installable install (the editor, a non-packaged build), the dialog
+                // degrades to the slice 3 wording: here is the staged build, install it yourself.
+                bool canInstall = UpdateInstaller.IsSupported;
+
+                var dialog = DialogManager.Instance.ShowMessage(
+                    Localize.Key("Menu.Dialog.Updates.Ready.Title"),
+                    Localize.KeyFormat(
+                        canInstall
+                            ? "Menu.Dialog.Updates.Ready.Description"
+                            : "Menu.Dialog.Updates.Ready.DescriptionManual",
+                        result.LatestTag, stagingPath));
+
+                AddOpenReleasePageButton(dialog, result.ReleaseUrl);
+
+                if (!canInstall)
+                {
+                    return;
+                }
+
+                string tag = result.LatestTag;
+                dialog.AddDialogButton(
+                    "Menu.Dialog.Updates.InstallAndRestart",
+                    MenuData.Colors.ConfirmButton,
+                    () => InstallUpdate(tag, stagingPath));
+            }
+
+            /// <summary>
+            /// Hands the staged build to <see cref="UpdateInstaller"/> and quits so its helper can
+            /// replace the install. Nothing here writes to the install directory itself.
+            /// </summary>
+            private static async void InstallUpdate(string tag, string stagingPath)
+            {
+                try
+                {
+                    // The writability probe happens inside Apply(), but it is worth doing first so
+                    // that the "move your install" dialog replaces the Update Ready one rather than
+                    // appearing after an "Installing…" flash.
+                    DialogManager.Instance.ClearDialog();
+
+                    if (!UpdateInstaller.IsInstallWritable())
+                    {
+                        DialogManager.Instance.ShowMessage(
+                            Localize.Key("Menu.Dialog.Updates.InstallFailed.Title"),
+                            Localize.KeyFormat("Menu.Dialog.Updates.InstallFailed.NotWritable",
+                                UpdateInstaller.InstallDirectory));
+                        return;
+                    }
+
+                    DialogManager.Instance.ShowMessage(
+                        Localize.Key("Menu.Dialog.Updates.Installing.Title"),
+                        Localize.KeyFormat("Menu.Dialog.Updates.Installing.Description", tag));
+
+                    // Give the dialog a frame to actually paint before the process goes away.
+                    await UniTask.NextFrame();
+
+                    var status = UpdateInstaller.Apply(tag, stagingPath);
+                    if (status != UpdateInstaller.InstallStatus.Launched)
+                    {
+                        string key = status switch
+                        {
+                            UpdateInstaller.InstallStatus.NotWritable => "Menu.Dialog.Updates.InstallFailed.NotWritable",
+                            UpdateInstaller.InstallStatus.NotStaged   => "Menu.Dialog.Updates.InstallFailed.NotStaged",
+                            _                                        => "Menu.Dialog.Updates.InstallFailed.Description",
+                        };
+
+                        DialogManager.Instance.ClearDialog();
+                        DialogManager.Instance.ShowMessage(
+                            Localize.Key("Menu.Dialog.Updates.InstallFailed.Title"),
+                            Localize.KeyFormat(key,
+                                status == UpdateInstaller.InstallStatus.NotStaged
+                                    ? stagingPath
+                                    : UpdateInstaller.InstallDirectory));
+                        return;
+                    }
+
+                    // The helper is already polling for this PID, so the sooner this happens the
+                    // sooner the user is back in the game.
+                    YargLogger.LogFormatInfo("Quitting to install {0}.", tag);
+                    Application.Quit();
+                }
+                catch (Exception e)
+                {
+                    // Nothing here may throw out of an async void.
+                    YargLogger.LogException(e, "Failed to install the staged update.");
+                }
+            }
+#endif
 
             public static float GetUpscaleRatioFromQualityMode(QualityMode qualityMode)
             {
@@ -217,6 +585,17 @@ namespace YARG.Settings
             public ToggleSetting EnablePracticeSP { get; } = new(false);
             public SliderSetting PracticeRestartDelay { get; } = new(2f, 0.5f, 5f);
 
+            /// <summary>
+            /// How long the rewind lead-in runs for, in <b>real</b> seconds.
+            /// </summary>
+            /// <remarks>
+            /// Real seconds, like <see cref="PracticeRestartDelay"/> and unlike the one-second
+            /// unpause rewind of <c>GameManager.RewindAndResume</c>, so the seek goes back
+            /// <c>value * SongSpeed</c> chart seconds and the wall-clock settle time is the same at
+            /// every song speed (<c>docs/rewind-design.md</c>, "Lead-in").
+            /// </remarks>
+            public SliderSetting RewindLeadIn { get; } = new(2f, 0.5f, 5f, step: 0.5f);
+
             public ToggleSetting ShowBattery { get; } = new(false, ShowBatteryCallback);
             public ToggleSetting ShowTime { get; } = new(false, ShowTimeCallback);
             public ToggleSetting MemoryStats { get; } = new(false, MemoryStatsCallback);
@@ -234,6 +613,7 @@ namespace YARG.Settings
 
             public ToggleSetting PauseOnDeviceDisconnect { get; } = new(true);
             public ToggleSetting PauseOnFocusLoss { get; } = new(true);
+            public ToggleSetting PauseOnMenuOpen { get; } = new(true);
             public ToggleSetting MuteOnFocusLoss { get; } = new(false);
 
             public ToggleSetting WrapAroundNavigation { get; } = new(true);
@@ -254,6 +634,11 @@ namespace YARG.Settings
 
             private static void RefreshSongs()
             {
+                if (!IsInitialized)
+                {
+                    return;
+                }
+
                 SongContainer.RequestContainerRefresh();
                 MusicLibraryMenu.SetReload(MusicLibraryReloadState.Full);
                 HistoryMenu.ForceUpdate = true;
@@ -277,6 +662,18 @@ namespace YARG.Settings
             public ToggleSetting UseFullDirectoryForPlaylists { get; } = new(false);
 
             public ToggleSetting ShowFavoriteButton { get; } = new(true);
+
+            public DropdownSetting<SecondaryAlbumSortMode> SecondaryAlbumSort { get; }
+                = new(SecondaryAlbumSortMode.AlbumsByTitleSongsByTitle,
+                    _ => MusicLibraryMenu.SetReload(MusicLibraryReloadState.Partial))
+                {
+                    SecondaryAlbumSortMode.AlbumsByTitleSongsByTitle,
+                    SecondaryAlbumSortMode.AlbumsByTitleSongsByTrack,
+                    SecondaryAlbumSortMode.AlbumsByYearSongsByTitle,
+                    SecondaryAlbumSortMode.AlbumsByYearSongsByTrack,
+                    SecondaryAlbumSortMode.Off,
+                };
+
             public ToggleSetting ShowRecommendedSongs { get; } = new(true, ShowRecommendedSongsCallback);
             public ToggleSetting OnlyShowPlayableSongs { get; } = new(false, RefreshLibraryFilterCallback);
 
@@ -331,6 +728,21 @@ namespace YARG.Settings
                 };
 
             public ToggleSetting ShowPercentDecimals { get; } = new(false);
+
+            /// <summary>
+            /// Master switch for the Section FC feature.
+            /// </summary>
+            /// <remarks>
+            /// When off, no per-section scan runs at the end of a song, nothing is written to the
+            /// section tables, and none of the surfaces show: no in-game strip, no score card row,
+            /// strip or tag, and no fraction in the Music Library pill. Rows already in the
+            /// database are left alone, so turning it back on restores everything that was earned.
+            /// <para>
+            /// The callback drops the cached section progress and forces the Music Library to
+            /// rebuild its views, so a stale fraction cannot survive the toggle.
+            /// </para>
+            /// </remarks>
+            public ToggleSetting TrackSectionCompletion { get; } = new(true, TrackSectionCompletionCallback);
 
             #endregion
 
@@ -399,8 +811,19 @@ namespace YARG.Settings
 
             public SettingContainer()
             {
+                SyncProvider = new(SyncFolder);
+                SyncFolder.EditableWhen = () => !SyncProvider.Value.IsOff;
+
                 AutomaticPlaybackBuffer = new(true, AutomaticPlaybackBufferChanged);
                 PlaybackBufferLength.EditableWhen = () => !AutomaticPlaybackBuffer.Value;
+                MuteOnlyWhenAllPlayersMiss.EditableWhen = () => MuteOnMiss.Value != AudioFxMode.Off;
+
+                // The four Star Power path customisations only mean anything while the path is
+                // being drawn at all, so they grey out with the master toggle.
+                StarPowerPathColor.EditableWhen = () => ShowStarPowerPath.Value;
+                StarPowerPathChipLeadIn.EditableWhen = () => ShowStarPowerPath.Value;
+                StarPowerPathChipHold.EditableWhen = () => ShowStarPowerPath.Value;
+                StarPowerPathFretGlow.EditableWhen = () => ShowStarPowerPath.Value;
             }
 
             public SliderSetting MicrophoneSensitivity { get; } = new(2f, -50f, 50f);
@@ -411,6 +834,8 @@ namespace YARG.Settings
                 AudioFxMode.MultitrackOnly,
                 AudioFxMode.On
             };
+
+            public ToggleSetting MuteOnlyWhenAllPlayersMiss { get; } = new(false);
 
             public DropdownSetting<AudioFxMode> UseStarpowerFx { get; } = new(AudioFxMode.On)
             {
@@ -590,6 +1015,67 @@ namespace YARG.Settings
 
             public ToggleSetting KeepSongInfoVisible { get; } = new(false);
 
+            /// <summary>
+            /// Shows the per-player section strip above the far end of the highway.
+            /// </summary>
+            /// <remarks>
+            /// Affects the in-game HUD only; section completion is still scanned, recorded, and
+            /// shown on the score screen and in the Music Library. A no-op when
+            /// <see cref="TrackSectionCompletion"/> is off, since nothing is tracked then.
+            /// Read at song start, so flipping it mid-song does nothing until the next run.
+            /// </remarks>
+            public ToggleSetting ShowSectionStrip { get; } = new(true);
+
+            /// <summary>
+            /// Draws a marker on the highway at every note where a perfect run should activate
+            /// Star Power.
+            /// </summary>
+            /// <remarks>
+            /// 5-fret guitar and bass only, single player only (band Star Power is coupled across
+            /// players, so a per-player path would be wrong). The path assumes a full combo and no
+            /// whammy; the markers dim for the rest of the run once the player leaves it.
+            /// Read at song start, so flipping it mid-song does nothing until the next run.
+            /// </remarks>
+            public ToggleSetting ShowStarPowerPath { get; } = new(false);
+
+            /// <summary>
+            /// The colour the whole Star Power path cue is drawn in: the recoloured activation
+            /// note, the highway band, rails, ring and lead-in tick, the strike line glow, and
+            /// the HUD chip's border and label.
+            /// </summary>
+            /// <remarks>
+            /// The band's darker body tint is derived from this by dropping the value to about a
+            /// third, the way <c>#005400</c> relates to the default <c>#52FF00</c>. Read at song
+            /// start, so changing it mid-song does nothing until the next run.
+            /// </remarks>
+            public ColorSetting StarPowerPathColor { get; }
+                = new ColorSetting(new Color(0.32132697f, 1f, 0f, 1f), false);
+
+            /// <summary>
+            /// How many seconds before a planned activation the HUD chip appears, at the latest.
+            /// </summary>
+            /// <remarks>
+            /// The chip actually appears at the <i>earlier</i> of the measure line before the
+            /// activation and this many seconds before it, capped so a very slow chart cannot
+            /// leave it up half the song. Read at song start.
+            /// </remarks>
+            public SliderSetting StarPowerPathChipLeadIn { get; } = new(3f, 1f, 8f, step: 0.5f);
+
+            /// <summary>
+            /// How many seconds the HUD chip lingers past the activation window — a short beat of
+            /// confirmation. Read at song start.
+            /// </summary>
+            public SliderSetting StarPowerPathChipHold { get; } = new(0.75f, 0f, 3f, step: 0.25f);
+
+            /// <summary>
+            /// Draws a steady wash over the strike line while a planned activation is due.
+            /// </summary>
+            /// <remarks>
+            /// Never built when <see cref="ReduceFlashingLights"/> is on, whatever this says.
+            /// Read at song start.
+            /// </remarks>
+            public ToggleSetting StarPowerPathFretGlow { get; } = new(true);
+
             #endregion
 
             #region File Management
@@ -635,7 +1121,7 @@ namespace YARG.Settings
                 FileExplorerHelper.OpenFolder(PathHelper.ExecutablePath);
             }
 
-            public async void RemoveRemoteContent()
+            public void RemoveRemoteContent()
             {
                 // Pop confirmation dialog
                 DialogManager.Instance.ShowConfirmDeleteDialog("Are you sure you want to remove all cached content?\n\nRemote content you access will be redownloaded, possibly causing loading delays.",
@@ -919,6 +1405,23 @@ namespace YARG.Settings
                 {
                     MusicLibraryMenu.SetReload(MusicLibraryReloadState.Partial);
                 }
+            }
+
+            /// <summary>
+            /// Clears anything that could keep showing section progress after the feature is
+            /// turned off (or keep hiding it after it is turned back on).
+            /// </summary>
+            /// <remarks>
+            /// The fraction in the Music Library pill is read once per <c>SongViewType</c> and
+            /// then held on the view, so dropping <c>ScoreContainer</c>'s cache alone is not
+            /// enough; the views themselves have to be rebuilt. Settings are only reachable from
+            /// the main menu and the pause menu, so the library is always re-enabled afterwards
+            /// and picks the queued reload up in <c>OnEnable</c>.
+            /// </remarks>
+            private static void TrackSectionCompletionCallback(bool value)
+            {
+                ScoreContainer.InvalidateSectionProgressCache();
+                MusicLibraryMenu.SetReload(MusicLibraryReloadState.Partial);
             }
 
             private static void DataStreamEnableCallback(bool value)
@@ -1332,7 +1835,7 @@ namespace YARG.Settings
             private static void CustomCharacterCallback(string file)
             {
                 // CharacterPreviewBuilder.CharacterFile = file;
-                _ = CharacterPreviewBuilder.ChangeCharacter(file);
+                CharacterPreviewBuilder.ChangeCharacter(file);
             }
             #endregion
         }

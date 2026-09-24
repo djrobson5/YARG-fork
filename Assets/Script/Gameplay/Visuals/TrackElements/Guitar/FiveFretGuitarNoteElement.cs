@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using YARG.Core.Chart;
@@ -199,8 +199,51 @@ namespace YARG.Gameplay.Visuals
             _sustainLine.UpdateSustainLine();
         }
 
+        /// <summary>
+        /// How much brighter the activation note's emission is than its own colour would make it,
+        /// so the green blooms rather than sitting flat next to the notes around it.
+        /// </summary>
+        private const float SP_PATH_EMISSION_BOOST = 2.5f;
+
+        /// <summary>
+        /// Paints an activation note in the Star Power path's activation green.
+        /// </summary>
+        /// <remarks>
+        /// The guaranteed-visible half of the cue (2026-09-04): the highway band, ring and HUD
+        /// chip are all built at runtime and can miss, but the note model is already there and
+        /// already drawing. Runs from every path that repaints a note — spawn, Star Power state
+        /// change, hit/miss — so the green survives an SP toggle mid-approach, and stops the
+        /// moment the note is hit or missed, after which the normal colours take over again.
+        /// </remarks>
+        private bool TryApplyStarPowerPathColor()
+        {
+            if (!IsStarPowerPathActivation || NoteRef.WasHit || NoteRef.WasMissed ||
+                NoteGroup == null)
+            {
+                return false;
+            }
+
+            var color = SpPathMarkerElement.ActivationTrimColor;
+
+            NoteGroup.SetColorWithEmission(color, color);
+            NoteGroup.BoostEmission(SP_PATH_EMISSION_BOOST);
+            NoteGroup.SetMetalColor(color);
+
+            if (NoteRef.IsSustain)
+            {
+                _sustainLine.SetState(SustainState, color);
+            }
+
+            return true;
+        }
+
         private void UpdateColor()
         {
+            if (TryApplyStarPowerPathColor())
+            {
+                return;
+            }
+
             var colors = Player.Player.ColorProfile.FiveFretGuitar;
 
             // Get which note color to use

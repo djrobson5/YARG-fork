@@ -1,3 +1,4 @@
+using System.Linq;
 using Cysharp.Text;
 using UnityEngine;
 using YARG.Core.Game;
@@ -6,6 +7,7 @@ using YARG.Helpers;
 using YARG.Player;
 using YARG.Playlists;
 using YARG.Scores;
+using YARG.Settings;
 using YARG.Song;
 
 namespace YARG.Menu.MusicLibrary
@@ -35,6 +37,7 @@ namespace YARG.Menu.MusicLibrary
         private PlayerScoreRecord _playerScoreRecord;
         private GameRecord _bandScoreRecord;
         private ScoreContext _fetchedScoreContext;
+        private SectionProgress? _sectionProgress;
 
         public SongViewType(MusicLibraryMenu musicLibrary, SongEntry songEntry, string context = "library")
         {
@@ -102,7 +105,8 @@ namespace YARG.Menu.MusicLibrary
                 Difficulty = _playerScoreRecord.Difficulty,
                 Percent = _playerScoreRecord.GetPercent(),
                 Instrument = _playerScoreRecord.Instrument,
-                IsFc = _playerScoreRecord.IsFc
+                IsFc = _playerScoreRecord.IsFc,
+                Sections = _sectionProgress
             };
         }
 
@@ -219,8 +223,44 @@ namespace YARG.Menu.MusicLibrary
             }
 
             FetchHighScores(SongEntry, out _playerScoreRecord, out _bandScoreRecord);
+            _sectionProgress = FetchSectionProgress(SongEntry, _playerScoreRecord);
             _fetchedScoreContext = context;
             _fetchedScores = true;
+        }
+
+        /// <summary>
+        /// Gets the cumulative section progress that goes with the high score being displayed.
+        /// </summary>
+        /// <remarks>
+        /// The difficulty comes from the high score record rather than from the profile, so that
+        /// the percent and the fraction always describe the same chart. There is no player score
+        /// record with two or more humans, which is also when the row shows no pill, so the band
+        /// case falls out as <c>null</c> on its own.
+        /// </remarks>
+        private static SectionProgress? FetchSectionProgress(SongEntry songEntry,
+            PlayerScoreRecord playerScoreRecord)
+        {
+            // Slice 5 master switch. Progress earned earlier stays in the database but is not
+            // shown, so the feature really is invisible everywhere while it is off. Toggling it
+            // queues a partial library reload, so no already-fetched view keeps a stale fraction.
+            if (!SettingsManager.Settings.TrackSectionCompletion.Value)
+            {
+                return null;
+            }
+
+            if (playerScoreRecord is null)
+            {
+                return null;
+            }
+
+            var player = PlayerContainer.Players.FirstOrDefault(p => !p.Profile.IsBot);
+            if (player is null)
+            {
+                return null;
+            }
+
+            return ScoreContainer.GetSectionProgress(songEntry.Hash, player.Profile.Id,
+                playerScoreRecord.Instrument, playerScoreRecord.Difficulty, player.Profile.HarmonyIndex);
         }
 
         private static void FetchHighScores(SongEntry songEntry, out PlayerScoreRecord playerScoreRecord, out GameRecord bandScoreRecord)

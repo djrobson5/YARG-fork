@@ -9,6 +9,7 @@ using YARG.Core;
 using YARG.Core.Audio;
 using YARG.Core.Game;
 using YARG.Core.Input;
+using YARG.Core.Logging;
 using YARG.Core.Song;
 using YARG.Localization;
 using YARG.Menu.Filters;
@@ -99,6 +100,7 @@ namespace YARG.Menu.MusicLibrary
         private const int BACK_ID = 2;
         private const int RECOMMENDED_SONGS_ID = 3;
         private const int CREATE_NEW_PLAYLIST_ID = 4;
+        private const int MINIMUM_ALBUM_GROUP_SIZE = 3;
 
         public static MusicLibraryMode LibraryMode;
 
@@ -150,6 +152,11 @@ namespace YARG.Menu.MusicLibrary
 
         private CancellationTokenSource _previewCanceller;
         private PreviewContext _previewContext;
+
+        // The in-flight PreviewContext.Create, if any. Until it finishes it holds the song's
+        // audio files open through LoadPreviewAudio without _previewContext being set yet, so a
+        // file operation has to await this as well as the running preview.
+        private Task _previewStartTask;
         private double _previewDelay;
 
         private SongEntry _currentSong;
@@ -494,6 +501,7 @@ namespace YARG.Menu.MusicLibrary
         private List<ViewType> CreateNormalViewList()
         {
             var list = new List<ViewType>();
+            _totalSongCount = 0;
             _totalStarCount = 0;
 
             // If `_sortedSongs` is null, then this function is being called during very first initialization,
@@ -643,10 +651,12 @@ namespace YARG.Menu.MusicLibrary
                 int sectionTotalStars = 0;
                 bool includeSongs = _sortedSongs.Length <= 1 || !_collapsedHeaders[SettingsManager.Settings.LibrarySort].Contains(section);
 
-                foreach (var song in section.Songs)
-                {
-                    if (!allowdupes && song.IsDuplicate) continue;
+                var displayedSongs = section.Songs
+                    .Where(song => allowdupes || !song.IsDuplicate)
+                    .ToArray();
 
+                void AddSong(SongEntry song)
+                {
                     StarAmount? starAmount;
 
                     if (includeSongs)
@@ -663,6 +673,56 @@ namespace YARG.Menu.MusicLibrary
                     if (starAmount is not null)
                     {
                         sectionTotalStars += starAmount.Value.GetStarCount();
+                    }
+                }
+
+                var secondaryAlbumSort = SettingsManager.Settings.SecondaryAlbumSort.Value;
+                if (includeSongs && SettingsManager.Settings.LibrarySort == SortAttribute.Artist &&
+                    secondaryAlbumSort != SecondaryAlbumSortMode.Off)
+                {
+                    IEnumerable<IGrouping<SortString, SongEntry>> albumGroups = displayedSongs
+                        .GroupBy(song => song.Album)
+                        .Where(group => group.Key.Length > 0 && group.Count() >= MINIMUM_ALBUM_GROUP_SIZE);
+
+                    albumGroups = secondaryAlbumSort is
+                        SecondaryAlbumSortMode.AlbumsByYearSongsByTitle or
+                        SecondaryAlbumSortMode.AlbumsByYearSongsByTrack
+                        ? albumGroups.OrderBy(group => group.Min(song => song.YearAsNumber))
+                            .ThenBy(group => group.Key)
+                        : albumGroups.OrderBy(group => group.Key);
+
+                    var groupedAlbums = albumGroups.ToArray();
+                    var groupedSongs = new HashSet<SongEntry>(groupedAlbums.SelectMany(group => group));
+
+                    // Songs without enough same-album companions retain their existing title order
+                    // immediately below the artist header.
+                    foreach (var song in displayedSongs.Where(song => !groupedSongs.Contains(song)))
+                    {
+                        AddSong(song);
+                    }
+
+                    foreach (var album in groupedAlbums)
+                    {
+                        var albumSongs = secondaryAlbumSort is
+                            SecondaryAlbumSortMode.AlbumsByTitleSongsByTrack or
+                            SecondaryAlbumSortMode.AlbumsByYearSongsByTrack
+                            ? album.OrderBy(song => song.AlbumTrack).ThenBy(song => song.Name).ToArray()
+                            : album.OrderBy(song => song.Name).ToArray();
+                        var albumHeader = new SecondaryHeaderViewType(album.Key, albumSongs.Length);
+                        list.Add(albumHeader);
+                        int starsBeforeAlbum = sectionTotalStars;
+                        foreach (var song in albumSongs)
+                        {
+                            AddSong(song);
+                        }
+                        albumHeader.TotalStarsCount = sectionTotalStars - starsBeforeAlbum;
+                    }
+                }
+                else
+                {
+                    foreach (var song in displayedSongs)
+                    {
+                        AddSong(song);
                     }
                 }
                 _totalStarCount += sectionTotalStars;
@@ -743,6 +803,44 @@ namespace YARG.Menu.MusicLibrary
             _ = StopPreviewAsync(clearCurrentSong);
         }
 
+        /// <summary>
+        /// Stops the library preview and waits for its audio to be released.
+        /// </summary>
+        /// <remarks>
+        /// Must be awaited before touching a song's files on disk — the preview holds them
+        /// open, and a delete would fail with a sharing violation on Windows.
+        /// <para>
+        /// Stopping the running preview is not enough on its own: a <c>PreviewContext.Create</c>
+        /// started moments ago may still be inside <c>LoadPreviewAudio</c>, holding the same
+        /// files with nothing yet assigned to <c>_previewContext</c>. Cancelling only asks it to
+        /// stop, so the create task has to be awaited too.
+        /// </para>
+        /// </remarks>
+        public async Task StopPreviewForFileOperationAsync()
+        {
+            var startTask = _previewStartTask;
+
+            // Cancels the token the in-flight create is watching, then waits out the preview.
+            await StopPreviewAsync(true);
+
+            if (startTask != null)
+            {
+                try
+                {
+                    await startTask;
+                }
+                catch (Exception ex)
+                {
+                    YargLogger.LogException(ex, "Error while waiting for the song preview to load.");
+                }
+            }
+
+            // If the create landed after the cancel, it installed a fresh context. Clear that too.
+            await StopPreviewAsync(true);
+
+            _previewStartTask = null;
+        }
+
         private async Task StopPreviewAsync(bool clearCurrentSong = false)
         {
             if (clearCurrentSong)
@@ -762,6 +860,11 @@ namespace YARG.Menu.MusicLibrary
             if (previewContext != null)
             {
                 await previewContext.WaitForCompletionAsync();
+
+                // The loop task returns without disposing if it threw, which leaves the mixer
+                // holding the song's audio files open and blocks moving or deleting them.
+                // PreviewContext.Dispose is idempotent, so this is a no-op on the normal path.
+                previewContext.Dispose();
             }
 
             previewCanceller?.Dispose();
@@ -810,7 +913,13 @@ namespace YARG.Menu.MusicLibrary
             }
         }
 
-        private async void StartPreview(double delay, CancellationTokenSource canceller)
+        private void StartPreview(double delay, CancellationTokenSource canceller)
+        {
+            // Kept so a file operation can wait for a create that has not landed yet.
+            _previewStartTask = StartPreviewAsync(delay, canceller);
+        }
+
+        private async Task StartPreviewAsync(double delay, CancellationTokenSource canceller)
         {
             if (_currentSong == null)
             {
@@ -1023,12 +1132,19 @@ namespace YARG.Menu.MusicLibrary
 
         public void SelectRandomSong()
         {
-            if (!ViewList.Any(i => i is SongViewType)) return;
-
-            do
+            var songIndices = new List<int>();
+            for (int i = 0; i < ViewList.Count; i++)
             {
-                SelectedIndex = Random.Range(0, ViewList.Count);
-            } while (CurrentSelection is not SongViewType);
+                if (ViewList[i] is SongViewType)
+                {
+                    songIndices.Add(i);
+                }
+            }
+
+            if (songIndices.Count == 0)
+                return;
+
+            SelectedIndex = songIndices[Random.Range(0, songIndices.Count)];
         }
 
         public void ExpandAll()
@@ -1330,6 +1446,11 @@ namespace YARG.Menu.MusicLibrary
             try
             {
                 await SongContainer.RunRefresh(false, context);
+                // A full scan has just reconciled songcache.bin with the disk.
+                SongContainer.ClearSongCacheDirty();
+                // Some filters cache SongEntry instances. A scan rebuilds those instances, so
+                // recreate the predicate before applying it to the refreshed song container.
+                FiltersMenu.RefreshActiveFilterPredicate();
                 RefreshAndReselect();
             }
             finally

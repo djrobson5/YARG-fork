@@ -12,7 +12,6 @@ using YARG.Core.Replays;
 using YARG.Gameplay.HUD;
 using YARG.Gameplay.Player;
 using YARG.Menu;
-using YARG.Menu.Navigation;
 using YARG.Menu.Persistent;
 using YARG.Menu.Settings;
 using YARG.Playback;
@@ -232,6 +231,10 @@ namespace YARG.Gameplay
 
             // Spawn players
             CreatePlayers();
+
+            // Must be after the players exist, since it reads their note tracks
+            InitializeSectionStripStates();
+            InitializeStarPowerPaths();
             YargLogger.LogFormatDebug("Calculating star cutoffs for {0} players", _players.Count);
             EngineManager.StarScoreThresholds = EngineManager.GetStarScoreCutoffs(_players.ConvertAll(p => p.BaseEngine.StarScoreThresholds));
             YargLogger.LogFormatDebug("Star score thresholds: {0}", string.Join(", ", EngineManager.StarScoreThresholds));
@@ -251,9 +254,6 @@ namespace YARG.Gameplay
                 global.LoadScene(SceneIndex.Menu);
                 return;
             }
-
-            // Listen for menu inputs
-            Navigator.Instance.NavigationEvent += OnNavigationEvent;
 
             // Debug info
             InitializeDebug();
@@ -457,6 +457,7 @@ namespace YARG.Gameplay
                 foreach (var player in YargPlayers)
                 {
                     player.IsScoreValid = true;
+                    player.ResetParticipation();
 
                     if (!player.IsReplay)
                     {

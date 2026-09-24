@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using DG.Tweening;
@@ -40,6 +40,10 @@ namespace YARG.Gameplay.HUD
         private          int                                _currentPhraseIndex;
         private          bool                               _isEditMode;
         private          double                             _lastVisualTime;
+
+        /// The participant floor the display was built with, kept so a rewind can rebuild the
+        /// phrase list on the same terms.
+        private          int                                _minPlayers = 1;
 
         [SerializeField]
         private Image _backgroundImage;
@@ -129,6 +133,7 @@ namespace YARG.Gameplay.HUD
                 return;
             }
 
+            _minPlayers = minPlayers;
             InitializePhrases(minPlayers);
 
             if (_phrases.Count == 0)
@@ -145,19 +150,106 @@ namespace YARG.Gameplay.HUD
 
             _parent.SetActive(false);
 
-            // We need to use engineCount here since we use lists indexed by engineId,
-            // which *should* be in the range [0, engineCount - 1] in normal gameplay.
-            int engineCount = GameManager.EngineManager.Engines.Count;
+            _completeSequence = BuildCompleteSequence(gameObject);
 
+            BindEngines();
+        }
+
+        /// <summary>
+        /// Re-keys the whole display against the engines currently registered.
+        /// </summary>
+        /// <remarks>
+        /// A rewind throws every engine away and registers a fresh one, which takes a new id and
+        /// a new <c>UnisonEvent</c> set with it: <c>EngineManager.Unregister</c> drops the old id
+        /// from every event and deletes any event left with no participants, which in single
+        /// player is all of them, and the re-registration then builds new ones. Everything this
+        /// display holds - the phrase list, the per-engine state, the icons, the participant
+        /// arrays and the event subscriptions - is keyed by that old engine, so without this it
+        /// goes silently deaf for the rest of the run.
+        /// <para>
+        /// Called after the engines have been rebuilt and <i>before</i> the re-simulation, so the
+        /// notes the surviving timeline hit inside a unison phrase that is still under way at the
+        /// marker are counted as they replay and the readout there is exact. Binding after the
+        /// re-simulation would be simpler but would show that phrase empty.
+        /// </para>
+        /// <para>
+        /// The marker rather than the landing, because only one phrase is ever the current one
+        /// and it has to be that one: a phrase lying wholly inside the lead-in window is already
+        /// finished, and parking on it instead would drop every replayed hit belonging to the
+        /// phrase the player is about to be handed back. <c>ResumeFrom</c> puts the per-frame
+        /// clock back to the landing once the re-simulation is done.
+        /// </para>
+        /// </remarks>
+        /// <param name="markerSongTime">The section marker the engines are re-simulated to.</param>
+        public void RebindEngines(double markerSongTime)
+        {
+            if (_phrases.Count == 0 && !isActiveAndEnabled)
+            {
+                // Never bound in the first place - disabled, no unisons, or practice.
+                return;
+            }
+
+            foreach (var unsubAction in _unsubscribeActions)
+            {
+                unsubAction();
+            }
+
+            _unsubscribeActions.Clear();
+            _unisonState.Clear();
+            _iconContainer.ClearIcons();
+
+            // The events themselves are new objects, so the phrase list and its timings have to
+            // be rebuilt from them rather than re-keyed in place.
+            _phrases.Clear();
+            InitializePhrases(_minPlayers);
+            if (_phrases.Count == 0)
+            {
+                gameObject.SetActive(false);
+                return;
+            }
+
+            BuildTransitionTimings(GameManager.SongSpeed);
+            BindEngines();
+            SetSongTime(markerSongTime);
+        }
+
+        /// <summary>
+        /// Re-arms the per-frame clock at <paramref name="visualTime"/> without touching phrase
+        /// state.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="Update"/> refuses to run while its last seen time is ahead of the clock, to
+        /// keep a backwards seek from tearing the animation. A rewind deliberately parks this
+        /// display ahead of the clock - at the marker, while the highway lands a lead-in earlier -
+        /// so without this it would sit out the whole window. Everything <see cref="SetSongTime"/>
+        /// would do besides this is exactly what must not happen here: the counts the
+        /// re-simulation has just rebuilt would be reset.
+        /// </remarks>
+        public void ResumeFrom(double visualTime)
+        {
+            _lastVisualTime = visualTime;
+        }
+
+        private void BindEngines()
+        {
+            // Sized by the highest engine id rather than by the engine count, because the two
+            // part company the moment an engine is rebuilt: a rewind in single player leaves one
+            // engine carrying id 1, and arrays sized at 1 have no slot for it.
+            int engineSlots = 0;
+            foreach (var engineContainer in GameManager.EngineManager.Engines)
+            {
+                engineSlots = Math.Max(engineSlots, engineContainer.EngineId + 1);
+            }
+
+            int maxParticipants = GameManager.EngineManager.UnisonEvents.Max(e => e.PartCount);
             if (maxParticipants > MAX_PARTICIPANTS_FOR_ICON_DISPLAY)
             {
-                _unisonBar.Initialize(engineCount);
+                _unisonBar.Initialize(engineSlots);
             }
-            _iconContainer.Initialize(engineCount);
+            _iconContainer.Initialize(engineSlots);
 
             SetDisplayType(_phrases[0].Event.PartCount);
             _activeUnisonObject.ResetState();
-            _completeSequence = BuildCompleteSequence(gameObject);
 
             foreach (var engineContainer in GameManager.EngineManager.Engines)
             {
@@ -407,8 +499,16 @@ namespace YARG.Gameplay.HUD
                 return;
             }
 
+            // TryGetValue rather than the indexer: an engine can be a participant in the phrase
+            // without this display holding state for it (it holds none for an engine with no
+            // unison phrases of its own), and a rewind re-keys the whole dictionary.
+            if (!_unisonState.TryGetValue(engineId, out var failedState))
+            {
+                return;
+            }
+
             YargLogger.LogFormatTrace("Engine {0} failed a unison phrase at time {1}", engineId, note.Time);
-            _unisonState[engineId].HasFailedCurrentPhrase = true;
+            failedState.HasFailedCurrentPhrase = true;
             _headerText.color = _failColor;
             _backgroundImage.sprite = _failSprite;
             _activeUnisonObject.FailUnison(engineId);
@@ -442,6 +542,20 @@ namespace YARG.Gameplay.HUD
         {
             YargLogger.LogTrace("Unison phrase completed successfully");
             _backgroundImage.sprite = _successSprite;
+            foreach (var (participantId, _) in _phrases[_currentPhraseIndex].Event.ParticipantToPhrase)
+            {
+                if (!_unisonState.TryGetValue(participantId, out var unisonState) || unisonState.HasFailedCurrentPhrase)
+                {
+                    continue;
+                }
+                var notesHit = unisonState.NotesHitInCurrentPhrase;
+                var noteCount = _phrases[_currentPhraseIndex].Event.ParticipantToPhrase[participantId].NoteCount;
+                if (notesHit < noteCount)
+                {
+                    unisonState.NotesHitInCurrentPhrase = noteCount;
+                    SetProgress(participantId);
+                }
+            }
             _completeSequence.Restart();
         }
 
@@ -571,8 +685,25 @@ namespace YARG.Gameplay.HUD
             }
         }
 
+        public void OnDifficultyChanged(int engineId)
+        {
+            if (_currentPhraseIndex >= _phrases.Count)
+            {
+                return;
+            }
+
+            var currentEvent = _phrases[_currentPhraseIndex].Event;
+            if (!currentEvent.ParticipantToPhrase.TryGetValue(engineId, out var participant))
+            {
+                return;
+            }
+            _activeUnisonObject.SetTotalNotes(engineId, participant.NoteCount);
+        }
+
         protected override void GameplayDestroy()
         {
+            _completeSequence?.Kill();
+
             foreach (var unsubAction in _unsubscribeActions)
             {
                 unsubAction();

@@ -277,6 +277,7 @@ namespace YARG.Settings.Metadata
         private static readonly (string SubSection, string Label, GameMode Mode)[] InstrumentModes =
         {
             (nameof(ColorProfile.FiveFretGuitar), "Five Fret Guitar", GameMode.FiveFretGuitar),
+            (nameof(ColorProfile.SixFretGuitar),  "Six Fret Guitar",  GameMode.SixFretGuitar),
             (nameof(ColorProfile.FourLaneDrums),  "Four Lane Drums",  GameMode.FourLaneDrums),
             (nameof(ColorProfile.FiveLaneDrums),  "Five Lane Drums",  GameMode.FiveLaneDrums),
             (nameof(ColorProfile.ProKeys),        "Pro Keys",         GameMode.ProKeys),
@@ -317,6 +318,24 @@ namespace YARG.Settings.Metadata
             }
 
             return null;
+        }
+
+        private string GetSubSectionForMode(GameMode mode)
+        {
+            if (typeof(T) == typeof(EnginePreset))
+            {
+                return mode switch
+                {
+                    GameMode.FiveFretGuitar => nameof(EnginePreset.FiveFretGuitar),
+                    GameMode.SixFretGuitar => nameof(EnginePreset.SixFretGuitar),
+                    GameMode.FourLaneDrums or GameMode.FiveLaneDrums => nameof(EnginePreset.Drums),
+                    GameMode.Vocals => nameof(EnginePreset.Vocals),
+                    GameMode.ProKeys => nameof(EnginePreset.ProKeys),
+                    _ => null,
+                };
+            }
+
+            return ModeToSubSection(mode);
         }
 
         #endregion
@@ -435,6 +454,16 @@ namespace YARG.Settings.Metadata
                 _subSection = null;
             }
 
+            // Sync engine fields to the selected preview instrument.
+            if (typeof(T) == typeof(EnginePreset))
+            {
+                string modeSubSection = GetSubSectionForMode(PreviewOptions.GameMode);
+                if (modeSubSection != null)
+                {
+                    _subSection = modeSubSection;
+                }
+            }
+
             _fieldIndex = 0;
 
             // Sync shared preview state to this tab's TrackPreviewBuilder
@@ -512,8 +541,8 @@ namespace YARG.Settings.Metadata
         private const string PV_STAR_POWER_ACTIVE = "Star Power Active";
         private const string PV_GROOVE = "Groove";
         private const string PV_LEFTY_FLIP = "Lefty Flip";
-        private const string PV_GLYPH_ON = "\u25C9 ";  // ◉ fisheye
-        private const string PV_GLYPH_OFF = "\u25CB "; // ○ circle
+        private const string PV_GLYPH_ON = "\u2611 ";  // ☑ ballot box with check
+        private const string PV_GLYPH_OFF = "\u2610 "; // ☐ ballot box
 
         // Localization keys for the preview-toggle labels and caption. The PV_*
         // values above are the dropdown's internal option values (stable
@@ -675,8 +704,6 @@ namespace YARG.Settings.Metadata
             }
 
             // --- Instrument selector dropdown ---
-            // On Color Profile, this switches the sub-section (which colors are edited).
-            // On other tabs, it only changes the preview instrument.
             string currentLabel = InstrumentModes[0].Label;
             foreach (var (_, label, mode) in InstrumentModes)
             {
@@ -702,9 +729,9 @@ namespace YARG.Settings.Metadata
                         PreviewOptions.GameMode = gameMode;
                         tpb.StartingGameMode = gameMode;
 
-                        if (typeof(T) == typeof(ColorProfile))
+                        if (typeof(T) == typeof(ColorProfile) || typeof(T) == typeof(EnginePreset))
                         {
-                            string newSub = ModeToSubSection(gameMode);
+                            string newSub = GetSubSectionForMode(gameMode);
                             if (newSub != null && newSub != _subSection)
                             {
                                 RefreshForSubSection(newSub);
@@ -713,7 +740,15 @@ namespace YARG.Settings.Metadata
                             }
                         }
 
-                        SettingsMenu.Instance.Refresh();
+                        if (typeof(T) == typeof(EnginePreset))
+                        {
+                            SettingsMenu.Instance.RefreshAndKeepPosition();
+                        }
+                        else
+                        {
+                            SettingsMenu.Instance.Refresh();
+                        }
+
                         ReselectInstrumentRow();
                         break;
                     }
@@ -1513,6 +1548,14 @@ namespace YARG.Settings.Metadata
 
         private void BuildField(FieldSettingInfo field, Transform container, NavigationGroup navGroup, T preset)
         {
+            // Six-fret guitar does not support solo taps.
+            if (typeof(T) == typeof(EnginePreset)
+                && _subSection == nameof(EnginePreset.SixFretGuitar)
+                && field.Field.Name == nameof(EnginePreset.FiveFretGuitarPreset.SoloTaps))
+            {
+                return;
+            }
+
             // These legacy key colors belong to the deferred five-lane-keys
             // editor. Pro Keys uses the White/BlackNote and Overlay fields instead.
             if (_subSection == nameof(ColorProfile.ProKeys)
@@ -1788,8 +1831,7 @@ namespace YARG.Settings.Metadata
                     ),
                     (
                         "HitWindow",
-                        // Since the hit window setting is a reference type, we don't need a callback
-                        new HitWindowSetting(hitWindow)
+                        new HitWindowSetting(hitWindow, _ => SettingsMenu.Instance?.RefreshPreview())
                     )
                 });
 
@@ -1876,7 +1918,8 @@ namespace YARG.Settings.Metadata
         private void RefreshForSubSection(string subSection)
         {
             _subSection = subSection;
-            if (TryGetModeForSubSection(subSection, out var subSectionMode))
+            if (typeof(T) == typeof(ColorProfile)
+                && TryGetModeForSubSection(subSection, out var subSectionMode))
             {
                 PreviewOptions.GameMode = subSectionMode;
             }

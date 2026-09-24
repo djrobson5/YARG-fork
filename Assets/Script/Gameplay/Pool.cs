@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.Serialization;
@@ -50,6 +51,29 @@ namespace YARG.Gameplay
 
                 _pooled.Push(poolable);
             }
+        }
+
+        /// <summary>
+        /// Sets up a pool that was added from code rather than serialized in a prefab.
+        /// </summary>
+        /// <remarks>
+        /// Must be called while the pool's GameObject is still inactive, i.e. before its
+        /// <see cref="Awake"/> prewarm runs — there is no prefab to prewarm from until it is.
+        /// </remarks>
+        public void ConfigureRuntime(GameObject prefab, int prewarmAmount, int objectCap)
+        {
+            // Changing the prefab or the cap under live objects would leave the pool handing out
+            // clones of the old prefab, and the cap arithmetic counting them.
+            // Use SetPrefabAndReset for that.
+            if (_pooled.Count > 0 || _spawnedObjects.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    "ConfigureRuntime must be called before the pool creates any objects.");
+            }
+
+            Prefab = prefab;
+            _prewarmAmount = prewarmAmount;
+            _objectCap = objectCap;
         }
 
         public void SetPrefabAndReset(GameObject newPrefab)

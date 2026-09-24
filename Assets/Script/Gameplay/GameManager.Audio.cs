@@ -26,7 +26,7 @@ namespace YARG.Gameplay
                 _stem = stem;
             }
 
-            public double SetMute(bool muted)
+            public double SetMute(bool muted, bool keepAudibleUntilAllMiss)
             {
                 if (muted)
                 {
@@ -35,6 +35,11 @@ namespace YARG.Gameplay
                 else if (Audible < Total)
                 {
                     ++Audible;
+                }
+
+                if (keepAudibleUntilAllMiss)
+                {
+                    return Audible > 0 ? Volume : 0;
                 }
 
                 return Volume * Audible / Total;
@@ -119,6 +124,26 @@ namespace YARG.Gameplay
                 StarPowerActivations = 0;
         }
 
+        /// <summary>
+        /// Clears every stem's Star Power reverb, counter and all.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="StemState.SetReverb"/> counts rather than latches, so a rewind out of a
+        /// deploy leaves the count standing at one with nothing left alive to take it back down:
+        /// the engine that raised it has been thrown away, and the re-simulation's own deploys
+        /// and releases never reach the FX at all, being suppressed as seek feedback. Zeroing it
+        /// here is what lets <c>GameManager.RestoreStarPowerState</c> set the count from engine
+        /// truth afterwards.
+        /// </remarks>
+        public void ResetStarPowerReverb()
+        {
+            foreach (var (stem, state) in _stemStates)
+            {
+                state.ReverbCount = 0;
+                GlobalAudioHandler.SetReverbSetting(stem, false);
+            }
+        }
+
         public void ChangeStemMuteState(SongStem stem, bool muted, float duration = 0.0f)
         {
             var setting = SettingsManager.Settings.MuteOnMiss.Value;
@@ -129,7 +154,12 @@ namespace YARG.Gameplay
                 return;
             }
 
-            double volume = state.SetMute(muted);
+            // The background stem keeps its own split: it stands in for players whose instrument
+            // has no stem of its own, so one of them missing should not silence the whole song.
+            bool keepAudibleUntilAllMiss = SettingsManager.Settings.MuteOnlyWhenAllPlayersMiss.Value
+                && stem != _backgroundStem;
+
+            double volume = state.SetMute(muted, keepAudibleUntilAllMiss);
 
             if (duration <= 0.0f)
             {

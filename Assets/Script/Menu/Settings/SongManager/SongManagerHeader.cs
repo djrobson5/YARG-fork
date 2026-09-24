@@ -27,6 +27,8 @@ namespace YARG.Menu.Settings
         {
             using var context = new LoadingContext();
             await SongContainer.RunRefresh(false, context);
+            // A full scan has just reconciled songcache.bin with the disk.
+            SongContainer.ClearSongCacheDirty();
             SettingsMenu.Instance.RefreshAndKeepPosition();
         }
 

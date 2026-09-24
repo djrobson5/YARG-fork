@@ -1,4 +1,4 @@
-﻿using Cysharp.Threading.Tasks;
+using Cysharp.Threading.Tasks;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -563,8 +563,9 @@ namespace YARG.Song
 
             var profile = player.Profile;
             bool useBandScores = ScoreContainer.UseBandHighScoresForCurrentPlayers;
-            var cacheInstrument = profile.GameMode == GameMode.EliteDrums
-                ? Instrument.EliteDrums
+            var drumInstruments = MidiDrumkitHelper.GetInstruments(profile.GameMode);
+            var cacheInstrument = drumInstruments != null
+                ? drumInstruments[0]
                 : profile.CurrentInstrument;
             if (_starsCacheValid &&
                 _starsCacheProfileId == profile.Id &&
@@ -589,9 +590,9 @@ namespace YARG.Song
             }
 
             Instrument instrument = player.Profile.CurrentInstrument;
-            bool useAggregateDrums = profile.GameMode == GameMode.EliteDrums;
+            bool useAggregateDrums = drumInstruments != null;
             IComparer<SongEntry> comparer = useAggregateDrums
-                ? new AggregateDrumsIntensityComparer()
+                ? new AggregateDrumsIntensityComparer(drumInstruments)
                 : new IntensityComparer(instrument);
 
             // Use Dictionary instead of array due to complex enum values
@@ -602,7 +603,7 @@ namespace YARG.Song
                 StarAmount key = StarAmount.NoPart;
                 if (useAggregateDrums)
                 {
-                    var preferredInstrument = MidiDrumkitHelper.GetPreferredInstrumentForSong(song);
+                    var preferredInstrument = MidiDrumkitHelper.GetPreferredInstrumentForSong(song, drumInstruments);
                     if (preferredInstrument.HasValue && song[preferredInstrument.Value].IsActive())
                     {
                         if (!_runtimeStars.TryGetValue(song, out key))
@@ -670,7 +671,10 @@ namespace YARG.Song
 
             YargProfile profile = player.Profile;
             Instrument instrument = profile.CurrentInstrument;
-            IntensityComparer comparer = new(instrument);
+            var drumInstruments = MidiDrumkitHelper.GetInstruments(profile.GameMode);
+            IComparer<SongEntry> comparer = drumInstruments != null
+                ? new AggregateDrumsIntensityComparer(drumInstruments)
+                : new IntensityComparer(instrument);
             string[] bucketKeys =
             {
                 Localize.Key("Menu.MusicLibrary.Sort.Percentage.100"),
@@ -694,20 +698,30 @@ namespace YARG.Song
             // instrument, difficulty, and High Score History mode.
             if (_songs.Length > 0)
             {
-                ScoreContainer.GetBestPercentageScore(
-                    _songs[0].Hash, profile.Id, instrument, allowCacheUpdate: true);
+                if (drumInstruments != null)
+                    ScoreContainer.GetBestPercentageScoreForInstruments(
+                        _songs[0].Hash, profile.Id, drumInstruments, allowCacheUpdate: true);
+                else
+                    ScoreContainer.GetBestPercentageScore(
+                        _songs[0].Hash, profile.Id, instrument, allowCacheUpdate: true);
             }
 
             foreach (SongEntry song in _songs)
             {
-                if (!song[instrument].IsActive())
+                var preferredInstrument = drumInstruments != null
+                    ? MidiDrumkitHelper.GetPreferredInstrumentForSong(song, drumInstruments)
+                    : instrument;
+                if (!preferredInstrument.HasValue || !song[preferredInstrument.Value].IsActive())
                 {
                     InsertSorted(buckets[^1], song, comparer);
                     continue;
                 }
 
-                PlayerScoreRecord record = ScoreContainer.GetBestPercentageScore(
-                    song.Hash, profile.Id, instrument, allowCacheUpdate: false);
+                PlayerScoreRecord record = drumInstruments != null
+                    ? ScoreContainer.GetBestPercentageScoreForInstruments(
+                        song.Hash, profile.Id, drumInstruments, allowCacheUpdate: false)
+                    : ScoreContainer.GetBestPercentageScore(
+                        song.Hash, profile.Id, instrument, allowCacheUpdate: false);
                 if (record == null || record.GetPercent() <= 0f)
                 {
                     InsertSorted(buckets[^2], song, comparer);
@@ -766,7 +780,10 @@ namespace YARG.Song
 
             YargProfile profile = player.Profile;
             Instrument instrument = profile.CurrentInstrument;
-            IntensityComparer comparer = new(instrument);
+            var drumInstruments = MidiDrumkitHelper.GetInstruments(profile.GameMode);
+            IComparer<SongEntry> comparer = drumInstruments != null
+                ? new AggregateDrumsIntensityComparer(drumInstruments)
+                : new IntensityComparer(instrument);
             int[] thresholds = { 500000, 400000, 300000, 200000, 150000, 100000, 75000, 50000, 30000, 10000, 1 };
             var categorySongs = new List<SongEntry>[thresholds.Length];
             for (int i = 0; i < categorySongs.Length; i++)
@@ -780,20 +797,30 @@ namespace YARG.Song
 
             if (_songs.Length > 0)
             {
-                ScoreContainer.GetHighScore(
-                    _songs[0].Hash, profile.Id, instrument, allowCacheUpdate: true);
+                if (drumInstruments != null)
+                    ScoreContainer.GetHighScoreForInstruments(
+                        _songs[0].Hash, profile.Id, drumInstruments, allowCacheUpdate: true);
+                else
+                    ScoreContainer.GetHighScore(
+                        _songs[0].Hash, profile.Id, instrument, allowCacheUpdate: true);
             }
 
             foreach (SongEntry song in _songs)
             {
-                if (!song[instrument].IsActive())
+                var preferredInstrument = drumInstruments != null
+                    ? MidiDrumkitHelper.GetPreferredInstrumentForSong(song, drumInstruments)
+                    : instrument;
+                if (!preferredInstrument.HasValue || !song[preferredInstrument.Value].IsActive())
                 {
                     InsertSorted(noPart, song, comparer);
                     continue;
                 }
 
-                PlayerScoreRecord record = ScoreContainer.GetHighScore(
-                    song.Hash, profile.Id, instrument, allowCacheUpdate: false);
+                PlayerScoreRecord record = drumInstruments != null
+                    ? ScoreContainer.GetHighScoreForInstruments(
+                        song.Hash, profile.Id, drumInstruments, allowCacheUpdate: false)
+                    : ScoreContainer.GetHighScore(
+                        song.Hash, profile.Id, instrument, allowCacheUpdate: false);
                 if (record == null || record.Score <= 0)
                 {
                     InsertSorted(unplayed, song, comparer);
@@ -867,7 +894,7 @@ namespace YARG.Song
             }
         }
 
-        private static void InsertSorted(List<SongEntry> songs, SongEntry song, IntensityComparer comparer)
+        private static void InsertSorted(List<SongEntry> songs, SongEntry song, IComparer<SongEntry> comparer)
         {
             int index = songs.BinarySearch(song, comparer);
             songs.Insert(~index, song);
@@ -958,7 +985,7 @@ namespace YARG.Song
             }
 
             var noAggregateDrumsPart = _songs.Where(song => !MidiDrumkitHelper.HasAnyDrumPart(song)).ToList();
-            noAggregateDrumsPart.Sort(new AggregateDrumsIntensityComparer());
+            noAggregateDrumsPart.Sort(new AggregateDrumsIntensityComparer(MidiDrumkitHelper.Instruments));
             _sortAggregateDrums = new SongCategory[
                 _sortedSongs.AggregateDrums.Count + (noAggregateDrumsPart.Count > 0 ? 1 : 0)];
             {
@@ -1122,7 +1149,8 @@ namespace YARG.Song
 
             static SongCategory[] GetSongLengthSort()
             {
-                if (SettingsManager.Settings.SongLengthLabels.Value == SongLengthLabelMode.RangeLabels)
+                var labelMode = SettingsManager.Settings?.SongLengthLabels?.Value ?? SongLengthLabelMode.RangeLabels;
+                if (labelMode == SongLengthLabelMode.RangeLabels)
                 {
                     return Cast(_sortedSongs.SongLengths);
                 }
@@ -1210,8 +1238,145 @@ namespace YARG.Song
 
         public static void RequestContainerRefresh()
         {
+            if (_songs.Length == 0)
+            {
+                return;
+            }
+
             SongSorting.SortEntries(_songCache, _sortedSongs);
             FillContainers();
+        }
+
+        /// <summary>
+        /// Records that the in-memory library no longer matches <c>songcache.bin</c>, so the next
+        /// launch must run a full scan. Written through to settings.json immediately: the flag is
+        /// worthless if the game is killed before it is persisted.
+        /// </summary>
+        public static void MarkSongCacheDirty()
+        {
+            if (SettingsManager.Settings.SongCacheDirty)
+            {
+                return;
+            }
+
+            SettingsManager.Settings.SongCacheDirty = true;
+            PersistSongCacheDirtyFlag();
+        }
+
+        /// <summary>
+        /// Clears the dirty flag after a full scan has reconciled the cache with the disk.
+        /// </summary>
+        public static void ClearSongCacheDirty()
+        {
+            if (!SettingsManager.Settings.SongCacheDirty)
+            {
+                return;
+            }
+
+            SettingsManager.Settings.SongCacheDirty = false;
+            PersistSongCacheDirtyFlag();
+        }
+
+        /// <summary>
+        /// Writes the settings file so the dirty flag survives a crash or a kill. Never throws:
+        /// a failed save must not abort the delete that is already half-done on disk.
+        /// </summary>
+        private static void PersistSongCacheDirtyFlag()
+        {
+            if (!SettingsManager.SettingsCanBeSaved)
+            {
+                // A failed load or a migration has locked settings.json; the flag only lives in
+                // memory, so a quick scan on the next launch may resurrect a deleted song.
+                YargLogger.LogWarning(
+                    "Could not persist the song cache dirty flag: settings saving is disabled.");
+                return;
+            }
+
+            try
+            {
+                SettingsManager.SaveSettings();
+            }
+            catch (Exception e)
+            {
+                YargLogger.LogException(e, "Failed to persist the song cache dirty flag.");
+            }
+        }
+
+        /// <summary>
+        /// Whether the raw song cache still holds any entry under the given hash.
+        /// </summary>
+        /// <remarks>
+        /// Unlike <see cref="SongsByHash"/>, this consults <c>SongCache.Entries</c> directly, so it
+        /// is not affected by the rating/category filtering the public containers apply. Callers
+        /// deciding whether a hash is dead (playlist pruning, for instance) must use this: a song
+        /// hidden by a filter is still installed, and its hash must not be pruned.
+        /// </remarks>
+        public static bool HasAnyEntryForHash(HashWrapper hash)
+        {
+            return _songCache.Entries.TryGetValue(hash, out var entries) && entries.Count > 0;
+        }
+
+        /// <summary>
+        /// Drops a single song from the in-memory library without rescanning anything.
+        /// </summary>
+        /// <remarks>
+        /// Only the in-memory containers are touched: <c>songcache.bin</c> still lists the song
+        /// and there is no incremental way to rewrite it, so the caller is responsible for
+        /// setting <see cref="SettingsManager.SettingContainer.SongCacheDirty"/> so the next
+        /// launch runs a full scan instead of the quick one. See docs/delete-song-design.md.
+        ///
+        /// The match is on identity first and <see cref="SongEntry.ActualLocation"/> second,
+        /// never on the hash alone: <c>SongCache.Entries</c> maps one hash to a <i>list</i>,
+        /// because duplicate copies of the same chart in different folders share a checksum,
+        /// and those copies have to survive.
+        /// </remarks>
+        /// <returns>Whether an entry was found and removed.</returns>
+        public static bool RemoveSong(SongEntry song)
+        {
+            if (song == null)
+            {
+                return false;
+            }
+
+            if (!_songCache.Entries.TryGetValue(song.Hash, out var entries))
+            {
+                return false;
+            }
+
+            int index = entries.FindIndex(entry => IsSameEntry(entry, song));
+            if (index < 0)
+            {
+                return false;
+            }
+
+            entries.RemoveAt(index);
+
+            // Only drop the hash itself once its last copy is gone.
+            if (entries.Count == 0)
+            {
+                _songCache.Entries.Remove(song.Hash);
+            }
+
+            // Re-sorts and refills every container, which also rebuilds _songsByHash and
+            // bumps LibraryRevision.
+            RequestContainerRefresh();
+
+            // Partial rather than Full: the library keeps the user's playlist and scroll
+            // position, and nothing outside this one entry changed.
+            MusicLibraryMenu.SetReload(MusicLibraryReloadState.Partial);
+            return true;
+
+            static bool IsSameEntry(SongEntry lhs, SongEntry rhs)
+            {
+                if (ReferenceEquals(lhs, rhs))
+                {
+                    return true;
+                }
+
+                return lhs.SubType == rhs.SubType
+                    && string.Equals(lhs.ActualLocation, rhs.ActualLocation,
+                        StringComparison.OrdinalIgnoreCase);
+            }
         }
 
         readonly struct IntensityComparer : IComparer<SongEntry>
@@ -1249,10 +1414,17 @@ namespace YARG.Song
 
         readonly struct AggregateDrumsIntensityComparer : IComparer<SongEntry>
         {
+            private readonly Instrument[] _instruments;
+
+            public AggregateDrumsIntensityComparer(Instrument[] instruments)
+            {
+                _instruments = instruments;
+            }
+
             public int Compare(SongEntry x, SongEntry y)
             {
-                int intensityX = GetPreferredIntensity(x);
-                int intensityY = GetPreferredIntensity(y);
+                int intensityX = GetPreferredIntensity(x, _instruments);
+                int intensityY = GetPreferredIntensity(y, _instruments);
 
                 if (intensityX == intensityY)
                 {
@@ -1270,9 +1442,9 @@ namespace YARG.Song
                 return intensityX.CompareTo(intensityY);
             }
 
-            private static int GetPreferredIntensity(SongEntry entry)
+            private static int GetPreferredIntensity(SongEntry entry, Instrument[] instruments)
             {
-                var instrument = MidiDrumkitHelper.GetPreferredInstrumentForSong(entry);
+                var instrument = MidiDrumkitHelper.GetPreferredInstrumentForSong(entry, instruments);
                 return instrument.HasValue ? entry[instrument.Value].Intensity : -1;
             }
         }
