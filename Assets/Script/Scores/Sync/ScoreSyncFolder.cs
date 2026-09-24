@@ -115,8 +115,9 @@ namespace YARG.Scores.Sync
             }
 
             return new DirectoryInfo(directory)
-                .EnumerateFiles("*" + EXTENSION)
-                // The pattern alone would also let "x.yargsyncfoo" through on some platforms
+                // No search pattern: on Linux it matches case-sensitively and would skip
+                // "X.YARGSYNC", and on Windows it would also let "x.yargsyncfoo" through
+                .EnumerateFiles()
                 .Where(f => string.Equals(f.Extension, EXTENSION, StringComparison.OrdinalIgnoreCase))
                 .Where(f => !string.Equals(f.Name, ownFileName, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)

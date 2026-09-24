@@ -24,24 +24,28 @@ namespace YARG.ScoreSyncTests
 
         private static readonly DateTime Now = new(2026, 9, 22, 22, 30, 0, DateTimeKind.Local);
 
+        // ICU (Linux, macOS) puts a narrow no-break space before AM/PM in en-US; Windows uses a
+        // plain space. Either is right for the player's machine, so compare them as one.
+        private static string Spaces(string text) => text?.Replace(' ', ' ');
+
         [Test]
         public void Today()
         {
-            Assert.That(ScoreSyncStatus.DescribeLocal(new DateTime(2026, 9, 22, 21, 14, 0), Now),
+            Assert.That(Spaces(ScoreSyncStatus.DescribeLocal(new DateTime(2026, 9, 22, 21, 14, 0), Now)),
                 Is.EqualTo("Today 9:14 PM"));
         }
 
         [Test]
         public void Yesterday()
         {
-            Assert.That(ScoreSyncStatus.DescribeLocal(new DateTime(2026, 9, 21, 8, 2, 0), Now),
+            Assert.That(Spaces(ScoreSyncStatus.DescribeLocal(new DateTime(2026, 9, 21, 8, 2, 0), Now)),
                 Is.EqualTo("Yesterday 8:02 AM"));
         }
 
         [Test]
         public void OlderShowsTheDate()
         {
-            Assert.That(ScoreSyncStatus.DescribeLocal(new DateTime(2026, 9, 18, 8, 2, 0), Now),
+            Assert.That(Spaces(ScoreSyncStatus.DescribeLocal(new DateTime(2026, 9, 18, 8, 2, 0), Now)),
                 Is.EqualTo("9/18/2026 8:02 AM"));
         }
 
@@ -49,7 +53,7 @@ namespace YARG.ScoreSyncTests
         public void JustAfterMidnightIsYesterday()
         {
             var now = new DateTime(2026, 9, 23, 0, 5, 0);
-            Assert.That(ScoreSyncStatus.DescribeLocal(new DateTime(2026, 9, 22, 23, 50, 0), now),
+            Assert.That(Spaces(ScoreSyncStatus.DescribeLocal(new DateTime(2026, 9, 22, 23, 50, 0), now)),
                 Is.EqualTo("Yesterday 11:50 PM"));
         }
 
@@ -86,7 +90,7 @@ namespace YARG.ScoreSyncTests
         {
             var when = new DateTime(2026, 9, 22, 21, 14, 0, DateTimeKind.Local).ToUniversalTime();
             var state = new ScoreSyncState { LastResult = "Up to date", LastResultUtc = when };
-            Assert.That(ScoreSyncStatus.Line(true, @"C:\x", true, state, Now),
+            Assert.That(Spaces(ScoreSyncStatus.Line(true, @"C:\x", true, state, Now)),
                 Is.EqualTo("Today 9:14 PM · Up to date"));
         }
 
@@ -96,7 +100,7 @@ namespace YARG.ScoreSyncTests
             // A state written before LastResultUtc existed
             var when = new DateTime(2026, 9, 21, 8, 2, 0, DateTimeKind.Local).ToUniversalTime();
             var state = new ScoreSyncState { LastResult = "Up to date", LastSyncUtc = when };
-            Assert.That(ScoreSyncStatus.Line(true, @"C:\x", true, state, Now),
+            Assert.That(Spaces(ScoreSyncStatus.Line(true, @"C:\x", true, state, Now)),
                 Is.EqualTo("Yesterday 8:02 AM · Up to date"));
         }
 
