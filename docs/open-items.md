@@ -1,6 +1,6 @@
 # Open Items
 
-Running list of known issues and possible follow-ups for the fork. Last updated 2026-09-11. Remove items when done; note the commit.
+Running list of known issues and possible follow-ups for the fork. Last updated 2026-10-06. Remove items when done; note the commit.
 
 Feature research lives in `docs/roadmap.md`; the state of each feature is in
 `docs/section-fc-handoff.md` → "Roadmap work, 2026-09-03". Rewind to section is in
@@ -42,6 +42,30 @@ slice 5.
 - **Feature 2, delete songs — risk 1 stays open by nature.** If `SongCacheDirty` fails to persist,
   a deleted song can come back unplayable after a quick scan on the next launch. Only a
   delete-then-restart test exercises it; the UI cannot show it.
+
+- **Upstream merge 2026-10-06 (upstream `dev` at `f91ba737`, YARG.Core `6d4161d5`) needs
+  in-game checks.** Compiled and headless-verified only; none of these were played:
+  - **Free Harmonies (`PartyVocals`) with section FC and rewind.** By decision of the merge it
+    earns no section credit: the coordinator engine grades a merged phrase list from every
+    harmony part while the scan only sees HARM1's, so `VocalsPlayer.ScanSectionCompletion`
+    returns null for it. Check that a Free Harmonies run ends with no section row on the score
+    card, no library fraction, and no errors. Rewind rebuilds the coordinator through
+    `CreateEngine`; check that a rewind mid-song re-simulates cleanly (meters, phrase results,
+    percussion) and that the needle/particle colours follow the sung part afterwards.
+  - **Normal vocals and harmonies after the percussion change.** Upstream no longer breaks the
+    FC ring or plays the miss sound on percussion misses. Section FC already ignored percussion
+    (the scan and the live hooks skip percussion notes and phrases), so no rule changed; check
+    that a missed phrase still drops its section and a missed percussion hit does not.
+  - **Score card avatars.** A profile with a custom avatar shows it in place of the instrument
+    icon; check it sits correctly beside the fork's section row/strip, the Section FC tag and
+    the Rewound pill.
+  - **Score sync import after the loading-input change.** `ImportAtStartup` still runs at the
+    end of `LoadingScreen.Start` while the loading context is held; check the import toast
+    appears and that menus accept input once loading ends. Avatars are not part of the sync.
+  - **Delete Song in the reworked context menu.** Upstream now queues main-menu items and sorts
+    them by `POPUP_ITEM_ORDER`; `DeleteSong` was added last to that list and the queue now
+    carries the item's text colour. Check Delete Song is the last entry for a song, still
+    greyed out for a packed CON, and still deletes.
 
 ## Done, lightly verified
 

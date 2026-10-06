@@ -49,6 +49,7 @@
             "ProKeys": "Pro Keys",
             "Vocals": "Vocals",
             "Harmony": "Harmony",
+            "PartyVocals": "Free Harmonies",
             "Dj": "DJ",
             "Band": "Band"
         },
@@ -106,6 +107,7 @@
             "ProKeys": "Pro Keys",
             "Vocals": "Vocals",
             "Harmony": "Harmony",
+            "FreeHarmony": "Free Harmony",
             "Band": "Band",
             "Playcount": "Play Count",
             "Random": "Random"
@@ -454,22 +456,26 @@
                     "ScanSongs": "Scan Songs",
                     "SortBy": "Sort By...",
                     "GoToSection": "Go To Section...",
+                    "StartTheSet": "Start The Set",
+                    "Filters": "Filters",
+                    "PlayShow": "Play A Show",
                     "AddToFavorites": "Add To Favorites",
-                    "RemoveFromFavorites": "Remove From Favorites",
+                    "AddToSetlist": "Add To Setlist",
                     "AddToPlaylist": "Add To Playlist...",
-                    "RemoveFromPlaylist": "Remove From Playlist",
-                    "RemoveFromSetlist": "Remove From Setlist",
-                    "CreateNewPlaylist": "Create New...",
                     "AddPlaylistToSetlist": "Add Playlist to Setlist",
                     "SaveSetlistToPlaylist": "Save Setlist to Playlist",
+                    "RemoveFromFavorites": "Remove From Favorites",
+                    "RemoveFromSetlist": "Remove From Setlist",
+                    "RemoveFromPlaylist": "Remove From Playlist",
+                    "CreateNewPlaylist": "Create New...",
                     "RenamePlaylist": "Rename Playlist",
-                    "DeletePlaylist": "Delete Playlist",
                     "DeleteSetlist": "Delete Setlist",
+                    "DeletePlaylist": "Delete Playlist",
+                    "CollapseAll": "Collapse All",
+                    "ExpandAll": "Expand All",
                     "ViewSongFolder": "View Song Folder",
                     "CopySongChecksum": "Copy Song Checksum",
-                    "DeleteSong": "Delete Song",
-                    "CollapseAll": "Collapse All",
-                    "ExpandAll": "Expand All"
+                    "DeleteSong": "Delete Song"
                 }
             },
             "Back": "BACK",
@@ -494,12 +500,15 @@
             "PlayShow": "Play A Show",
             "HoldPlayShow": "(Hold) Play A Show",
             "Filters": "Filters",
+            "HoldFilters": "(Hold) Filters",
+            "SortAndFilter": "<align=left><size=80%>Sort By...<br>(Hold) Filters</size></align>",
             "NoSongsInPlaylist": "No Songs In Playlist",
             "CannotAddToSelf": "No, I will not create an ouroboros for you. Nice try, Jaden.",
             "AddToShow": "Add To Show",
             "AddedToShow": "Added To Show",
             "StartShow": "Start The Show",
-            "MoreOptions": "<align=left><size=80%>More Options<br>(Hold) Navigate Sections</size></align>",
+            "MoreOptionsAndGoToSection": "<align=left><size=80%>More Options<br>(Hold) Go to Section...</size></align>",
+            "MoreOptions": "More Options",
             "PlayAShow": {
                 "LongSong": "A Long Song",
                 "RandomSong": "A Random Song",
@@ -1520,6 +1529,10 @@
             "CensorMatureContent": {
                 "Name": "Censor Mature Content",
                 "Description": "On supported songs, mutes and censors mature content in lyrics and vocals, and downgrades the song's rating to \"Supervision Recommended\"."
+            },
+            "RememberFilters": {
+                "Name": "Remember Filters",
+                "Description": "Saves your Filters Menu selections so they are restored the next time you start the game."
             },
             "MetronomeVolume": {
                 "Name": "Metronome Volume",
