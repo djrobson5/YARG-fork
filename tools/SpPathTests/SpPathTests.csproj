@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Verification harness for the optimal Star Power path feature (docs/sp-path-design.md).
+
+    Targets net8.0 because the local SDK is 8.0.x; YARG.Core itself is netstandard2.1 so it
+    is referenceable from here. The submodule's own YARG.Core.UnitTests targets net10.0 and
+    cannot be built on this machine — that is why this project exists outside it.
+
+    The files under Assets/Script/Gameplay/SpPath/ are compiled by link, so they must stay
+    free of any UnityEngine reference.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <!-- Disabled on purpose: the files under Assets/Script/Gameplay/SpPath/ are compiled by
+         link and must also compile inside Unity, which has no implicit usings. Keeping them off
+         here makes this project a faithful guard for the Unity build. -->
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>YARG.SpPathTests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="NUnit" Version="4.2.2" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\YARG.Core\YARG.Core\YARG.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The Unity-free scoring model / optimizer, compiled by link. -->
+    <Compile Include="..\..\Assets\Script\Gameplay\SpPath\**\*.cs" LinkBase="SpPath" />
+  </ItemGroup>
+
+</Project>

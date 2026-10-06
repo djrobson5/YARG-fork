@@ -462,7 +462,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2885240813551093153, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
       propertyPath: m_Name
-      value: KeysScoreCard2
+      value: KeysScoreCard
       objectReference: {fileID: 0}
     - target: {fileID: 2885240813714138371, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
       propertyPath: m_AnchorMax.y
@@ -1261,6 +1261,17 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f4688fdb7df04437aeb418b961361dc5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+--- !u!114 &1080039752798048932 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 2218568648722446026, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
+  m_PrefabInstance: {fileID: 1167806695846405230}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3f1f8be2f8474992962f5d86b34fc6a6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::YARG.Menu.ColoredPillElement
 --- !u!1 &1604476451735882374 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 464113566120488680, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
@@ -1374,8 +1385,10 @@ MonoBehaviour:
   _basicStatsRect: {fileID: 5656862144262534385}
   _enginePresetTag: {fileID: 4518544156755162605}
   _modifiersUsedTag: {fileID: 4490226248249831456}
+  _rewoundTag: {fileID: 1080039752798048932}
   _modifiersUsedContainer: {fileID: 3250067926952896098}
   _modifiersUsedSeparator: {fileID: 1604476451735882374}
+  _sectionStripContainer: {fileID: 6659884356486005868}
   _overhits: {fileID: 3397562841082415807}
 --- !u!1 &4052832000008949920 stripped
 GameObject:
@@ -1484,6 +1497,11 @@ MonoBehaviour:
 --- !u!224 &5656862144262534385 stripped
 RectTransform:
   m_CorrespondingSourceObject: {fileID: 6824594073045700767, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
+  m_PrefabInstance: {fileID: 1167806695846405230}
+  m_PrefabAsset: {fileID: 0}
+--- !u!224 &6659884356486005868 stripped
+RectTransform:
+  m_CorrespondingSourceObject: {fileID: 5501230000000000002, guid: 2025f8ef58ef1ef46a59478fdc3fe13d, type: 3}
   m_PrefabInstance: {fileID: 1167806695846405230}
   m_PrefabAsset: {fileID: 0}
 --- !u!114 &7118843276314323656 stripped

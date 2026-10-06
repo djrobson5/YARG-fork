@@ -5,6 +5,7 @@ using System.Linq;
 using UnityEngine;
 using YARG.Core.Chart;
 using YARG.Core.Logging;
+using YARG.Core.Utility;
 using YARG.Gameplay.Visuals;
 using YARG.Settings;
 
@@ -15,17 +16,18 @@ namespace YARG.Gameplay.Player
         private int[] _phraseMarkerIndices;
 
         // Static vocals-related constants
-        private const float STATIC_LYRICS_SPACING_FROM_SING_LINE = .25f;
+        private const float STATIC_LYRICS_SPACING_FROM_SING_LINE = .1f;
         private const float STATIC_LYRICS_LEFT_EDGE = VocalElement.SING_LINE_POS + STATIC_LYRICS_SPACING_FROM_SING_LINE;
-        private const float DEFAULT_STATIC_LYRICS_RIGHT_EDGE = STATIC_LYRICS_LEFT_EDGE + VocalLyricContainer.STATIC_PHRASE_SPACING;
+        private const float DEFAULT_STATIC_LYRICS_RIGHT_EDGE = STATIC_LYRICS_LEFT_EDGE + VocalLyricContainer.SMALL_GAP_PHRASE_SPACING;
         private const int MAXIMUM_STATIC_PHRASE_QUEUE_SIZE = 10;
-        private const float STATIC_LYRIC_SHIFT_DURATION = .1f;
         private const int SCROLLING_LYRIC_SPAWN_BUDGET = 4;
         private const int STATIC_PHRASE_ENQUEUE_BUDGET = 2;
 
         private ScrollingPhraseNoteTracker[] _scrollingNoteTrackers;
         private ScrollingPhraseNoteTracker[] _scrollingLyricTrackers;
         private StaticPhraseTracker[] _staticPhraseTrackers;
+        [SerializeField]
+        private HeldStaticPhraseElement[] _staticLyricHoldText;
         private Queue<VocalStaticLyricPhraseElement>[] _staticPhraseQueues;
 
         private Dictionary<LyricEvent, VocalScrollingLyricSyllableElement.PreparedLyric> _preparedScrollingLyrics;
@@ -148,7 +150,7 @@ namespace YARG.Gameplay.Player
             {
                 case StaticLyricShiftType.None:
                     break;
-                case StaticLyricShiftType.PhraseToGap:
+                case StaticLyricShiftType.PhraseToLargeGap:
                 {
                     if (queue.Count == 0)
                     {
@@ -160,14 +162,15 @@ namespace YARG.Gameplay.Player
 
                     foreach (var remainingPhrase in queue)
                     {
-                        remainingPhrase.transform.DOLocalMoveX(remainingPhrase.transform.localPosition.x - leftShift, STATIC_LYRIC_SHIFT_DURATION);
+                        remainingPhrase.transform.DOLocalMoveX(remainingPhrase.transform.localPosition.x - leftShift, StaticPhraseHelpers.STATIC_LYRIC_SHIFT_DURATION);
 
                     }
                     _rightEdges[harmonyIndex] -= leftShift;
-                    leftmostPhraseElement.Dismiss();
+                    _staticLyricHoldText[harmonyIndex].AddSyllables(leftmostPhraseElement.Dismiss());
                     break;
                 }
-                case StaticLyricShiftType.PhraseToPhrase:
+                case StaticLyricShiftType.NoGap:
+                case StaticLyricShiftType.SmallGap:
                 {
                     if (queue.Count < 2)
                     {
@@ -179,21 +182,22 @@ namespace YARG.Gameplay.Player
                         return;
                     }
 
+                    var shiftAmount = change == StaticLyricShiftType.NoGap ? VocalLyricContainer.NO_GAP_PHRASE_SPACING : VocalLyricContainer.SMALL_GAP_PHRASE_SPACING;
+                    //var shiftDuration = change == StaticLyricShiftType.WithinPhrase ? STATIC_LYRIC_SHIFT_DURATION / 2 : STATIC_LYRIC_SHIFT_DURATION;
                     var leftmostPhraseElement = queue.Dequeue();
-                    var leftShift = leftmostPhraseElement.Width + VocalLyricContainer.STATIC_PHRASE_SPACING;
-                    queue.Peek().Activate();
+                    var leftShift = leftmostPhraseElement.Width + shiftAmount;
 
                     foreach (var remainingPhrase in queue)
                     {
                         remainingPhrase.transform.DOLocalMoveX(remainingPhrase.transform.localPosition.x - leftShift,
-                            Mathf.Min(STATIC_LYRIC_SHIFT_DURATION, (float)leftmostPhraseElement.Duration));
+                            Mathf.Min(StaticPhraseHelpers.STATIC_LYRIC_SHIFT_DURATION, (float)leftmostPhraseElement.Duration));
 
                     }
                     _rightEdges[harmonyIndex] -= leftShift;
-                    leftmostPhraseElement.Dismiss();
+                    _staticLyricHoldText[harmonyIndex].AddSyllables(leftmostPhraseElement.Dismiss());
                     break;
                 }
-                case StaticLyricShiftType.GapToPhrase:
+                case StaticLyricShiftType.LargeGapToPhrase:
                 {
                     if (queue.Count < 1)
                     {
@@ -207,15 +211,14 @@ namespace YARG.Gameplay.Player
 
                     var leftmostPhraseElement = queue.Peek();
 
-                    _rightEdges[harmonyIndex] -= VocalLyricContainer.STATIC_PHRASE_SPACING;
+                    _rightEdges[harmonyIndex] -= VocalLyricContainer.SMALL_GAP_PHRASE_SPACING;
                     foreach (var remainingPhrase in queue)
                     {
                         remainingPhrase.transform.DOLocalMoveX(
-                            remainingPhrase.transform.localPosition.x - VocalLyricContainer.STATIC_PHRASE_SPACING,
-                            Mathf.Min(STATIC_LYRIC_SHIFT_DURATION, (float)leftmostPhraseElement.Duration));
+                            remainingPhrase.transform.localPosition.x - VocalLyricContainer.SMALL_GAP_PHRASE_SPACING,
+                            Mathf.Min(StaticPhraseHelpers.STATIC_LYRIC_SHIFT_DURATION, (float)leftmostPhraseElement.Duration));
 
                     }
-                    leftmostPhraseElement.Activate();
                     break;
                 }
                 case StaticLyricShiftType.FinalPhraseComplete:
@@ -254,17 +257,28 @@ namespace YARG.Gameplay.Player
 
                 var phrase = preparedPhrases[phraseIdx];
 
-                if (phrase.PhrasePair.IsPercussion)
+                if (phrase.Phrase.IsPercussion)
                 {
                     continue;
                 }
+
+                double timeBetweenLyrics = double.MaxValue;
+                if (phraseIdx + 1 < preparedPhrases.Count && phrase.Phrase.Lyrics.Count > 0)
+                {
+                    var next = preparedPhrases[phraseIdx + 1];
+                    if (next.Phrase.Lyrics.Count > 0)
+                    {
+                        timeBetweenLyrics = StaticPhraseHelpers.GetTimeBetweenLyrics(next.Phrase, phrase.Phrase);
+                    }
+                }
+                var shiftAmount = timeBetweenLyrics < StaticLyricConstants.SMALL_GAP_THRESHOLD ? VocalLyricContainer.NO_GAP_PHRASE_SPACING : VocalLyricContainer.SMALL_GAP_PHRASE_SPACING;
 
                 var newPhraseElement = _lyricContainer.TrySpawnStaticLyricPhrase(
                     phrase, _totalHarms, harmonyIndex, _rightEdges[harmonyIndex]);
 
                 if (newPhraseElement != null)
                 {
-                    _rightEdges[harmonyIndex] += newPhraseElement.Width + VocalLyricContainer.STATIC_PHRASE_SPACING;
+                    _rightEdges[harmonyIndex] += newPhraseElement.Width + shiftAmount;
                     _highestEnqueuedPhrasePairIndices[harmonyIndex] = phraseIdx;
                     queue.Enqueue(newPhraseElement);
                     enqueued++;
@@ -306,10 +320,8 @@ namespace YARG.Gameplay.Player
                 {
                     foreach (var lyric in phrase.Lyrics)
                     {
-                        var probableNote = phrase.PhraseParentNote.ChildNotes
-                            .FirstOrDefault(note => note.Tick == lyric.Tick);
                         _preparedScrollingLyrics[lyric] =
-                            _lyricContainer.PrepareScrollingLyric(lyric, probableNote, _totalHarms, partIndex);
+                            _lyricContainer.PrepareScrollingLyric(lyric, _totalHarms, partIndex);
                     }
                 }
             }
@@ -324,11 +336,11 @@ namespace YARG.Gameplay.Player
                     continue;
                 }
 
-                var preparedPhrases = new List<VocalStaticLyricPhraseElement.PreparedPhrase>(tracker.PhrasePairs.Count);
-                foreach (var phrasePair in tracker.PhrasePairs)
+                var preparedPhrases = new List<VocalStaticLyricPhraseElement.PreparedPhrase>(tracker.Phrases.Count);
+                foreach (var phrase in tracker.Phrases)
                 {
                     preparedPhrases.Add(_lyricContainer.PrepareStaticLyricPhrase(
-                        phrasePair,
+                        phrase,
                         _vocalsTrack.Parts[harmonyIndex].NotePhrases,
                         _totalHarms,
                         harmonyIndex));

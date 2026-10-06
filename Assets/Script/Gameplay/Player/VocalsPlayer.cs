@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
@@ -15,6 +15,7 @@ using YARG.Gameplay.Visuals;
 using YARG.Helpers;
 using YARG.Input;
 using YARG.Player;
+using YARG.Scores;
 using YARG.Settings;
 
 namespace YARG.Gameplay.Player
@@ -39,7 +40,17 @@ namespace YARG.Gameplay.Player
         private static readonly int OutlineColorID = Shader.PropertyToID("_OutlineColor");
         private const float OUTLINE_WIDTH = 7f;
 
+        // Cached particle systems for dynamic color updates (Free Harmonies)
+        private ParticleSystem[] _cachedParticleSystems;
+        private int _displayedHarmonyIndex = -1;
+        private int _outlineHarmonyIndex = -1;
+
         public override bool ShouldUpdateInputsOnResume => false;
+
+        protected override bool IsStarPowerAction(int action)
+        {
+            return (VocalsAction) action == VocalsAction.StarPower;
+        }
 
         protected override float[] StarMultiplierThresholds { get; set; } =
         {
@@ -65,6 +76,8 @@ namespace YARG.Gameplay.Player
         private bool _shouldHideNeedle;
         private bool _handlesCountdown;
         private List<VocalsPart> _allVocalParts;
+        private List<VocalsPart> _originalAllVocalParts;
+        private readonly Dictionary<(uint Tick, uint TickEnd), VocalNote> _percussionNoteLookup = new();
 
         private int _phraseIndex = -1;
 
@@ -98,11 +111,44 @@ namespace YARG.Gameplay.Player
             // Get the notes from the specific harmony or solo part
 
             var multiTrack = chart.GetVocalsTrack(Player.Profile.CurrentInstrument);
-            _allVocalParts = multiTrack.Parts;
+
+            if (Player.Profile.CurrentInstrument == Instrument.PartyVocals)
+            {
+                // Free Harmonies: clone and modify ALL parts so that vocal modifiers
+                // (UnpitchedOnly, NoVocalPercussion) apply to every HARM line the
+                // coordinator matches against, not just the primary chart.
+                _allVocalParts = new List<VocalsPart>();
+                foreach (var part in multiTrack.Parts)
+                {
+                    var cloned = part.Clone();
+                    player.Profile.ApplyVocalModifiers(cloned);
+                    _allVocalParts.Add(cloned);
+                }
+                // Pristine full-song snapshot (taken post-modifier so practice
+                // sections never re-apply them). Practice filtering is destructive,
+                // so each SetPracticeSection must clone from this, not from the
+                // possibly-already-filtered _allVocalParts. The extra copy also
+                // keeps the engine's mutable notes distinct from the snapshot.
+                _originalAllVocalParts = _allVocalParts.Select(part => part.Clone()).ToList();
+            }
+            else
+            {
+                _allVocalParts = multiTrack.Parts;
+            }
+
             _handlesCountdown = vocalIndex == 0;
 
-            var track = multiTrack.Parts[Player.Profile.HarmonyIndex];
-            player.Profile.ApplyVocalModifiers(track);
+            VocalsPart track;
+            if (Player.Profile.CurrentInstrument == Instrument.PartyVocals)
+            {
+                // Already cloned and modified above; use HARM1 as the primary chart.
+                track = _allVocalParts[0];
+            }
+            else
+            {
+                track = multiTrack.Parts[Player.Profile.HarmonyIndex];
+                player.Profile.ApplyVocalModifiers(track);
+            }
 
             OriginalNoteTrack = track.CloneAsInstrumentDifficulty();
             NoteTrack = OriginalNoteTrack;
@@ -110,8 +156,9 @@ namespace YARG.Gameplay.Player
             _phraseIndex = -1;
             _previousStarPowerPercent = 0.0;
 
-            // Update speed of particles
-            var particles = _hittingParticleGroup.GetComponentsInChildren<ParticleSystem>();
+            // Update speed of particles and cache for dynamic color updates
+            _cachedParticleSystems = _hittingParticleGroup.GetComponentsInChildren<ParticleSystem>();
+            var particles = _cachedParticleSystems;
             foreach (var system in particles)
             {
                 // This interface is weird lol, `.main` is readonly but
@@ -131,6 +178,7 @@ namespace YARG.Gameplay.Player
 
             percussionTrack.Initialize(NoteTrack.Notes);
             _percussionTrack = percussionTrack;
+            RebuildPercussionNoteLookup();
 
             _hud.ShowPlayerName(player, needleIndex);
 
@@ -159,6 +207,16 @@ namespace YARG.Gameplay.Player
             _inputContext?.Stop();
         }
 
+        protected override void OnMenuInput(YargPlayer _, ref GameInput input)
+        {
+            if (input.Action != (int) MenuAction.Start || !input.Button || !GameManager.CanPause)
+            {
+                return;
+            }
+
+            GameManager.TogglePause();
+        }
+
         protected VocalsEngine CreateEngine()
         {
             if (!Player.IsReplay)
@@ -178,7 +236,22 @@ namespace YARG.Gameplay.Player
             // The hit window can just be taken from the params
             HitWindow = EngineParams.HitWindow;
 
-            var engine = new YargVocalsEngine(NoteTrack, SyncTrack, EngineParams, Player.Profile.IsBot);
+            // Construct the appropriate engine based on the instrument.
+            // PartyVocals uses the coordinator (multi-part matching across all HARM parts);
+            // everything else uses the standard solo/harmony engine.
+            VocalsEngine engine;
+            if (Player.Profile.CurrentInstrument == Instrument.PartyVocals)
+            {
+                var mergedNoteTrack = PartyVocalsCoordinatorEngine.BuildMergedTrack(_allVocalParts, NoteTrack);
+                engine = new PartyVocalsCoordinatorEngine(
+                    mergedNoteTrack, _allVocalParts, SyncTrack, EngineParams,
+                    Player.Profile.IsBot, micCount: 1);
+            }
+            else
+            {
+                engine = new YargVocalsEngine(NoteTrack, SyncTrack, EngineParams, Player.Profile.IsBot);
+            }
+
             EngineContainer = GameManager.EngineManager.Register(engine, NoteTrack, Player.Profile.HarmonyIndex, _chart, Player.RockMeterPreset);
 
             engine.OnComboIncrement += OnComboIncrement;
@@ -202,30 +275,58 @@ namespace YARG.Gameplay.Player
 
                 LastCombo = Combo;
 
-                ShowTextNotifications(isLastPhrase);
+                if (!GameManager.IsSeekingReplay)
+                {
+                    ShowTextNotifications(isLastPhrase);
 
-                // Order is important here. ShowVocalPhraseResult() will skip showing AWESOME! if other, more important notifications are already showing.
-                _hud.ShowPhraseHit(percent, Combo);
+                    // Order is important here. ShowVocalPhraseResult() will skip showing AWESOME! if other, more important notifications are already showing.
+                    _hud.ShowPhraseHit(percent, Combo);
+                }
             };
 
             engine.OnNoteHit += (_, note) =>
             {
-                if (note.IsPercussion)
+                // The particle burst and its lights are feedback, so they are gated the way the
+                // sibling handlers gate theirs: a re-simulation would otherwise fire one for
+                // every percussion note the surviving timeline ever hit.
+                if (note.IsPercussion && !GameManager.IsSeekingReplay &&
+                    _percussionNoteLookup.TryGetValue((note.Tick, note.TickEnd), out var visualNote))
                 {
-                    _percussionTrack.HitPercussionNote(note);
+                    _percussionTrack.HitPercussionNote(visualNote);
+                }
+
+                // Vocals are graded per phrase, and the same phrases the scanner counts are the
+                // ones that move a section's progress here. One phrase is worth one of the
+                // scanner's NotesTotal, so the count is always one.
+                //
+                // IsPercussion is a note inside a percussion phrase rather than a phrase of the
+                // phrase list the scanner walks, so it is excluded here as well.
+                if (!note.IsPercussion && !note.IsPercussionPhrase && !note.IsBigRockEnding)
+                {
+                    NotifySectionNoteHit(note.Tick, 1);
                 }
             };
 
-            engine.OnNoteMissed += (_, _) =>
+            engine.OnNoteMissed += (_, note) =>
             {
-                if (LastCombo >= 2)
+                if (note.IsVocalPhrase)
                 {
-                    GlobalAudioHandler.PlaySoundEffect(SfxSample.NoteMiss);
+                    if (LastCombo >= 2 && !GameManager.IsSeekingReplay)
+                    {
+                        GlobalAudioHandler.PlaySoundEffect(SfxSample.NoteMiss);
+                    }
+
+                    LastCombo = Combo;
+                    _hud.SetFullCombo(false);
                 }
 
-                LastCombo = Combo;
-
-                _hud.SetFullCombo(false);
+                // Vocals are graded per phrase, and the same phrases the scanner counts are the
+                // ones that can drop a section here. IsPercussion is a note inside a percussion
+                // phrase rather than one of the phrases the scanner walks, so it is excluded too.
+                if (!note.IsPercussion && !note.IsPercussionPhrase && !note.IsBigRockEnding)
+                {
+                    NotifySectionNoteMissed(note.Tick);
+                }
             };
 
             engine.OnSing += (singing) =>
@@ -265,6 +366,14 @@ namespace YARG.Gameplay.Player
         protected override void ResetVisuals()
         {
             _lastTargetNote = null;
+
+            // Both are stamped with GameManager.InputTime, which during a re-simulation is the
+            // landing rather than the historical moment, so a replayed sing or hit that ended
+            // "true" would still be inside the threshold at the landing and show the needle with
+            // no target note behind it.
+            _lastSingTime = null;
+            _lastHitTime = null;
+
             _hud.SetFullCombo(IsFc);
         }
 
@@ -280,8 +389,76 @@ namespace YARG.Gameplay.Player
 
             _phraseIndex = -1;
             _percussionTrack.Initialize(NoteTrack.Notes);
+            RebuildPercussionNoteLookup();
 
             base.ResetPracticeSection();
+        }
+
+        public override void RebuildEngineForRewind()
+        {
+            // Unlike the track players' CreateEngine, this one only registers; unregistering the
+            // outgoing container is the caller's job, and skipping it would leave a dead engine in
+            // the engine manager's band-state maths.
+            if (EngineContainer != null)
+            {
+                // Reset before unregistering: RemovePlayerFromUnisons skips unisons that end
+                // before the engine's CurrentTime, so an engine still at the pre-rewind time
+                // would leave its id on every unison already passed and the new id would be
+                // added alongside it, making those phrases uncompletable. Reset() puts
+                // CurrentTime back to double.MinValue so every unison drops the old id.
+                Engine.Reset();
+
+                GameManager.EngineManager.Unregister(EngineContainer);
+                EngineContainer = null;
+            }
+
+            Engine = CreateEngine();
+
+            // Rewinds only happen in a live run, so the practice speed special case does not apply.
+            Engine.SetSpeed(GameManager.SongSpeed);
+        }
+
+        public override void RestartLeadInVisuals(double visualTime)
+        {
+            // The phrase cursor must go back or the HUD reads a phrase the run has not reached
+            // again. UpdatePercussionPhrase walks it forward from -1 on the next update, so the
+            // percussion readout lands on the phrase under way at the landing on its own.
+            _phraseIndex = -1;
+
+            // One highway is shared by every harmony part, so the part that owns the countdown
+            // owns the seek too; the percussion track is this player's own.
+            if (_handlesCountdown && GameManager.VocalTrack != null)
+            {
+                GameManager.VocalTrack.RewindTo(visualTime);
+            }
+
+            if (_percussionTrack != null)
+            {
+                _percussionTrack.RewindTo();
+            }
+
+            base.RestartLeadInVisuals(visualTime);
+        }
+
+        public override void UpdateLeadInCountdown(double countdownLength, double endSongTime)
+        {
+            // Vocals share one countdown widget, owned by index 0.
+            if (!_handlesCountdown || GameManager.VocalTrack == null)
+            {
+                return;
+            }
+
+            GameManager.VocalTrack.UpdateLeadInCountdown(countdownLength, endSongTime);
+        }
+
+        public override void ForceResetLeadInCountdown()
+        {
+            if (!_handlesCountdown || GameManager.VocalTrack == null)
+            {
+                return;
+            }
+
+            GameManager.VocalTrack.ForceResetCountdown();
         }
 
         public override void Rewind(double visualTime)
@@ -308,6 +485,28 @@ namespace YARG.Gameplay.Player
             }
 
             base.UpdateInputs(time);
+        }
+
+        /// <summary>
+        /// The harmony part whose color this player's visuals should currently show.
+        /// For Free Harmonies, this is the part the coordinator is matching right now;
+        /// for solo/harmony, it is the profile's static harmony index.
+        /// </summary>
+        private int DisplayedHarmonyIndex => Engine is PartyVocalsCoordinatorEngine coordinator
+            ? coordinator.DisplayedHarmonyIndex
+            : Player.Profile.HarmonyIndex;
+
+        private void UpdateParticleColor(int harmonyIndex)
+        {
+            if (_cachedParticleSystems == null) return;
+
+            int colorIdx = Mathf.Clamp(harmonyIndex, 0, VocalTrack.Colors.Length - 1);
+            var color = VocalTrack.Colors[colorIdx];
+            foreach (var system in _cachedParticleSystems)
+            {
+                var main = system.main;
+                main.startColor = color;
+            }
         }
 
         private bool IsInThreshold(double currentTime, double? lastTime)
@@ -416,15 +615,18 @@ namespace YARG.Gameplay.Player
 
         private void SetOutline(bool enableOutline)
         {
-            if (_outlineEnabled == enableOutline)
+            int harmonyIdx = DisplayedHarmonyIndex;
+            if (_outlineEnabled == enableOutline && harmonyIdx == _outlineHarmonyIndex)
             {
                 return;
             }
             MaterialPropertyInstance.Instance.SetFloat(OutlineWidthID, enableOutline ? OUTLINE_WIDTH : 0f);
             // Not sure if I need to set this every time, but it was being weird if I didn't
-            MaterialPropertyInstance.Instance.SetColor(OutlineColorID, VocalTrack.Colors[Player.Profile.HarmonyIndex]);
+            MaterialPropertyInstance.Instance.SetColor(OutlineColorID,
+                VocalTrack.Colors[Mathf.Clamp(harmonyIdx, 0, VocalTrack.Colors.Length - 1)]);
             _needleRenderer.SetPropertyBlock(MaterialPropertyInstance.Instance);
             _outlineEnabled = enableOutline;
+            _outlineHarmonyIndex = harmonyIdx;
         }
 
         private void UpdateSingNeedle()
@@ -473,6 +675,16 @@ namespace YARG.Gameplay.Player
                         _hittingParticleGroup.Play();
                     }
                     SetOutline(!GameManager.Rewinding);
+
+                    // Update particle color to match the currently-sung harmony part.
+                    // For Free Harmonies, the coordinator tracks which part the mic is
+                    // matching; for solo/harmony, HarmonyIndex is static.
+                    int harmonyIdx = DisplayedHarmonyIndex;
+                    if (harmonyIdx != _displayedHarmonyIndex)
+                    {
+                        _displayedHarmonyIndex = harmonyIdx;
+                        UpdateParticleColor(harmonyIdx);
+                    }
 
                     float pitch;
                     float targetRotation = 0f;
@@ -623,6 +835,17 @@ namespace YARG.Gameplay.Player
                 OriginalNoteTrack.Phrases,
                 OriginalNoteTrack.TextEvents);
 
+            if (Player.Profile.CurrentInstrument == Instrument.PartyVocals)
+            {
+                _allVocalParts = _originalAllVocalParts.Select(part =>
+                {
+                    var sectionPart = part.Clone();
+                    sectionPart.NotePhrases.RemoveAll(phrase =>
+                        !IsVocalPhraseInPracticeRange(phrase.PhraseParentNote, start, end));
+                    return sectionPart;
+                }).ToList();
+            }
+
             _phraseIndex = -1;
 
             // Removed by EngineManager
@@ -631,6 +854,21 @@ namespace YARG.Gameplay.Player
             Engine = CreateEngine();
             Engine.SetSpeed(GameManager.SongSpeed >= 1 ? GameManager.SongSpeed : 1);
             ResetPracticeSection();
+        }
+
+        private void RebuildPercussionNoteLookup()
+        {
+            _percussionNoteLookup.Clear();
+            foreach (var phrase in NoteTrack.Notes)
+            {
+                foreach (var note in phrase.ChildNotes)
+                {
+                    if (note.IsPercussion)
+                    {
+                        _percussionNoteLookup[(note.Tick, note.TickEnd)] = note;
+                    }
+                }
+            }
         }
 
         private static bool IsVocalPhraseInPracticeRange(VocalNote note, uint start, uint end)
@@ -642,6 +880,21 @@ namespace YARG.Gameplay.Player
 
             return note.ChildNotes.Count > 0 &&
                 note.ChildNotes.All(child => child.Tick >= start && child.TotalTickEnd <= end);
+        }
+
+        public override IReadOnlyList<SectionCompletionResult> ScanSectionCompletion(
+            IReadOnlyList<Section> sections)
+        {
+            // Free Harmonies grades the phrases of every harmony part merged into one list, while
+            // NoteTrack holds only HARM1's, so a scan of it would miss phrases the engine graded
+            // and count HARM1 phrases another part earned. That mode earns no section credit.
+            if (Player.Profile.CurrentInstrument == Instrument.PartyVocals)
+            {
+                return null;
+            }
+
+            // Vocals are graded per phrase, not per note
+            return SectionCompletionScanner.ScanVocalPhrases(sections, NoteTrack.Notes);
         }
 
         public override void SetStemMuteState(bool muted)

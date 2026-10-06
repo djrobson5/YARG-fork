@@ -1,19 +1,20 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using Cysharp.Threading.Tasks;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
-using YARG.Assets.Script.Helpers;
 using YARG.Core;
 using YARG.Core.Game;
+using YARG.Core.IO;
+using YARG.Helpers;
 using YARG.Helpers.Extensions;
 using YARG.Localization;
 using YARG.Menu.Data;
 using YARG.Menu.Filters;
-using YARG.Menu.Main;
 using YARG.Menu.Persistent;
 using YARG.Menu.ProfileInfo;
 using YARG.Player;
@@ -31,6 +32,7 @@ namespace YARG.Menu.ProfileList
         private static readonly GameMode[] _gameModes =
         {
             GameMode.FiveFretGuitar,
+            GameMode.SixFretGuitar,
             GameMode.EliteDrums,
             GameMode.FourLaneDrums,
             GameMode.FiveLaneDrums,
@@ -59,6 +61,8 @@ namespace YARG.Menu.ProfileList
         private TMP_InputField _nameInput;
         [SerializeField]
         private Image _profilePicture;
+        [SerializeField]
+        private RawImage _customProfilePicture;
         [SerializeField]
         private Button[] _profileActionButtons;
 
@@ -111,6 +115,12 @@ namespace YARG.Menu.ProfileList
         private Sprite _profileGenericSprite;
         [SerializeField]
         private Sprite _profileBotSprite;
+
+        [Space]
+        [SerializeField]
+        private GameObject _deleteButton;
+        [SerializeField]
+        private GameObject _editButton;
 
         private ProfileView _profileView;
         private YargProfile _profile;
@@ -196,8 +206,8 @@ namespace YARG.Menu.ProfileList
                 RemoveDropdownOption(_engineDropdown, _enginePresetsByIndex, EnginePreset.SoloTaps.Id);
             }
 
-            // Casual only changes FiveFretGuitar and Vocals
-            if (profile.GameMode is not (GameMode.FiveFretGuitar or GameMode.Vocals))
+            // Casual only changes FiveFretGuitar, SixFretGuitar, and Vocals
+            if (profile.GameMode is not (GameMode.FiveFretGuitar or GameMode.Vocals or GameMode.SixFretGuitar))
             {
                 RemoveDropdownOption(_engineDropdown, _enginePresetsByIndex, EnginePreset.Casual.Id);
             }
@@ -280,8 +290,20 @@ namespace YARG.Menu.ProfileList
             _nameContainer.SetActive(true);
             _editNameContainer.SetActive(false);
 
-            // Display the proper profile picture
+            // Display the proper generic profile picture
             _profilePicture.sprite = profile.IsBot ? _profileBotSprite : _profileGenericSprite;
+
+            // Show/hide the custom picture rawimage depending on bot/custom pic availability
+            if (!profile.IsBot && _profile.Avatar != null && _profile.Avatar.IsValid)
+            {
+                Destroy(_customProfilePicture.texture);
+                _customProfilePicture.texture = _profile.Avatar.LoadTexture(false);
+                _customProfilePicture.gameObject.SetActive(true);
+            }
+            else
+            {
+                _customProfilePicture.gameObject.SetActive(false);
+            }
 
             // Enable/disable the edit profile button
             bool interactable = !_profile.IsBot && PlayerContainer.IsProfileTaken(_profile);
@@ -289,6 +311,10 @@ namespace YARG.Menu.ProfileList
             {
                 button.interactable = interactable;
             }
+
+            // Enable/disable the avatar delete/edit buttons
+            _deleteButton.SetActive(!profile.IsBot && _profile.Avatar != null);
+            _editButton.SetActive(!profile.IsBot);
 
             EnableSettingsForGameMode();
         }
@@ -305,9 +331,9 @@ namespace YARG.Menu.ProfileList
                 // Disable if the child's gameObject.name is not found in possibleSettings
                 var child = _sidebarContent.transform.GetChild(i);
 
-                #nullable enable
+#nullable enable
                 (string setting, string? overrideText)? settingInfo = null;
-                #nullable disable
+#nullable disable
 
                 foreach (var possibleSetting in possibleSettings)
                 {
@@ -321,7 +347,9 @@ namespace YARG.Menu.ProfileList
                 if (settingInfo is null)
                 {
                     child.gameObject.SetActive(false);
-                } else {
+                }
+                else
+                {
                     child.gameObject.SetActive(true);
                     if (settingInfo.Value.overrideText is not null)
                     {
@@ -372,6 +400,23 @@ namespace YARG.Menu.ProfileList
             menu.gameObject.SetActive(true);
         }
 
+        public void EditProfilePicture()
+        {
+            PlayerContainer.SelectAvatar(_profile, () =>
+            {
+                _profileView.UpdateDisplay(_profile);
+                UpdateSidebar(_profile, _profileView);
+            });
+        }
+
+        public void DeleteProfilePicture()
+        {
+            PlayerContainer.RemoveAvatar(_profile);
+
+            _profileView.UpdateDisplay(_profile);
+            UpdateSidebar(_profile, _profileView);
+        }
+
         public void AddDevice()
         {
             _profileView.PromptAddDevice().Forget();
@@ -392,6 +437,7 @@ namespace YARG.Menu.ProfileList
 
             _profileView.UpdateDisplay(_profile);
             FiltersMenu.ResetIntensityFiltersForProfile(_profile);
+            PlayerContainer.NotifyProfileChanged(_profile);
             // Update sidebar when game mode changes so the correct settings are displayed
             UpdateSidebar(_profile, _profileView);
         }

@@ -9,6 +9,7 @@ using YARG.Core;
 using YARG.Core.Audio;
 using YARG.Core.Game;
 using YARG.Core.Input;
+using YARG.Core.Logging;
 using YARG.Core.Song;
 using YARG.Localization;
 using YARG.Menu.Filters;
@@ -20,7 +21,6 @@ using YARG.Playlists;
 using YARG.Scores;
 using YARG.Settings;
 using YARG.Song;
-using static YARG.Menu.Navigation.Navigator;
 using Random = UnityEngine.Random;
 
 namespace YARG.Menu.MusicLibrary
@@ -99,6 +99,7 @@ namespace YARG.Menu.MusicLibrary
         private const int BACK_ID = 2;
         private const int RECOMMENDED_SONGS_ID = 3;
         private const int CREATE_NEW_PLAYLIST_ID = 4;
+        private const int MINIMUM_ALBUM_GROUP_SIZE = 3;
 
         public static MusicLibraryMode LibraryMode;
 
@@ -148,14 +149,33 @@ namespace YARG.Menu.MusicLibrary
 
         public IReadOnlyList<SongCategory> SortedSongs => _sortedSongs;
 
+        public int CurrentShortcutIndex
+        {
+            get
+            {
+                int shortcutIndex = 0;
+                for (int i = 1; i < Shortcuts.Count; i++)
+                {
+                    if (Shortcuts[i].Item2 > SelectedIndex) break;
+
+                    shortcutIndex = i;
+                }
+
+                return shortcutIndex;
+            }
+        }
+
         private CancellationTokenSource _previewCanceller;
         private PreviewContext _previewContext;
+
+        // The in-flight PreviewContext.Create, if any. Until it finishes it holds the song's
+        // audio files open through LoadPreviewAudio without _previewContext being set yet, so a
+        // file operation has to await this as well as the running preview.
+        private Task _previewStartTask;
         private double _previewDelay;
 
         private SongEntry _currentSong;
         public List<(string, int)> Shortcuts { get; private set; } = new();
-
-        private List<HoldContext> _heldInputs = new();
 
         // Doesn't go through PlaylistContainer because it is ephemeral
 
@@ -200,8 +220,6 @@ namespace YARG.Menu.MusicLibrary
                     : previousSort;
             }
             SetSidebarDifficultiesVisible(true);
-
-            _heldInputs.Clear();
 
             // Hack to ensure that crowd samples are stopped no matter what
             GlobalAudioHandler.StopAllSfxChannels();
@@ -376,13 +394,30 @@ namespace YARG.Menu.MusicLibrary
                     );
             }
 
+            NavigationScheme.Entry blueEntry = isSelectingPlaylist
+                ? new NavigationScheme.Entry(MenuAction.Blue, "Menu.MusicLibrary.HoldFilters",
+                    () => { }, holdSeconds: MENU_HOLD_SECONDS,
+                    onHoldHandler: OpenFilters)
+                : new NavigationScheme.Entry(MenuAction.Blue, "Menu.MusicLibrary.SortAndFilter",
+                    OpenSortSelect, holdSeconds: MENU_HOLD_SECONDS,
+                    onHoldHandler: OpenFilters);
+
+            NavigationScheme.Entry orangeEntry = MenuState == MenuState.Library
+                ? new NavigationScheme.Entry(MenuAction.Orange, "Menu.MusicLibrary.MoreOptionsAndGoToSection",
+                    () => _popupMenu.gameObject.SetActive(true), holdSeconds: MENU_HOLD_SECONDS,
+                    onHoldHandler: OpenGoToSection)
+                : new NavigationScheme.Entry(MenuAction.Orange, "Menu.MusicLibrary.MoreOptions",
+                    () => _popupMenu.gameObject.SetActive(true));
+
             var entries = new List<NavigationScheme.Entry>
             {
                 new NavigationScheme.Entry(MenuAction.Up, "Menu.Common.Up",
                     ctx =>
                     {
-                        if (IsButtonHeldByPlayer(ctx.Player, MenuAction.Orange))
+                        if (MenuState == MenuState.Library &&
+                            IsButtonHeldByPlayer(ctx.Player, MenuAction.Orange))
                         {
+                            Navigator.Instance.CancelHold(ctx.Player, MenuAction.Orange);
                             GoToPreviousSection();
                         }
                         else
@@ -394,8 +429,10 @@ namespace YARG.Menu.MusicLibrary
                 new NavigationScheme.Entry(MenuAction.Down, "Menu.Common.Down",
                     ctx =>
                     {
-                        if (IsButtonHeldByPlayer(ctx.Player, MenuAction.Orange))
+                        if (MenuState == MenuState.Library &&
+                            IsButtonHeldByPlayer(ctx.Player, MenuAction.Orange))
                         {
+                            Navigator.Instance.CancelHold(ctx.Player, MenuAction.Orange);
                             GoToNextSection();
                         }
                         else
@@ -425,9 +462,8 @@ namespace YARG.Menu.MusicLibrary
                     ),
                 new NavigationScheme.Entry(MenuAction.Red, "Menu.Common.Back", Back, hide: true),
                 yellowEntry,
-                new NavigationScheme.Entry(MenuAction.Blue, "Menu.MusicLibrary.Filters", OpenFilters),
-                new NavigationScheme.Entry(MenuAction.Orange, "Menu.MusicLibrary.MoreOptions",
-                    OnOrangeHit, OnOrangeRelease),
+                blueEntry,
+                orangeEntry,
                 new NavigationScheme.Entry(MenuAction.Search, "Menu.MusicLibrary.Search",
                     _searchField.Focus, hide: true),
                 new NavigationScheme.Entry(MenuAction.SelectArtist, "Menu.MusicLibrary.SelectArtist",
@@ -494,7 +530,9 @@ namespace YARG.Menu.MusicLibrary
         private List<ViewType> CreateNormalViewList()
         {
             var list = new List<ViewType>();
+            _totalSongCount = 0;
             _totalStarCount = 0;
+            _allVisibleSongsGold = false;
 
             // If `_sortedSongs` is null, then this function is being called during very first initialization,
             // which means the song list hasn't been constructed yet.
@@ -511,6 +549,7 @@ namespace YARG.Menu.MusicLibrary
 
             bool allowdupes = SettingsManager.Settings.AllowDuplicateSongs.Value;
             int songCount = 0;
+            bool hasNonGoldSong = false;
             foreach (var section in _sortedSongs)
             {
                 if (allowdupes)
@@ -641,12 +680,15 @@ namespace YARG.Menu.MusicLibrary
                 }
 
                 int sectionTotalStars = 0;
+                bool sectionHasNonGoldSong = false;
                 bool includeSongs = _sortedSongs.Length <= 1 || !_collapsedHeaders[SettingsManager.Settings.LibrarySort].Contains(section);
 
-                foreach (var song in section.Songs)
-                {
-                    if (!allowdupes && song.IsDuplicate) continue;
+                var displayedSongs = section.Songs
+                    .Where(song => allowdupes || !song.IsDuplicate)
+                    .ToArray();
 
+                void AddSong(SongEntry song)
+                {
                     StarAmount? starAmount;
 
                     if (includeSongs)
@@ -664,16 +706,76 @@ namespace YARG.Menu.MusicLibrary
                     {
                         sectionTotalStars += starAmount.Value.GetStarCount();
                     }
+
+                    bool isNotGold = starAmount != StarAmount.StarGold;
+                    sectionHasNonGoldSong |= isNotGold;
+                    hasNonGoldSong |= isNotGold;
+                }
+
+                var secondaryAlbumSort = SettingsManager.Settings.SecondaryAlbumSort.Value;
+                if (includeSongs && SettingsManager.Settings.LibrarySort == SortAttribute.Artist &&
+                    secondaryAlbumSort != SecondaryAlbumSortMode.Off)
+                {
+                    IEnumerable<IGrouping<SortString, SongEntry>> albumGroups = displayedSongs
+                        .GroupBy(song => song.Album)
+                        .Where(group => group.Key.Length > 0 && group.Count() >= MINIMUM_ALBUM_GROUP_SIZE);
+
+                    albumGroups = secondaryAlbumSort is
+                        SecondaryAlbumSortMode.AlbumsByYearSongsByTitle or
+                        SecondaryAlbumSortMode.AlbumsByYearSongsByTrack
+                        ? albumGroups.OrderBy(group => group.Min(song => song.YearAsNumber))
+                            .ThenBy(group => group.Key)
+                        : albumGroups.OrderBy(group => group.Key);
+
+                    var groupedAlbums = albumGroups.ToArray();
+                    var groupedSongs = new HashSet<SongEntry>(groupedAlbums.SelectMany(group => group));
+
+                    // Songs without enough same-album companions retain their existing title order
+                    // immediately below the artist header.
+                    foreach (var song in displayedSongs.Where(song => !groupedSongs.Contains(song)))
+                    {
+                        AddSong(song);
+                    }
+
+                    foreach (var album in groupedAlbums)
+                    {
+                        var albumSongs = secondaryAlbumSort is
+                            SecondaryAlbumSortMode.AlbumsByTitleSongsByTrack or
+                            SecondaryAlbumSortMode.AlbumsByYearSongsByTrack
+                            ? album.OrderBy(song => song.AlbumTrack).ThenBy(song => song.Name).ToArray()
+                            : album.OrderBy(song => song.Name).ToArray();
+                        var albumHeader = new SecondaryHeaderViewType(album.Key, albumSongs.Length);
+                        list.Add(albumHeader);
+                        int starsBeforeAlbum = sectionTotalStars;
+                        bool albumHasNonGoldSong = false;
+                        foreach (var song in albumSongs)
+                        {
+                            AddSong(song);
+                            albumHasNonGoldSong |=
+                                SongViewType.GetStarAmountForSong(song) != StarAmount.StarGold;
+                        }
+                        albumHeader.TotalStarsCount = sectionTotalStars - starsBeforeAlbum;
+                        albumHeader.HasGoldStars = !albumHasNonGoldSong;
+                    }
+                }
+                else
+                {
+                    foreach (var song in displayedSongs)
+                    {
+                        AddSong(song);
+                    }
                 }
                 _totalStarCount += sectionTotalStars;
 
                 if (sortHeader != null)
                 {
                     sortHeader.TotalStarsCount = sectionTotalStars;
+                    sortHeader.HasGoldStars = !sectionHasNonGoldSong;
                 }
             }
 
             _totalSongCount = songCount;
+            _allVisibleSongsGold = songCount > 0 && !hasNonGoldSong;
             CalculateCategoryHeaderIndices(list);
             return list;
         }
@@ -700,11 +802,13 @@ namespace YARG.Menu.MusicLibrary
             return selected;
         }
 
-        public void Refresh()
+        public void Refresh(bool refreshNavigationScheme = true)
         {
             SetRecommendedSongs();
             _searchField.Reset();
             UpdateSearch(true);
+            if (!refreshNavigationScheme) return;
+
             if (IsNavigationSchemeBlocked())
             {
                 _needsNavigationSchemeRefresh = true;
@@ -743,6 +847,44 @@ namespace YARG.Menu.MusicLibrary
             _ = StopPreviewAsync(clearCurrentSong);
         }
 
+        /// <summary>
+        /// Stops the library preview and waits for its audio to be released.
+        /// </summary>
+        /// <remarks>
+        /// Must be awaited before touching a song's files on disk — the preview holds them
+        /// open, and a delete would fail with a sharing violation on Windows.
+        /// <para>
+        /// Stopping the running preview is not enough on its own: a <c>PreviewContext.Create</c>
+        /// started moments ago may still be inside <c>LoadPreviewAudio</c>, holding the same
+        /// files with nothing yet assigned to <c>_previewContext</c>. Cancelling only asks it to
+        /// stop, so the create task has to be awaited too.
+        /// </para>
+        /// </remarks>
+        public async Task StopPreviewForFileOperationAsync()
+        {
+            var startTask = _previewStartTask;
+
+            // Cancels the token the in-flight create is watching, then waits out the preview.
+            await StopPreviewAsync(true);
+
+            if (startTask != null)
+            {
+                try
+                {
+                    await startTask;
+                }
+                catch (Exception ex)
+                {
+                    YargLogger.LogException(ex, "Error while waiting for the song preview to load.");
+                }
+            }
+
+            // If the create landed after the cancel, it installed a fresh context. Clear that too.
+            await StopPreviewAsync(true);
+
+            _previewStartTask = null;
+        }
+
         private async Task StopPreviewAsync(bool clearCurrentSong = false)
         {
             if (clearCurrentSong)
@@ -762,6 +904,11 @@ namespace YARG.Menu.MusicLibrary
             if (previewContext != null)
             {
                 await previewContext.WaitForCompletionAsync();
+
+                // The loop task returns without disposing if it threw, which leaves the mixer
+                // holding the song's audio files open and blocks moving or deleting them.
+                // PreviewContext.Dispose is idempotent, so this is a no-op on the normal path.
+                previewContext.Dispose();
             }
 
             previewCanceller?.Dispose();
@@ -800,9 +947,6 @@ namespace YARG.Menu.MusicLibrary
 
         protected void Update()
         {
-            foreach (var heldInput in _heldInputs)
-                heldInput.Timer -= Time.unscaledDeltaTime;
-
             if (_needsNavigationSchemeRefresh && !IsNavigationSchemeBlocked())
             {
                 _needsNavigationSchemeRefresh = false;
@@ -810,7 +954,13 @@ namespace YARG.Menu.MusicLibrary
             }
         }
 
-        private async void StartPreview(double delay, CancellationTokenSource canceller)
+        private void StartPreview(double delay, CancellationTokenSource canceller)
+        {
+            // Kept so a file operation can wait for a create that has not landed yet.
+            _previewStartTask = StartPreviewAsync(delay, canceller);
+        }
+
+        private async Task StartPreviewAsync(double delay, CancellationTokenSource canceller)
         {
             if (_currentSong == null)
             {
@@ -854,7 +1004,6 @@ namespace YARG.Menu.MusicLibrary
         {
             base.OnDisable();
             SetSidebarDifficultiesVisible(false);
-            _heldInputs.Clear();
 
             if (Navigator.Instance == null) return;
 
@@ -926,10 +1075,11 @@ namespace YARG.Menu.MusicLibrary
 
         private bool IsButtonHeldByPlayer(YargPlayer player, MenuAction button)
         {
-            return _heldInputs.Any(i => i.Context.Player == player && i.Context.Action == button);
+            return Navigator.Instance.IsActionHeld(player, button);
         }
 
         private const float GREEN_HOLD_SECONDS = 1f;
+        private const float MENU_HOLD_SECONDS = 1f;
 
         private void OnGreenTap(NavigationContext _)
         {
@@ -980,25 +1130,16 @@ namespace YARG.Menu.MusicLibrary
             }
         }
 
-        public string GetGreenHoldActionLabel()
+        private void OpenSortSelect()
         {
-            bool setListNotEmpty = ShowPlaylist.Count > 0;
-            return Localize.Key(setListNotEmpty ? "Menu.MusicLibrary.StartSet" : "Menu.MusicLibrary.AddToSet");
+            if (MenuState != MenuState.PlaylistSelect)
+                _popupMenu.OpenSortSelect();
         }
 
-        private void OnOrangeHit(NavigationContext ctx)
+        private void OpenGoToSection()
         {
-            _heldInputs.Add(new HoldContext(ctx));
-        }
-
-        private void OnOrangeRelease(NavigationContext ctx)
-        {
-            var holdContext = _heldInputs.FirstOrDefault(i => i.Context.IsSameAs(ctx));
-
-            if (ctx.Action == MenuAction.Orange && (holdContext?.Timer > 0 || ctx.Player is null))
-                _popupMenu.gameObject.SetActive(true);
-
-            _heldInputs.RemoveAll(i => i.Context.IsSameAs(ctx));
+            if (MenuState == MenuState.Library && HasSortHeaders)
+                _popupMenu.OpenGoToSection();
         }
 
         private void GoToNextSection()
@@ -1023,12 +1164,19 @@ namespace YARG.Menu.MusicLibrary
 
         public void SelectRandomSong()
         {
-            if (!ViewList.Any(i => i is SongViewType)) return;
-
-            do
+            var songIndices = new List<int>();
+            for (int i = 0; i < ViewList.Count; i++)
             {
-                SelectedIndex = Random.Range(0, ViewList.Count);
-            } while (CurrentSelection is not SongViewType);
+                if (ViewList[i] is SongViewType)
+                {
+                    songIndices.Add(i);
+                }
+            }
+
+            if (songIndices.Count == 0)
+                return;
+
+            SelectedIndex = songIndices[Random.Range(0, songIndices.Count)];
         }
 
         public void ExpandAll()
@@ -1068,11 +1216,12 @@ namespace YARG.Menu.MusicLibrary
             return (headerIndex, offset);
         }
 
-        public void RefreshAndReselect(bool selectTopOfList = false, bool preserveSelectedIndex = false)
+        public void RefreshAndReselect(bool selectTopOfList = false, bool preserveSelectedIndex = false,
+            bool refreshNavigationScheme = true)
         {
             int preservedIndex = SelectedIndex;
             var snapshot = CaptureSelectionSnapshot();
-            Refresh();
+            Refresh(refreshNavigationScheme);
 
             if (preserveSelectedIndex)
             {
@@ -1093,6 +1242,21 @@ namespace YARG.Menu.MusicLibrary
             RestoreSelectionSnapshot(snapshot);
         }
 
+        public void RestoreAfterFilters(bool refresh)
+        {
+            SetSidebarDifficultiesVisible(true);
+            if (refresh)
+            {
+                // The existing library scheme is exposed again when Filters pops its scheme.
+                // Refresh the list without pushing a duplicate scheme above it.
+                RefreshAndReselect(refreshNavigationScheme: false);
+            }
+
+            // Opening Filters stops the preview, but the library itself remains active, so
+            // OnEnable will not run to restart it when the overlay closes.
+            OnSelectedIndexChanged();
+        }
+
         public void RefreshAndSelectPlaylist(Playlist playlist)
         {
             Refresh();
@@ -1109,6 +1273,7 @@ namespace YARG.Menu.MusicLibrary
             public readonly string HeaderStableId;
             public readonly string HeaderFirstSongContentStableId;
             public readonly string HeaderPreviousSongContentStableId;
+            public readonly bool SelectionWasRecommended;
             public readonly bool PreserveIndexOnDynamicSort; // Sorted by Playcount or Stars
             public readonly ScoreContext ScoreContext;
 
@@ -1119,6 +1284,7 @@ namespace YARG.Menu.MusicLibrary
                 string headerStableId,
                 string headerFirstSongContentStableId,
                 string headerPreviousSongContentStableId,
+                bool selectionWasRecommended,
                 bool preserveIndexOnDynamicSort,
                 ScoreContext scoreContext)
             {
@@ -1128,6 +1294,7 @@ namespace YARG.Menu.MusicLibrary
                 HeaderStableId = headerStableId;
                 HeaderFirstSongContentStableId = headerFirstSongContentStableId;
                 HeaderPreviousSongContentStableId = headerPreviousSongContentStableId;
+                SelectionWasRecommended = selectionWasRecommended;
                 PreserveIndexOnDynamicSort = preserveIndexOnDynamicSort;
                 ScoreContext = scoreContext;
             }
@@ -1140,6 +1307,9 @@ namespace YARG.Menu.MusicLibrary
             string selectedSongContentStableId = (CurrentSelection as SongViewType)?.ContentStableId;
             bool selectedIsHeader = CurrentSelection is SortHeaderViewType or CategoryViewType;
             string selectedStableId = selectedIsHeader ? null : CurrentSelection?.StableId;
+            bool selectionWasRecommended = _recommendedHeaderIndex >= 0 &&
+                selectedIndex >= _recommendedHeaderIndex &&
+                selectedIndex <= _recommendedHeaderIndex + (_recommendedSongs?.Length ?? 0);
 
             // Header context
             string headerStableId = null;
@@ -1195,12 +1365,20 @@ namespace YARG.Menu.MusicLibrary
                 headerStableId,
                 headerFirstSongContentStableId,
                 headerPreviousSongContentStableId,
+                selectionWasRecommended,
                 preserveIndexOnDynamicSort,
                 ScoreContext.Capture());
         }
 
         private void RestoreSelectionSnapshot(SelectionSnapshot snapshot)
         {
+            if (snapshot.SelectionWasRecommended && _recommendedHeaderIndex >= 0)
+            {
+                int lastRecommendedIndex = _recommendedHeaderIndex + (_recommendedSongs?.Length ?? 0);
+                SelectedIndex = Mathf.Clamp(snapshot.SelectedIndex, _recommendedHeaderIndex, lastRecommendedIndex);
+                return;
+            }
+
             bool dynamicSortContextChanged =
                 IsDynamicScoreSort(SettingsManager.Settings.LibrarySort) &&
                 !snapshot.ScoreContext.Equals(ScoreContext.Capture());
@@ -1321,15 +1499,23 @@ namespace YARG.Menu.MusicLibrary
 
         public async void RefreshSongs()
         {
+            // Block all menu and pointer input before awaiting preview shutdown. Otherwise,
+            // repeated input can start another scan before the loading screen is active.
+            using var context = new LoadingContext();
+
             // Stop any library preview audio so the loading screen doesn't inherit it
             await StopPreviewAsync();
 
             SetSidebarDifficultiesVisible(false);
             _sidebar.gameObject.SetActive(false);
-            using var context = new LoadingContext();
             try
             {
                 await SongContainer.RunRefresh(false, context);
+                // A full scan has just reconciled songcache.bin with the disk.
+                SongContainer.ClearSongCacheDirty();
+                // Some filters cache SongEntry instances. A scan rebuilds those instances, so
+                // recreate the predicate before applying it to the refreshed song container.
+                FiltersMenu.RefreshActiveFilterPredicate();
                 RefreshAndReselect();
             }
             finally

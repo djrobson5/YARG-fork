@@ -22,6 +22,7 @@ namespace YARG.Menu.Settings
         private Transform _container;
 
         private bool _focused;
+        private bool _editable = true;
 
         public readonly struct CustomButton
         {
@@ -88,8 +89,33 @@ namespace YARG.Menu.Settings
             _buttonTemplate.GetComponentInChildren<Button>().onClick.AddListener(() => InvokeFocusedAction(action));
         }
 
+        /// <summary>
+        /// Greys the row out and stops its buttons, like <c>BaseSettingVisual.SetEditable</c>.
+        /// </summary>
+        public void SetEditable(bool editable)
+        {
+            _editable = editable;
+            var canvasGroup = gameObject.GetComponent<CanvasGroup>();
+            if (canvasGroup == null)
+            {
+                canvasGroup = gameObject.AddComponent<CanvasGroup>();
+            }
+            canvasGroup.alpha = editable ? 1f : 0.5f;
+            canvasGroup.interactable = editable;
+
+            foreach (var selectable in GetComponentsInChildren<Selectable>(true))
+            {
+                selectable.interactable = editable;
+            }
+        }
+
         public override void Confirm()
         {
+            if (!_editable)
+            {
+                return;
+            }
+
             var scheme = new NavigationScheme(new()
             {
                 NavigationScheme.Entry.NavigateSelect,

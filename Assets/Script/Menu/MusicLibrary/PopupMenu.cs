@@ -1,4 +1,7 @@
 ﻿using System.Linq;
+using System;
+using System.Collections.Generic;
+using Cysharp.Text;
 using Cysharp.Threading.Tasks;
 using TMPro;
 using UnityEngine;
@@ -7,10 +10,12 @@ using UnityEngine.UI;
 using YARG.Core;
 using YARG.Core.Extensions;
 using YARG.Core.Input;
+using YARG.Core.Logging;
 using YARG.Core.Song;
 using YARG.Helpers;
 using YARG.Helpers.Extensions;
 using YARG.Localization;
+using YARG.Menu.Data;
 using YARG.Menu.Navigation;
 using YARG.Menu.Persistent;
 using YARG.Player;
@@ -22,6 +27,16 @@ namespace YARG.Menu.MusicLibrary
 {
     public class PopupMenu : MonoBehaviour
     {
+        // Keep this synchronized with Menu.MusicLibrary.Popup.Item in en-US.json.
+        private static readonly string[] POPUP_ITEM_ORDER =
+        {
+            "RandomSong", "BackToTop", "ScanSongs", "SortBy", "GoToSection", "StartTheSet", "Filters", "PlayShow",
+            "AddToFavorites", "AddToSetlist", "AddToPlaylist", "AddPlaylistToSetlist",
+            "SaveSetlistToPlaylist", "RemoveFromFavorites", "RemoveFromSetlist", "RemoveFromPlaylist",
+            "CreateNewPlaylist", "RenamePlaylist", "DeleteSetlist", "DeletePlaylist", "CollapseAll", "ExpandAll",
+            "ViewSongFolder", "CopySongChecksum", "DeleteSong"
+        };
+
         private enum State
         {
             Main,
@@ -49,14 +64,34 @@ namespace YARG.Menu.MusicLibrary
 
         private State _menuState;
         private Playlist _playlistToAdd;
-        private bool _openedAddToPlaylistDirectly;
+        private bool _openedDirectly;
+        private int _preferredSelectionIndex;
+        private List<(string Key, string Body, UnityAction Action, Color? TextColor)> _pendingMainMenuItems;
 
         public void OpenAddToPlaylist(Playlist playlist)
         {
             _playlistToAdd = playlist;
             gameObject.SetActive(true);
-            _openedAddToPlaylistDirectly = true;
+            _openedDirectly = true;
             _menuState = State.AddToPlaylist;
+            UpdateForState();
+        }
+
+        public void OpenSortSelect()
+        {
+            OpenDirectly(State.SortSelect);
+        }
+
+        public void OpenGoToSection()
+        {
+            OpenDirectly(State.GoToSection);
+        }
+
+        private void OpenDirectly(State state)
+        {
+            gameObject.SetActive(true);
+            _openedDirectly = true;
+            _menuState = state;
             UpdateForState();
         }
 
@@ -74,7 +109,7 @@ namespace YARG.Menu.MusicLibrary
                 NavigationScheme.Entry.NavigateSelect,
                 new NavigationScheme.Entry(MenuAction.Red, "Menu.Common.Back", () =>
                 {
-                    if (_menuState == State.Main || _openedAddToPlaylistDirectly)
+                    if (_menuState == State.Main || _openedDirectly)
                     {
                         gameObject.SetActive(false);
                     }
@@ -95,7 +130,7 @@ namespace YARG.Menu.MusicLibrary
             Navigator.Instance.PopScheme();
             _musicLibrary.RefreshNavigationSchemeAfterPopup();
             _playlistToAdd = null;
-            _openedAddToPlaylistDirectly = false;
+            _openedDirectly = false;
         }
 
         private void UpdateForState()
@@ -103,6 +138,7 @@ namespace YARG.Menu.MusicLibrary
             // Reset content
             _navGroup.ClearNavigatables();
             ClearItems();
+            _preferredSelectionIndex = -1;
 
             // Create the menu
             switch (_menuState)
@@ -122,7 +158,47 @@ namespace YARG.Menu.MusicLibrary
             }
 
             ResetScroll();
-            _navGroup.SelectFirst();
+            if (_menuState == State.GoToSection)
+            {
+                _navGroup.SelectAt(_musicLibrary.CurrentShortcutIndex, SelectionOrigin.Navigation);
+                CenterSelectedItem();
+            }
+            else if (_menuState == State.SortSelect && _preferredSelectionIndex >= 0)
+            {
+                _navGroup.SelectAt(_preferredSelectionIndex, SelectionOrigin.Navigation);
+                CenterSelectedItem();
+            }
+            else
+            {
+                _navGroup.SelectFirst();
+            }
+        }
+
+        private void CenterSelectedItem()
+        {
+            if (_scrollRect == null ||
+                _navGroup.SelectedBehaviour?.transform is not RectTransform selectedTransform ||
+                _container is not RectTransform containerTransform)
+            {
+                return;
+            }
+
+            Canvas.ForceUpdateCanvases();
+
+            var viewportTransform = _scrollRect.viewport != null
+                ? _scrollRect.viewport
+                : _scrollRect.transform as RectTransform;
+            if (viewportTransform == null) return;
+
+            var viewportBounds = new Bounds(viewportTransform.rect.center, viewportTransform.rect.size);
+            var selectedBounds = RectTransformUtility.CalculateRelativeRectTransformBounds(
+                viewportTransform, selectedTransform);
+
+            float centeredPosition = containerTransform.anchoredPosition.y +
+                viewportBounds.center.y - selectedBounds.center.y;
+            float scrollableHeight = _scrollRect.ScrollableHeight();
+            containerTransform.anchoredPosition = containerTransform.anchoredPosition.WithY(
+                Mathf.Clamp(centeredPosition, 0f, scrollableHeight));
         }
 
         private void ResetScroll()
@@ -153,6 +229,7 @@ namespace YARG.Menu.MusicLibrary
         private void CreateMainMenu()
         {
             SetHeader(null);
+            _pendingMainMenuItems = new();
 
             if (_musicLibrary.MenuState != MenuState.PlaylistSelect)
             {
@@ -196,6 +273,12 @@ namespace YARG.Menu.MusicLibrary
                 });
             }
 
+            if ((_musicLibrary.MenuState == MenuState.Library && !_musicLibrary.PlaylistMode) ||
+                _musicLibrary.MenuState is MenuState.Playlist or MenuState.Show)
+            {
+                CreateHoldActionItems();
+            }
+
             if (_musicLibrary.MenuState == MenuState.Library && !_musicLibrary.PlaylistMode)
             {
                 _musicLibrary.GetSortHeaderCollapseState(out bool hasCollapsed, out bool hasExpanded);
@@ -220,6 +303,7 @@ namespace YARG.Menu.MusicLibrary
             }
 
             var viewType = _musicLibrary.CurrentSelection;
+            bool createdPlaylistSelectHoldActions = false;
 
             // Add/remove to favorites
             var favoriteInfo = viewType.GetFavoriteInfo();
@@ -248,11 +332,16 @@ namespace YARG.Menu.MusicLibrary
 
                 if (viewType is SongViewType)
                 {
-                    CreateItemUnlocalized(_musicLibrary.GetGreenHoldActionLabel(), () =>
+                    void ExecuteGreenHoldAction()
                     {
                         _musicLibrary.ExecuteGreenHoldAction();
                         gameObject.SetActive(false);
-                    });
+                    }
+
+                    if (_musicLibrary.ShowPlaylist.Count == 0)
+                        CreateItem("AddToSetlist", ExecuteGreenHoldAction);
+                    else
+                        CreateItem("StartTheSet", ExecuteGreenHoldAction);
 
                     bool isInPlaylist = _musicLibrary.MenuState == MenuState.Playlist &&
                         _musicLibrary.SelectedPlaylist != null &&
@@ -302,6 +391,12 @@ namespace YARG.Menu.MusicLibrary
                     _musicLibrary.AddPlaylistToSetlist(addablePlaylistView.Playlist);
                     gameObject.SetActive(false);
                 });
+
+                if (_musicLibrary.MenuState == MenuState.PlaylistSelect)
+                {
+                    CreateHoldActionItems();
+                    createdPlaylistSelectHoldActions = true;
+                }
             }
 
             if (viewType is PlaylistViewType playlistView &&
@@ -322,10 +417,10 @@ namespace YARG.Menu.MusicLibrary
                     });
                 }
 
-                var deleteLabel = playlistView.Playlist.Ephemeral
-                    ? Localize.Key("Menu.MusicLibrary.Popup.Item.DeleteSetlist")
-                    : Localize.Key("Menu.MusicLibrary.Popup.Item.DeletePlaylist");
-                CreateItemUnlocalized(deleteLabel, () =>
+                var deleteKey = playlistView.Playlist.Ephemeral
+                    ? "DeleteSetlist"
+                    : "DeletePlaylist";
+                CreateItem(deleteKey, () =>
                 {
                     // Special handling for the ad hoc setlist
                     if (playlistView.Playlist.Ephemeral)
@@ -347,6 +442,12 @@ namespace YARG.Menu.MusicLibrary
                         _musicLibrary.SetNavigationScheme(true);
                     }
                 });
+            }
+
+            if (_musicLibrary.MenuState == MenuState.PlaylistSelect &&
+                !createdPlaylistSelectHoldActions)
+            {
+                CreateHoldActionItems();
             }
 
             // Only show these options if we are selecting a song
@@ -377,7 +478,202 @@ namespace YARG.Menu.MusicLibrary
 
                     gameObject.SetActive(false);
                 });
+
+                // Last in the menu on purpose (see POPUP_ITEM_ORDER): it is the only destructive
+                // entry here, so it should not sit where the cursor comes to rest.
+                if (song.SubType == EntryType.CON)
+                {
+                    // A packed CON's "location" is the whole pack file, often dozens of songs.
+                    // The item stays visible so its absence isn't a mystery, but it can only explain itself.
+                    CreateItem("DeleteSong", () =>
+                    {
+                        DialogManager.Instance.ShowMessage(
+                            Localize.Key("Menu.Dialog.DeleteSong.PackedCon.Title"),
+                            Localize.Key("Menu.Dialog.DeleteSong.PackedCon.Description"));
+
+                        CloseAfterDialog().Forget();
+                    }, MenuData.Colors.DeactivatedText);
+                }
+                else
+                {
+                    CreateItem("DeleteSong", () => DeleteSong(song).Forget());
+                }
             }
+
+            FlushMainMenuItems();
+        }
+
+        private void CreateHoldActionItems()
+        {
+            CreateItem("Filters", () =>
+            {
+                gameObject.SetActive(false);
+                _musicLibrary.OpenFilters();
+            });
+
+            if (SettingsManager.Settings.EnablePlayAShow.Value)
+            {
+                CreateItem("PlayShow", () =>
+                {
+                    gameObject.SetActive(false);
+                    if (_musicLibrary.MenuState == MenuState.Show)
+                        _musicLibrary.OpenShowPicker();
+                    else
+                        _musicLibrary.EnterShowMode();
+                });
+            }
+        }
+
+        /// <summary>
+        /// Neutralizes TMP rich text in a value that came from song metadata or the file system,
+        /// so a song called <c>&lt;b&gt;</c> shows up as its own name instead of turning the rest
+        /// of the dialog bold.
+        /// </summary>
+        private static string EscapeRichText(string value)
+        {
+            return value?.Replace("<", "<noparse><</noparse>");
+        }
+
+        private async UniTaskVoid DeleteSong(SongEntry song)
+        {
+            string path = song.ActualLocation;
+            string name = song.Name;
+
+            // Refuse anything outside the library before asking the user to confirm anything.
+            // A song's location comes from scan data, which a hand-edited songs.dta can point
+            // anywhere, and one of them is "the song folder itself".
+            switch (FileDeleteHelper.CheckSongPath(path))
+            {
+                case SongPathSafety.IsLibraryRoot:
+                    DialogManager.Instance.ShowMessage(
+                        Localize.Key("Menu.Dialog.DeleteSong.LibraryRoot.Title"),
+                        Localize.KeyFormat("Menu.Dialog.DeleteSong.LibraryRoot.Description",
+                            EscapeRichText(path)));
+
+                    CloseAfterDialog().Forget();
+                    return;
+
+                case SongPathSafety.OutsideLibrary:
+                    YargLogger.LogFormatWarning<string>(
+                        "Refusing to delete `{0}`: it is not inside any configured song folder.",
+                        path);
+
+                    gameObject.SetActive(false);
+                    _musicLibrary.SetNavigationScheme(true);
+                    ToastManager.ToastError(Localize.KeyFormat(
+                        "Menu.Dialog.DeleteSong.Failed", EscapeRichText(name)));
+                    return;
+            }
+
+            using var messageBuilder = ZString.CreateStringBuilder();
+            messageBuilder.Append(Localize.Key("Menu.Dialog.DeleteSong",
+                FileDeleteHelper.SupportsTrash ? "Trash" : "Permanent"));
+
+            if (song.SubType == EntryType.ExCON)
+            {
+                messageBuilder.Append(Localize.Key("Menu.Dialog.DeleteSong.ExConWarning"));
+            }
+
+            messageBuilder.Append(Localize.KeyFormat("Menu.Dialog.DeleteSong.Path", EscapeRichText(path)));
+
+            bool delete = false;
+            // The confirm text is compared against what the user types, so it has to stay raw.
+            var dialog = DialogManager.Instance.ShowConfirmDeleteDialog(
+                messageBuilder.ToString(), () => delete = true, name);
+
+            await dialog.WaitUntilClosed();
+
+            if (this == null) return;
+
+            // Close the popup the same way CloseAfterDialog does
+            gameObject.SetActive(false);
+            _musicLibrary.SetNavigationScheme(true);
+
+            if (!delete) return;
+
+            // The preview holds the song's audio files open; deleting under it fails on Windows
+            await _musicLibrary.StopPreviewForFileOperationAsync();
+
+            if (this == null) return;
+
+            // Set the dirty flag *before* the delete, not after. songcache.bin still lists the
+            // song and cannot be rewritten incrementally, so the flag is what forces the full
+            // scan that drops it; if the game dies between the delete and the flag, the quick
+            // scan brings the song back as a ghost. Setting it first can only cost a spurious
+            // full scan when the delete then fails, which is much cheaper than a ghost entry.
+            SongContainer.MarkSongCacheDirty();
+
+            if (!FileDeleteHelper.SendToTrashOrDelete(path, out bool trashed))
+            {
+                ToastManager.ToastError(Localize.KeyFormat(
+                    "Menu.Dialog.DeleteSong.Failed", EscapeRichText(name)));
+                return;
+            }
+
+            if (ReferenceEquals(GlobalVariables.State.CurrentSong, song))
+            {
+                GlobalVariables.State.CurrentSong = null;
+            }
+
+            // Take the song out of the in-memory library.
+            if (!SongContainer.RemoveSong(song))
+            {
+                YargLogger.LogFormatWarning(
+                    "Deleted \"{0}\" from disk but found no matching library entry to remove; " +
+                    "the list may show it until the next scan.", name);
+            }
+
+            PruneFromPlaylists(song);
+
+            ToastManager.ToastSuccess(Localize.KeyFormat(
+                ("Menu.Dialog.DeleteSong", trashed ? "Trashed" : "Deleted"), EscapeRichText(name)));
+
+            // Update the visible list now. The library menu is already enabled, so the
+            // SetReload(Partial) that RemoveSong queued would not be acted on until it is
+            // re-entered.
+            _musicLibrary.RefreshAndReselect(preserveSelectedIndex: true);
+        }
+
+        /// <summary>
+        /// Removes a deleted song's hash from every playlist, from the favourites list and from the
+        /// current setlist, so the delete does not leave dead hashes behind.
+        /// </summary>
+        /// <remarks>
+        /// Must run <i>after</i> <see cref="SongContainer.RemoveSong"/>: a playlist stores hashes,
+        /// not entries, so the hash may only be pruned once no other copy of the same chart is
+        /// still in the library. Duplicate copies in different folders share a checksum.
+        /// </remarks>
+        private void PruneFromPlaylists(SongEntry song)
+        {
+            if (SongContainer.HasAnyEntryForHash(song.Hash))
+            {
+                // Another copy of this chart is still installed; the hash is still live. This asks
+                // the raw cache rather than SongsByHash, which is rating-filtered: a copy the user
+                // has filtered out of the library is still installed and still owns the hash.
+                return;
+            }
+
+            // The setlist is ephemeral and lives only on the library menu, but a dead hash in it
+            // would make StartSetlist build an empty song list and then index into it.
+            _musicLibrary.ShowPlaylist?.RemoveSong(song);
+
+            foreach (var playlist in PlaylistContainer.Playlists)
+            {
+                if (playlist.ContainsSong(song))
+                {
+                    playlist.RemoveSong(song);
+                }
+            }
+
+            var favorites = PlaylistContainer.FavoritesPlaylist;
+            if (favorites != null && favorites.ContainsSong(song))
+            {
+                favorites.RemoveSong(song);
+            }
+
+            // Playlist.RemoveSong saves the playlist it edited; this covers the favourites
+            // list, which PlaylistContainer persists under its own fixed path.
+            PlaylistContainer.SaveAll();
         }
 
         private void CreateSortSelect()
@@ -430,6 +726,7 @@ namespace YARG.Menu.MusicLibrary
                 if (sort >= SortAttribute.Instrument)
                     break;
 
+                RecordCurrentSortIndex(sort);
                 CreateItemUnlocalized(sort.ToLocalizedName(), () =>
                 {
                     _musicLibrary.ApplySortFromPopup(sort);
@@ -442,6 +739,7 @@ namespace YARG.Menu.MusicLibrary
                 if (SongContainer.HasInstrument(instrument))
                 {
                     var attribute = instrument.ToSortAttribute();
+                    RecordCurrentSortIndex(attribute);
                     CreateItemUnlocalized(attribute.ToLocalizedName(), () =>
                     {
                         _musicLibrary.ChangeSort(attribute);
@@ -451,6 +749,7 @@ namespace YARG.Menu.MusicLibrary
 
                 if (instrument == Instrument.EliteDrums && MidiDrumkitHelper.Instruments.Any(SongContainer.HasInstrument))
                 {
+                    RecordCurrentSortIndex(SortAttribute.AggregateDrums);
                     CreateItemUnlocalized(SortAttribute.AggregateDrums.ToLocalizedName(), () =>
                     {
                         _musicLibrary.ChangeSort(SortAttribute.AggregateDrums);
@@ -458,6 +757,12 @@ namespace YARG.Menu.MusicLibrary
                     });
                 }
             }
+        }
+
+        private void RecordCurrentSortIndex(SortAttribute sort)
+        {
+            if (sort == SettingsManager.Settings.LibrarySort)
+                _preferredSelectionIndex = _navGroup.Count;
         }
 
         private void CreateGoToSection()
@@ -600,13 +905,19 @@ namespace YARG.Menu.MusicLibrary
         private void CreateItem(string localizeKey, UnityAction a)
         {
             var localized = Localize.Key("Menu.MusicLibrary.Popup.Item", localizeKey);
-            CreateItemUnlocalized(localized, a);
+            QueueOrCreateItem(localizeKey, localized, a);
+        }
+
+        private void CreateItem(string localizeKey, UnityAction a, Color textColor)
+        {
+            var localized = Localize.Key("Menu.MusicLibrary.Popup.Item", localizeKey);
+            QueueOrCreateItem(localizeKey, localized, a, textColor);
         }
 
         private void CreateItem(string localizeKey, string formatArg, UnityAction a)
         {
             var localized = Localize.KeyFormat(("Menu.MusicLibrary.Popup.Item", localizeKey), formatArg);
-            CreateItemUnlocalized(localized, a);
+            QueueOrCreateItem(localizeKey, localized, a);
         }
 
         private async UniTaskVoid CloseAfterDialog()
@@ -619,8 +930,47 @@ namespace YARG.Menu.MusicLibrary
 
         private void CreateItemUnlocalized(string body, UnityAction a)
         {
+            QueueOrCreateItem(null, body, a);
+        }
+
+        private void QueueOrCreateItem(string key, string body, UnityAction action, Color? textColor = null)
+        {
+            if (_pendingMainMenuItems != null)
+            {
+                _pendingMainMenuItems.Add((key, body, action, textColor));
+                return;
+            }
+
+            InstantiateItem(body, action, textColor);
+        }
+
+        private void FlushMainMenuItems()
+        {
+            var items = _pendingMainMenuItems;
+            _pendingMainMenuItems = null;
+
+            foreach (var item in items.OrderBy(item => GetPopupItemOrder(item.Key)))
+                InstantiateItem(item.Body, item.Action, item.TextColor);
+        }
+
+        private static int GetPopupItemOrder(string key)
+        {
+            int index = Array.IndexOf(POPUP_ITEM_ORDER, key);
+            return index >= 0 ? index : int.MaxValue;
+        }
+
+        private void InstantiateItem(string body, UnityAction a, Color? textColor = null)
+        {
             var btn = Instantiate(_menuItemPrefab, _container);
-            btn.Initialize(body, a);
+            if (textColor is { } color)
+            {
+                btn.Initialize(body, a, color);
+            }
+            else
+            {
+                btn.Initialize(body, a);
+            }
+
             _navGroup.AddNavigatable(btn.Button);
         }
     }

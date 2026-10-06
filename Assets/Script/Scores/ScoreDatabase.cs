@@ -77,6 +77,8 @@ namespace YARG.Scores
             _db.CreateTable<GameRecord>();
             _db.CreateTable<PlayerScoreRecord>();
             _db.CreateTable<PlayerInfoRecord>();
+            _db.CreateTable<SectionCompletionRecord>();
+            _db.CreateTable<SectionProgressRecord>();
 
             // These queries filter player scores by player/instrument/replay status and then join through
             // GameRecordId. The individual column indexes created by sqlite-net cannot cover that access pattern.
@@ -165,6 +167,16 @@ namespace YARG.Scores
             YargLogger.LogFormatTrace("Updated {0} rows in score database.", rows);
         }
 
+        /// <summary>
+        /// Runs <paramref name="action"/> as a single transaction, rolling back everything it
+        /// wrote if it throws.
+        /// </summary>
+        public void RunInTransaction(Action action)
+        {
+            YargLogger.LogTrace("Beginning score database transaction.");
+            _db.RunInTransaction(action);
+        }
+
         private List<T> Query<T>(string query, params object[] args)
             where T : new()
         {
@@ -221,6 +233,93 @@ namespace YARG.Scores
         public void InsertSoloRecords(IEnumerable<PlayerScoreRecord> records)
         {
             InsertAll(records);
+        }
+
+        public void InsertSectionCompletions(IEnumerable<SectionCompletionRecord> records)
+        {
+            InsertAll(records);
+        }
+
+        /// <summary>
+        /// Writes the player's cumulative section progress for a song, replacing the existing row
+        /// if there is one.
+        /// </summary>
+        /// <remarks>
+        /// There is at most one row per key, so this always ends up as a single insert or update.
+        /// </remarks>
+        public void UpsertSectionProgress(SectionProgressRecord record)
+        {
+            var current = QuerySectionProgress(
+                record.SongChecksum,
+                record.PlayerId,
+                record.Instrument,
+                record.Difficulty,
+                record.HarmonyIndex
+            );
+
+            if (current is null)
+            {
+                Insert(record);
+            }
+            else
+            {
+                record.Id = current.Id;
+                Update(record);
+            }
+        }
+
+        #endregion
+
+        #region Score sync
+
+        public List<PlayerInfoRecord> QueryAllPlayers()
+        {
+            return Query<PlayerInfoRecord>("SELECT * FROM Players");
+        }
+
+        public List<SectionCompletionRecord> QueryAllSectionCompletions()
+        {
+            return Query<SectionCompletionRecord>("SELECT * FROM SectionCompletions ORDER BY Id");
+        }
+
+        public List<SectionProgressRecord> QueryAllSectionProgress()
+        {
+            return Query<SectionProgressRecord>("SELECT * FROM SectionProgress ORDER BY Id");
+        }
+
+        /// <summary>
+        /// Inserts <c>Players</c> rows as-is. Unlike <see cref="InsertPlayerRecord"/>, this never
+        /// renames an existing row, so the caller must only pass IDs that are not present yet.
+        /// </summary>
+        public void InsertPlayerRecords(IEnumerable<PlayerInfoRecord> records)
+        {
+            InsertAll(records);
+        }
+
+        /// <summary>
+        /// Moves a section completion's first-completed date, identified by its full key.
+        /// </summary>
+        public void UpdateSectionCompletionDate(byte[] songChecksum, Guid playerId, Instrument instrument,
+            Difficulty difficulty, int harmonyIndex, int sectionIndex, DateTime firstCompletedDate)
+        {
+            int rows = _db.Execute(
+                @"UPDATE SectionCompletions
+                SET FirstCompletedDate = ?
+                WHERE SongChecksum = ?
+                    AND PlayerId = ?
+                    AND Instrument = ?
+                    AND Difficulty = ?
+                    AND HarmonyIndex = ?
+                    AND SectionIndex = ?",
+                firstCompletedDate,
+                songChecksum,
+                playerId,
+                (int) instrument,
+                (int) difficulty,
+                harmonyIndex,
+                sectionIndex
+            );
+            YargLogger.LogFormatTrace("Updated {0} rows in score database.", rows);
         }
 
         #endregion
@@ -321,6 +420,81 @@ namespace YARG.Scores
                 ORDER BY BandScore DESC
                 LIMIT 1",
                 songChecksum.HashBytes
+            );
+        }
+
+        public List<SectionCompletionRecord> QuerySectionCompletions(
+            HashWrapper songChecksum,
+            Guid playerId,
+            Instrument instrument,
+            Difficulty difficulty,
+            int harmonyIndex
+        )
+        {
+            return Query<SectionCompletionRecord>(
+                @"SELECT * FROM SectionCompletions
+                WHERE SongChecksum = ?
+                    AND PlayerId = ?
+                    AND Instrument = ?
+                    AND Difficulty = ?
+                    AND HarmonyIndex = ?
+                ORDER BY SectionIndex",
+                songChecksum.HashBytes,
+                playerId,
+                (int) instrument,
+                (int) difficulty,
+                harmonyIndex
+            );
+        }
+
+        public SectionProgressRecord QuerySectionProgress(
+            HashWrapper songChecksum,
+            Guid playerId,
+            Instrument instrument,
+            Difficulty difficulty,
+            int harmonyIndex
+        )
+        {
+            return QuerySectionProgress(songChecksum.HashBytes, playerId, instrument, difficulty,
+                harmonyIndex);
+        }
+
+        public SectionProgressRecord QuerySectionProgress(
+            byte[] songChecksum,
+            Guid playerId,
+            Instrument instrument,
+            Difficulty difficulty,
+            int harmonyIndex
+        )
+        {
+            return FindWithQuery<SectionProgressRecord>(
+                @"SELECT * FROM SectionProgress
+                WHERE SongChecksum = ?
+                    AND PlayerId = ?
+                    AND Instrument = ?
+                    AND Difficulty = ?
+                    AND HarmonyIndex = ?
+                LIMIT 1",
+                songChecksum,
+                playerId,
+                (int) instrument,
+                (int) difficulty,
+                harmonyIndex
+            );
+        }
+
+        /// <summary>
+        /// Gets every stored section progress row for a player and instrument, across all songs,
+        /// difficulties, and harmony parts.
+        /// </summary>
+        public List<SectionProgressRecord> QueryPlayerSectionProgress(Guid playerId, Instrument instrument)
+        {
+            return Query<SectionProgressRecord>(
+                @"SELECT * FROM SectionProgress
+                WHERE PlayerId = ?
+                    AND Instrument = ?",
+                playerId,
+                (int) instrument
             );
         }
 
@@ -545,11 +719,12 @@ namespace YARG.Scores
                     AND PlayerScores.PlayerId = ?
                     AND PlayerScores.IsReplay = 0";
 
-            bool useAggregateDrums = profile.GameMode == GameMode.EliteDrums;
+            var drumInstruments = MidiDrumkitHelper.GetInstruments(profile.GameMode);
+            bool useAggregateDrums = drumInstruments != null;
 
             if (useAggregateDrums)
             {
-                query += $" AND PlayerScores.Instrument {BuildInstrumentInClause(MidiDrumkitHelper.Instruments)} ";
+                query += $" AND PlayerScores.Instrument {BuildInstrumentInClause(drumInstruments)} ";
             }
             // If the profile instrument is bad, we can still return all scores for the profile
             else if (profile.HasValidInstrument)
@@ -564,7 +739,7 @@ namespace YARG.Scores
             if (useAggregateDrums)
             {
                 var parameters = new List<object> { profile.Id };
-                parameters.AddRange(BuildInstrumentParams(MidiDrumkitHelper.Instruments));
+                parameters.AddRange(BuildInstrumentParams(drumInstruments));
                 return _db.Query<PlayCountRecord>(query, parameters.ToArray());
             }
 

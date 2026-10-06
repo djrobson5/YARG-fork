@@ -1,0 +1,51 @@
+name: Score sync tests
+
+# The merge core for score sync between PCs (docs/score-sync-design.md): the export file
+# reader/writer and the merge rules, run headless over in-memory rows.
+#
+# No Unity licence and no Assets/Packages/ bootstrap: just the .NET 8 SDK and the YARG.Core
+# submodule, for its enums.
+
+on:
+  pull_request:
+    paths:
+      - "Assets/Script/Scores/Sync/**"
+      - "tools/ScoreSyncTests/**"
+      - "YARG.Core"
+      - ".github/workflows/score-sync-tests.yml"
+  push:
+    branches: [main, dev, "feature/**"]
+    paths:
+      - "Assets/Script/Scores/Sync/**"
+      - "tools/ScoreSyncTests/**"
+      - "YARG.Core"
+      - ".github/workflows/score-sync-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: dotnet test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.x
+
+      - name: Restore
+        run: dotnet restore tools/ScoreSyncTests/ScoreSyncTests.csproj
+
+      - name: Test
+        run: dotnet test tools/ScoreSyncTests/ScoreSyncTests.csproj --no-restore -nologo

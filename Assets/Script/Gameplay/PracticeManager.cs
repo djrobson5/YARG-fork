@@ -66,8 +66,16 @@ namespace YARG.Gameplay
 
         protected override void GameplayDestroy()
         {
-            Navigator.Instance.NavigationEvent -= OnNavigationEvent;
-            _practiceHud.GuidePitchToggleRequested -= OnGuidePitchToggleRequested;
+            if (Navigator.Instance != null)
+            {
+                Navigator.Instance.NavigationEvent -= OnNavigationEvent;
+            }
+
+            if (_practiceHud != null)
+            {
+                _practiceHud.GuidePitchToggleRequested -= OnGuidePitchToggleRequested;
+            }
+
             _guidePitchManager?.Dispose();
         }
 
@@ -130,7 +138,7 @@ namespace YARG.Gameplay
                     break;
                 // Guide pitch toggle (Vocalist only)
                 case MenuAction.Orange:
-                    if (ctx.Player?.Profile.CurrentInstrument is Instrument.Vocals or Instrument.Harmony)
+                    if (ctx.Player?.Profile.CurrentInstrument is Instrument.Vocals or Instrument.Harmony or Instrument.PartyVocals)
                     {
                         _guidePitchManager?.ToggleGuidePitch();
                     }

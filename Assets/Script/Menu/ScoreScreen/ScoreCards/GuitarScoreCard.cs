@@ -23,6 +23,13 @@ namespace YARG.Menu.ScoreScreen
         {
             base.SetCardContents();
 
+            _overstrums.text = ColorizePrimary(Stats.Overstrums);
+            _hoposStrummed.text = ColorizePrimary(Stats.HoposStrummed);
+            _ghostInputs.text = ColorizePrimary(Stats.GhostInputs);
+        }
+
+        public override Sprite GetInstrumentSprite()
+        {
             // We'd like to show the guitar icon to denote that the active game
             // mode is guitar, but if the chosen instrument is normally played
             // using a guitar controller, we can display that specific icon.
@@ -34,6 +41,10 @@ namespace YARG.Menu.ScoreScreen
                 case Instrument.FiveFretGuitar:
                 case Instrument.FiveFretRhythm:
                 case Instrument.FiveFretCoopGuitar:
+                case Instrument.SixFretBass:
+                case Instrument.SixFretGuitar:
+                case Instrument.SixFretRhythm:
+                case Instrument.SixFretCoopGuitar:
                     iconName = Player.Profile.CurrentInstrument.ToResourceName();
                     break;
                 default:
@@ -41,14 +52,9 @@ namespace YARG.Menu.ScoreScreen
                     break;
             }
 
-            // Set background icon
-            _instrumentIcon.sprite = Addressables
+            return Addressables
                 .LoadAssetAsync<Sprite>($"InstrumentIcons[{iconName}]")
                 .WaitForCompletion();
-
-            _overstrums.text = ColorizePrimary(Stats.Overstrums);
-            _hoposStrummed.text = ColorizePrimary(Stats.HoposStrummed);
-            _ghostInputs.text = ColorizePrimary(Stats.GhostInputs);
         }
     }
 }

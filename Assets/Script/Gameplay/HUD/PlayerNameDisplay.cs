@@ -1,4 +1,4 @@
-﻿using DG.Tweening;
+using DG.Tweening;
 using System;
 using System.Collections;
 using TMPro;
@@ -22,6 +22,8 @@ namespace YARG.Gameplay.HUD
         private Image _instrumentIcon;
         [SerializeField]
         private RawImage _needleIcon;
+        [SerializeField]
+        private RawImage _playerAvatar;
 
         private CanvasGroup _canvasGroup;
 
@@ -44,10 +46,22 @@ namespace YARG.Gameplay.HUD
             var profile = player.Profile;
             _playerName.text = profile.Name;
 
-            var spriteName = player.GetInstrumentSprite();
-            _instrumentIcon.sprite = Addressables
-                .LoadAssetAsync<Sprite>(spriteName)
-                .WaitForCompletion();
+            if (profile.Avatar != null)
+            {
+                _instrumentIcon.sprite = Addressables
+                    .LoadAssetAsync<Sprite>("BlankInstrumentIcon")
+                    .WaitForCompletion();
+                _playerAvatar.texture = profile.Avatar.LoadTexture(false);
+                _playerAvatar.gameObject.SetActive(true);
+            }
+            else
+            {
+                _playerAvatar.gameObject.SetActive(false);
+                var spriteName = player.GetInstrumentSprite(GameManager.Song);
+                _instrumentIcon.sprite = Addressables
+                    .LoadAssetAsync<Sprite>(spriteName)
+                    .WaitForCompletion();
+            }
 
             StartCoroutine(FadeoutCoroutine());
         }
@@ -61,7 +75,7 @@ namespace YARG.Gameplay.HUD
 
             var textureNeedle = $"VocalNeedleTexture/{needleId}";
             _needleIcon.texture = Addressables.LoadAssetAsync<Texture2D>(textureNeedle).WaitForCompletion();
-            _instrumentIcon.color = player.GetHarmonyColor();
+            _instrumentIcon.color = player.GetGameplayIconColor();
             ShowPlayer(player);
         }
 
@@ -74,9 +88,20 @@ namespace YARG.Gameplay.HUD
         {
             _canvasGroup.alpha = 1f;
             yield return new WaitForSeconds(DisplayTime);
-            yield return _canvasGroup.DOFade(0f, FadeDuration).WaitForCompletion();
+            yield return _canvasGroup.DOFade(0f, FadeDuration).SetLink(gameObject).WaitForCompletion();
 
             gameObject.SetActive(false);
+        }
+
+        private void OnDisable()
+        {
+            _canvasGroup.DOKill();
+
+            if (_playerAvatar.texture != null)
+            {
+                Destroy(_playerAvatar.texture);
+                _playerAvatar.texture = null;
+            }
         }
     }
 }

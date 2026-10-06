@@ -11,7 +11,12 @@ namespace YARG.Menu.ScoreScreen
             Blue = 0,
             Gold = 1,
             Red  = 2,
-            Gray = 3
+            Gray = 3,
+
+            /// <summary>
+            /// Every applicable chart section has been perfected at least once.
+            /// </summary>
+            Violet = 4
         }
 
         [Space]
@@ -66,10 +71,33 @@ namespace YARG.Menu.ScoreScreen
         [SerializeField]
         private Color[] _bottomTagTextColors;
 
+        [Space]
+        [SerializeField]
+        private Color _sectionBlockNewColor;
+        [SerializeField]
+        private Color _sectionBlockEarlierColor;
+        [SerializeField]
+        private Color _sectionBlockMissingColor;
+
         private ScoreCardColor _scoreCardColor;
 
         public Color CurrentColor => _colors[(int) _scoreCardColor];
         public Color HeaderColor => _headerColors[(int) _scoreCardColor];
+
+        /// <summary>
+        /// The color of a section strip block that was perfected for the first time this run.
+        /// </summary>
+        public Color SectionBlockNewColor => _sectionBlockNewColor;
+
+        /// <summary>
+        /// The color of a section strip block that was already perfected before this run.
+        /// </summary>
+        public Color SectionBlockEarlierColor => _sectionBlockEarlierColor;
+
+        /// <summary>
+        /// The color of a section strip block that has never been perfected.
+        /// </summary>
+        public Color SectionBlockMissingColor => _sectionBlockMissingColor;
 
         public void SetCardColor(ScoreCardColor scoreCardColor)
         {

@@ -106,36 +106,18 @@ namespace YARG.Scores
             }
         }
 
-        public static bool IsBandScoreValid(float songSpeed)
+        public static bool IsBandScoreValid(float songSpeed, IEnumerable<YargPlayer> players)
         {
-            var activePlayers = PlayerContainer.Players.Where(p => !p.SittingOut).ToList();
-            var humans = activePlayers.Where(p => !p.Profile.IsBot).ToList();
-            var hasBots = activePlayers.Count > humans.Count;
-            var hasHumans = humans.Count > 0;
-            var allHumanScoresValid = hasHumans && humans.All(player => IsSoloScoreValid(songSpeed, player));
+            var activePlayers = players.Where(player => !player.SittingOut && player.IsActive).ToList();
+            var humanPlayers = activePlayers.Where(player => !player.Profile.IsBot).ToList();
 
-            if (!allHumanScoresValid)
-            {
-                return false;
-            }
-
-            if (!AllowScoresWithBots && hasBots)
-            {
-                return false;
-            }
-
-            return true;
+            return humanPlayers.Count > 0 &&
+                humanPlayers.All(player => IsSoloScoreValid(songSpeed, player)) &&
+                (AllowScoresWithBots || activePlayers.Count == humanPlayers.Count);
         }
 
-        public static bool IsSoloScoreValid(float songSpeed, YargPlayer player)
-        {
-            if (songSpeed < 1.0f || player.Profile.IsBot || !player.IsScoreValid)
-            {
-                return false;
-            }
-
-            return true;
-        }
+        public static bool IsSoloScoreValid(float songSpeed, YargPlayer player) =>
+            songSpeed >= 1.0f && !player.Profile.IsBot && player.IsScoreValid;
 
         public static void RecordScore(GameRecord gameRecord, List<PlayerScoreRecord> playerEntries)
         {
@@ -294,16 +276,17 @@ namespace YARG.Scores
             playerScoreRecord = null;
             bandScoreRecord = null;
 
-            if (UseBandHighScoresForCurrentPlayers)
+            var player = PlayerContainer.Players.FirstOrDefault(entry => !entry.Profile.IsBot);
+            if (player is null || UseBandHighScoresForCurrentPlayers)
             {
                 bandScoreRecord = GetBandHighScore(songChecksum);
                 return;
             }
 
-            var player = PlayerContainer.Players.First(entry => !entry.Profile.IsBot);
-            playerScoreRecord = player.Profile.GameMode == GameMode.EliteDrums
+            var drumInstruments = MidiDrumkitHelper.GetInstruments(player.Profile.GameMode);
+            playerScoreRecord = drumInstruments != null
                 ? GetPreferredHighScoreForInstruments(
-                    songChecksum, player.Profile.Id, MidiDrumkitHelper.Instruments)
+                    songChecksum, player.Profile.Id, drumInstruments)
                 : GetPreferredHighScore(
                     songChecksum, player.Profile.Id, player.Profile.CurrentInstrument);
         }
@@ -475,6 +458,9 @@ namespace YARG.Scores
             if (candidatePercent != currentPercent)
                 return candidatePercent > currentPercent;
 
+            if (candidate.Score != current.Score)
+                return candidate.Score > current.Score;
+
             return candidate.IsFc && !current.IsFc;
         }
 
@@ -506,6 +492,8 @@ namespace YARG.Scores
             _currentInstrumentSetKey = string.Empty;
             PlayerHighScores.Clear();
             PlayerHighPercentages.Clear();
+
+            InvalidateSectionProgressCache();
         }
 
         public static List<SongEntry> GetMostPlayedSongs(int maxCount)
@@ -521,6 +509,45 @@ namespace YARG.Scores
                     if (SongContainer.SongsByHash.TryGetValue(hash, out var list))
                     {
                         results.Add(list.Pick());
+                    }
+                }
+
+                return results;
+            }
+            catch (Exception e)
+            {
+                YargLogger.LogException(e, "Failed to load most played songs from database.");
+                return new List<SongEntry>();
+            }
+        }
+
+        public static List<SongEntry> GetMostPlayedSongs(int maxCount, Func<SongEntry, bool> predicate)
+        {
+            try
+            {
+                var results = new List<SongEntry>();
+
+                // Filtering after a limited query could exclude eligible songs ranked below the limit.
+                // Query the full play-count ordering and stop once enough eligible songs are found.
+                var mostPlayed = _db.QueryMostPlayedSongs(int.MaxValue);
+                foreach (var record in mostPlayed)
+                {
+                    var hash = HashWrapper.Create(record.SongChecksum);
+                    if (!SongContainer.SongsByHash.TryGetValue(hash, out var songs))
+                    {
+                        continue;
+                    }
+
+                    var eligibleSongs = songs.Where(predicate).ToList();
+                    if (eligibleSongs.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    results.Add(eligibleSongs.Pick());
+                    if (results.Count >= maxCount)
+                    {
+                        break;
                     }
                 }
 
@@ -567,9 +594,10 @@ namespace YARG.Scores
         {
             try
             {
-                List<PlayerScoreWithChecksum> records = profile.GameMode == GameMode.EliteDrums
+                var drumInstruments = MidiDrumkitHelper.GetInstruments(profile.GameMode);
+                List<PlayerScoreWithChecksum> records = drumInstruments != null
                     ? _db.QueryPlayerBestStarsForInstruments(
-                        profile, MidiDrumkitHelper.Instruments, SettingsManager.Settings.HighScoreHistory.Value,
+                        profile, drumInstruments, SettingsManager.Settings.HighScoreHistory.Value,
                         SongContainer.SongsByHash.Keys, SongContainer.LibraryRevision)
                     : _db.QueryPlayerBestStars(
                         profile, SettingsManager.Settings.HighScoreHistory.Value, SongContainer.SongsByHash.Keys,

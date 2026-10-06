@@ -89,6 +89,29 @@ namespace YARG.Settings.Preview
                 }
             },
             {
+                GameMode.SixFretGuitar,
+                new Info
+                {
+                    HighwayOrdering = SixFretGuitarPlayer.DEFAULT_LANE_POSITIONS,
+                    LaneCount = 3,
+
+                    // 6 frets map onto 3 visual lanes (fret pair per lane), so the
+                    // uniform lane formula doesn't apply — use explicit positions.
+                    NoteXPositions = ComputeSixFretNotePositions(),
+
+                    FretColorProvider = (colorProfile) => colorProfile.SixFretGuitar,
+                    NoteColorProvider = (colorProfile, note) => colorProfile.SixFretGuitar
+                        .GetNoteColor(note.Fret)
+                        .ToUnityColor(),
+                    NoteStarPowerColorProvider = (colorProfile, note) => colorProfile.SixFretGuitar
+                        .GetNoteStarPowerColor(note.Fret)
+                        .ToUnityColor(),
+
+                    HitWindowProvider = (enginePreset) => enginePreset.SixFretGuitar.HitWindow,
+                    Generator = new SixFretGuitarFakeNoteGenerator()
+                }
+            },
+            {
                 GameMode.FourLaneDrums,
                 new Info
                 {
@@ -269,6 +292,8 @@ namespace YARG.Settings.Preview
 
         public Info CurrentGameModeInfo { get; private set; }
 
+        private bool _previewModeSupported;
+
         private sealed class UnityFakeNoteRandom : IFakeNoteRandom
         {
             public int Range(int minInclusive, int maxExclusive) => Random.Range(minInclusive, maxExclusive);
@@ -278,7 +303,14 @@ namespace YARG.Settings.Preview
 
         private void Start()
         {
-            CurrentGameModeInfo = _gameModeInfos[SelectedGameMode];
+            _previewModeSupported = _gameModeInfos.TryGetValue(SelectedGameMode, out var gameModeInfo);
+            if (!_previewModeSupported)
+            {
+                // Vocals has no fret-lane preview yet; leave the highway blank.
+                return;
+            }
+
+            CurrentGameModeInfo = gameModeInfo;
 
             // 5-lane keys shares the guitar color section and lane models in-game
             // (FiveLaneKeysPlayer / FiveLaneKeysNoteElement read ColorProfile.FiveFretGuitar),
@@ -386,6 +418,11 @@ namespace YARG.Settings.Preview
 
         private void OnSettingChanged()
         {
+            if (!_previewModeSupported)
+            {
+                return;
+            }
+
             var cameraPreset = PresetsTab.GetLastSelectedPreset(CustomContentManager.CameraSettings);
             var colorProfile = PresetsTab.GetLastSelectedPreset(CustomContentManager.ColorProfiles);
             var enginePreset = PresetsTab.GetLastSelectedPreset(CustomContentManager.EnginePresets);
@@ -552,6 +589,11 @@ namespace YARG.Settings.Preview
 
         private void Update()
         {
+            if (!_previewModeSupported)
+            {
+                return;
+            }
+
             // Update the preview notes
             PreviewTime += Time.deltaTime;
 
@@ -618,7 +660,10 @@ namespace YARG.Settings.Preview
 
         private void OnDestroy()
         {
-            SettingsMenu.Instance.SettingChanged -= OnSettingChanged;
+            if (_previewModeSupported)
+            {
+                SettingsMenu.Instance.SettingChanged -= OnSettingChanged;
+            }
         }
 
         // --- Pro-keys highway overlay ---
@@ -717,6 +762,26 @@ namespace YARG.Settings.Preview
         /// <see cref="KeysArray"/>: white keys evenly spaced, black keys offset
         /// by half a spacing, with gaps at the E-F and B-C boundaries.
         /// </summary>
+        /// <summary>
+        /// Computes the X positions for the six-fret guitar preview: the six frets
+        /// collapse onto three visual lanes (black+white pair per lane), so frets
+        /// 1 and 4 share lane 0, 2 and 5 share lane 1, and 3 and 6 share lane 2.
+        /// </summary>
+        private static float[] ComputeSixFretNotePositions()
+        {
+            const int FRET_COUNT = 6;
+
+            var positions = new float[FRET_COUNT + 1]; // indexed by fret value (1-6)
+            for (int fret = 1; fret <= FRET_COUNT; fret++)
+            {
+                int laneIndex = (fret - 1) % 3;
+                positions[fret] = TrackPlayer.TRACK_WIDTH / 3f * laneIndex
+                    - TrackPlayer.TRACK_WIDTH / 2f + 1f / 3f;
+            }
+
+            return positions;
+        }
+
         private static float[] ComputeProKeysNotePositions()
         {
             const int KEY_COUNT = 17; // keys 0-16

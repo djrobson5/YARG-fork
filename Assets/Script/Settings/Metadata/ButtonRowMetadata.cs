@@ -8,6 +8,13 @@ namespace YARG.Settings.Metadata
 
         public string[] Buttons { get; private set; }
 
+        /// <summary>
+        /// Greys the row out while this returns false, like <c>AbstractSetting.EditableWhen</c>.
+        /// </summary>
+        public Func<bool> EditableWhen { get; set; }
+
+        public bool IsEditable => EditableWhen?.Invoke() ?? true;
+
         public ButtonRowMetadata(string button, bool isAdvanced = false)
             : this(button, null, isAdvanced)
         {

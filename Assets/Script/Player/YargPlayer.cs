@@ -1,8 +1,10 @@
 ﻿using System;
+using System.IO;
 using YARG.Core;
 using YARG.Core.Engine;
 using YARG.Core.Game;
 using YARG.Core.Input;
+using YARG.Core.IO;
 using YARG.Core.Replays;
 using YARG.Input;
 using YARG.Settings.Customization;
@@ -37,6 +39,11 @@ namespace YARG.Player
         /// </summary>
         /// <remarks>Could be invalidated due abusing pauses or no fail mode.</remarks>
         public bool IsScoreValid { get; set; } = true;
+
+        public bool IsActive { get; private set; } = true;
+
+        public void ResetParticipation() => IsActive = true;
+        public void DropOut() => IsActive = false;
 
         public bool IsReplay { get; private set; }
         public int ReplayIndex = -1;

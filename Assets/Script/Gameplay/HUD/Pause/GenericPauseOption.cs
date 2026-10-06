@@ -20,5 +20,17 @@ namespace YARG.Gameplay.HUD
             }
             _optionText.text = Localize.Key(_localizationKey);
         }
+
+        /// <summary>
+        /// Recolours the row's label, so the pause list can be faded back while another pane on the
+        /// same page has focus.
+        /// </summary>
+        public void SetTextColor(Color color)
+        {
+            if (_optionText != null)
+            {
+                _optionText.color = color;
+            }
+        }
     }
 }

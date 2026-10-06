@@ -99,6 +99,7 @@ namespace YARG.Menu.MusicLibrary
         {
             SetNavigationScheme(true);
             var list = new List<ViewType>{};
+            _allVisibleSongsGold = false;
 
             if (SelectedPlaylist.Ephemeral)
             {
@@ -126,6 +127,7 @@ namespace YARG.Menu.MusicLibrary
             bool allowdupes = SettingsManager.Settings.AllowDuplicateSongs.Value;
             _totalSongCount = 0;
             _totalStarCount = 0;
+            bool hasNonGoldSong = false;
 
             // Add songs in the playlist
             foreach (var section in _sortedSongs)
@@ -140,10 +142,12 @@ namespace YARG.Menu.MusicLibrary
                         _totalSongCount++;
                         var starAmount = songView.GetStarAmount();
                         _totalStarCount += starAmount is null ? 0 : StarAmountHelper.GetStarCount(starAmount.Value);
+                        hasNonGoldSong |= starAmount != StarAmount.StarGold;
                     }
                 }
             }
 
+            _allVisibleSongsGold = _totalSongCount > 0 && !hasNonGoldSong;
             AddPlaylistManagementButtons(list);
             return list;
         }
@@ -277,6 +281,8 @@ namespace YARG.Menu.MusicLibrary
         {
             _totalSongCount = 0;
             _totalStarCount = 0;
+            _allVisibleSongsGold = false;
+            bool hasNonGoldSong = false;
 
             var list = new List<ViewType>
             {
@@ -293,8 +299,10 @@ namespace YARG.Menu.MusicLibrary
                 _totalSongCount++;
                 var starAmount = songView.GetStarAmount();
                 _totalStarCount += starAmount is null ? 0 : StarAmountHelper.GetStarCount(starAmount.Value);
+                hasNonGoldSong |= starAmount != StarAmount.StarGold;
             }
 
+            _allVisibleSongsGold = _totalSongCount > 0 && !hasNonGoldSong;
             AddSetlistManagementButtons(list, DeleteShowSetlist);
 
             return list;
@@ -312,28 +320,14 @@ namespace YARG.Menu.MusicLibrary
                 new NavigationScheme.Entry(MenuAction.Up, "Menu.Common.Up",
                     ctx =>
                     {
-                        if (IsButtonHeldByPlayer(ctx.Player, MenuAction.Orange))
-                        {
-                            GoToPreviousSection();
-                        }
-                        else
-                        {
-                            SetWrapAroundState(!ctx.IsRepeat);
-                            SelectedIndex--;
-                        }
+                        SetWrapAroundState(!ctx.IsRepeat);
+                        SelectedIndex--;
                     }),
                 new NavigationScheme.Entry(MenuAction.Down, "Menu.Common.Down",
                     ctx =>
                     {
-                        if (IsButtonHeldByPlayer(ctx.Player, MenuAction.Orange))
-                        {
-                            GoToNextSection();
-                        }
-                        else
-                        {
-                            SetWrapAroundState(!ctx.IsRepeat);
-                            SelectedIndex++;
-                        }
+                        SetWrapAroundState(!ctx.IsRepeat);
+                        SelectedIndex++;
                     }),
                 new NavigationScheme.Entry(MenuAction.Left, "Menu.MusicLibrary.MoveInPlaylist",
                     MovePlaylistEntryUp),
@@ -353,9 +347,11 @@ namespace YARG.Menu.MusicLibrary
                     () => { },
                     holdSeconds: GREEN_HOLD_SECONDS,
                     onHoldHandler: OpenShowPicker),
-                new NavigationScheme.Entry(MenuAction.Blue, "Menu.MusicLibrary.Filters", OpenFilters),
+                new NavigationScheme.Entry(MenuAction.Blue, "Menu.MusicLibrary.SortAndFilter",
+                    OpenSortSelect, holdSeconds: MENU_HOLD_SECONDS,
+                    onHoldHandler: OpenFilters),
                 new NavigationScheme.Entry(MenuAction.Orange, "Menu.MusicLibrary.MoreOptions",
-                    OnOrangeHit, OnOrangeRelease),
+                    () => _popupMenu.gameObject.SetActive(true)),
             }, false));
         }
 
@@ -378,7 +374,7 @@ namespace YARG.Menu.MusicLibrary
             _sidebar.UpdateSidebar(true);
         }
 
-        private void EnterShowMode()
+        public void EnterShowMode()
         {
             // Save the current selected index if we're in the main library
             if (MenuState == MenuState.Library)
@@ -399,7 +395,7 @@ namespace YARG.Menu.MusicLibrary
             OpenShowPicker();
         }
 
-        private void OpenShowPicker()
+        public void OpenShowPicker()
         {
             SelectedIndex = 0;
             DialogManager.Instance.ShowSongPickerDialog("Pick Your Poison", this);
@@ -449,9 +445,18 @@ namespace YARG.Menu.MusicLibrary
                     _mainLibraryIndex = SelectedIndex;
                 }
 
+                // ToList() drops hashes that are no longer in the library (a song deleted or
+                // removed from a scanned folder), so a non-empty setlist can still resolve to
+                // nothing. Bail rather than index into an empty list.
+                var showSongs = ShowPlaylist.ToList();
+                if (showSongs.Count == 0)
+                {
+                    return;
+                }
+
                 GlobalVariables.State.PlayingAShow = true;
-                GlobalVariables.State.ShowSongs = ShowPlaylist.ToList();
-                GlobalVariables.State.CurrentSong = GlobalVariables.State.ShowSongs.First();
+                GlobalVariables.State.ShowSongs = showSongs;
+                GlobalVariables.State.CurrentSong = showSongs[0];
                 GlobalVariables.State.ShowIndex = 0;
                 MenuManager.Instance.PushMenu(MenuManager.Menu.DifficultySelect);
             }
