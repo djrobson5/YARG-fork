@@ -1,6 +1,6 @@
 # Open Items
 
-Running list of known issues and possible follow-ups for the fork. Last updated 2026-10-06. Remove items when done; note the commit.
+Running list of known issues and possible follow-ups for the fork. Last updated 2026-10-15. Remove items when done; note the commit.
 
 Feature research lives in `docs/roadmap.md`; the state of each feature is in
 `docs/section-fc-handoff.md` → "Roadmap work, 2026-09-03". Rewind to section is in
@@ -150,6 +150,12 @@ Accepted for v1. Detail and the issue each came from are in `docs/section-fc-han
   `BaseTimeInStarPower`, the guitar button masks, `_scheduledUpdates` and `ActiveSustains` all
   survive a reset. It also affects today's replay scrubbing. Per fork policy it is worked around,
   not fixed: every rewind constructs a fresh engine.
+
+## macOS (development moved to an Apple Silicon Mac, 2026-10-15)
+
+- **CRKD guitar over Bluetooth needs Input Monitoring.** macOS exposes the guitar as one HID device whose primary usage is Keyboard, so Unity left it unsupported. `Assets/Script/Input/Devices/CrkdBluetoothGuitar.cs` (macOS-only) reads its gamepad report (ID 7) as a `Gamepad`, and `BindingCollection.SetDefaultBindings` gives it the CRKD Mode 1 preset. It was verified by playing a song in the GUI editor. macOS withholds the reports until the app has Input Monitoring permission (System Settings → Privacy & Security), so a built YARG.app needs the same grant. The official nightly has neither fix. Not yet tested: the USB dongle on the Mac.
+- **Mac player build not yet made or tested.** The editor loads every native plugin. `Assets/Plugins/Sqlite3/Mac/libsqlite3.dylib` is x86_64-only, and the arm64 editor fell back to the system SQLite; confirm that a built player does the same.
+- **No Mac releases.** `build-windows.yml` ships only the Windows zip, and the in-game updater is Windows-only by design (`docs/updater-design.md`).
 
 ## Optional follow-ups (not requested)
 
