@@ -28,11 +28,6 @@ slice 5.
   optional.** Slice 4 (apply) landed on 2026-09-04: `Assets/Script/Song/UpdateInstaller.cs` plus an
   Install and Restart button on the Update Ready dialog. Slice 5 is the optional automatic check
   behind a toggle plus a "latest build" line by the version watermark.
-- **Rewind to section — build slices #12-#18 landed 2026-09-10/11 (`5ac1ce45` … `4d6eaa1e`), slice 8
-  (#19) open.** Slice 8 is end-to-end verification in the GUI editor plus a release build. Its
-  pre-flight passed at `4d6eaa1e` (49/49 SP harness, `dotnet build` green, headless Unity compile
-  clean with no console errors, EditMode 1/1, prefab sweep 0 missing scripts). What shipped and what
-  was verified per slice: `docs/section-fc-handoff.md` → "Rewind to section, 2026-09-10/11".
 
 ## Needs verification
 
