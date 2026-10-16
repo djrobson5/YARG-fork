@@ -30,11 +30,13 @@ Invoke `/opus5-prompts` when writing an agent brief or any prompt that runs on O
 
 ## Building headlessly
 
-Unity 6000.3.5f2 is at `C:\Program Files\Unity\Hub\Editor\6000.3.5f2\Editor\Unity.exe`. Compile check:
+Development moved to an Apple Silicon Mac on 2026-10-15. Unity 6000.3.5f2 (arm64 build, plus Windows Build Support) is at `/Applications/Unity/Hub/Editor/6000.3.5f2/Unity.app/Contents/MacOS/Unity`; on the old Windows machine it was `C:\Program Files\Unity\Hub\Editor\6000.3.5f2\Editor\Unity.exe`. Hub also has 6000.6.6f1 installed; never open the project with it, since that would upgrade the project. Compile check:
 
 ```
-Unity.exe -batchmode -nographics -quit -projectPath <repo> -logFile <log>
+/Applications/Unity/Hub/Editor/6000.3.5f2/Unity.app/Contents/MacOS/Unity -batchmode -nographics -quit -projectPath <repo> -logFile <log>
 ```
+
+Mac prerequisites: Rosetta 2 (`sudo softwareupdate --install-rosetta --agree-to-license`; without it the editor exits at launch with no log, because batchmode can't show the Rosetta dialog), a Personal license active in Unity Hub, and both the .NET 8 SDK (SpPathTests target net8.0) and .NET 10 SDK.
 
 ### Fast compile check (editor may stay open)
 
@@ -46,28 +48,28 @@ dotnet restore Assembly-CSharp.csproj -nologo -v q
 dotnet build Assembly-CSharp.csproj --no-restore -nologo -v q -p:UseSharedCompilation=false
 ```
 
-Green means `Build succeeded` with no `error CS` lines. The restore is required once per clone because the csproj is SDK-style; it fetches nothing. Output lands in the gitignored `Temp/`.
+Green means exit code 0 and `0 Error(s)` with no `error CS` lines (on the Mac, `-v q` doesn't always print `Build succeeded`). The restore is required once per clone because the csproj is SDK-style; it fetches nothing. Output lands in the gitignored `Temp/`.
 
 **After pulling upstream, the generated csprojs are stale** (they carry explicit `<Compile Include>` lists) until Unity next compiles, so `dotnet build` reports `CS2001 could not be found` for deleted files and misses added ones. Don't hand-edit them: copy `Assembly-CSharp`, `Assembly-CSharp-firstpass` and `YARG.Core.Package` to `*.Check.csproj`, replace each one's `Assets\Script\...` / `YARG.Core\YARG.Core\...` compile entries with a `**\*.cs` glob (excluding `Editor`, `.artifacts\**\*.cs` under `YARG.Core\YARG.Core\.artifacts` — leftover build output from `dotnet test` on SpPathTests, causes CS0579 duplicate TargetFrameworkAttribute — and `Assets\Plugins\ZString-Ext\**\*.cs`, which has its own asmdef/csproj and causes CS0121 ambiguous calls), repoint their `ProjectReference`s at the `.Check` copies, add `<Reference>`s for any new `Assets\Packages\*` DLLs, build the check project, then delete the copies and `Temp/obj/*Check*`. `Assembly-CSharp.csproj` also compiles two files outside `Assets\Script` (`Assets\Packages\sqlite-net.1.6.292\content\SQLite*.cs`), which must be kept as explicit entries alongside the glob. This only checks the main runtime assembly (`Assembly-CSharp`), so editor-only assemblies, prefab/scene serialization, and shaders still need a real Unity compile before merging. The `.csproj` files are Unity-generated; if they are missing, regenerate them from Unity Preferences > External Tools.
 
 Exit code 0 and no `error CS` lines means green. Gotchas:
 
-- NuGet packages (DryWetMidi, ZString, sqlite-net, etc.) restore into the gitignored `Assets/Packages/` via NuGetForUnity, which only runs after a successful compile. On a fresh clone, batchmode deadlocks with hundreds of missing-type errors; bootstrap by unpacking the `.nupkg` files from `Assets/packages.config` into `Assets/Packages/<Id>.<Version>/` once, after which the plugin maintains them.
+- NuGet packages (DryWetMidi, ZString, sqlite-net, etc.) restore into the gitignored `Assets/Packages/` via NuGetForUnity, which only runs after a successful compile. On a fresh clone, batchmode deadlocks with hundreds of missing-type errors; bootstrap once from the repo root with NuGetForUnity's CLI, the same restore upstream's Mac workflow uses: `dotnet tool install --global NuGetForUnity.Cli && nugetforunity restore` (prefix `DOTNET_ROLL_FORWARD=Major` if the tool's runtime is missing). It picks the same per-package framework folders as the Unity plugin, which maintains them afterwards. Don't unpack the `.nupkg` files by hand; choosing among each package's `lib/` frameworks is what goes wrong.
 - Unity's VS Code integration rewrites `.vscode/settings.json` on open. Revert it before committing.
 - Unity also rewrites `dotnet.defaultSolution` in `.vscode/settings.json` (to `YARG-fork.slnx`) when VS Code is the external editor. Revert with `git checkout -- .vscode/settings.json`.
 - Make sure no song or library preview is playing before focusing the editor to trigger a recompile after a large pull. A BASS audio callback firing during the domain unload deadlocked the editor once (log stops at `Begin MonoManager ReloadAssembly` with a NullReferenceException in a DSP callback). Recovery: kill Unity and relaunch; nothing on disk is affected.
 
 ### Persistent headless editor (Unity CLI + MCP)
 
-Unity's beta `unity` CLI (1.0.0-beta.9, at `C:\Users\djrob\AppData\Local\Unity\bin\unity.exe`, on PATH) and its `unity-editor-mcp` server (registered user-scope in Claude Code) drive a running editor. The required `com.unity.pipeline` package already comes from upstream.
+Unity's beta `unity` CLI (1.0.0-beta.13, Homebrew cask `unity-cli` at `/opt/homebrew/bin/unity`; signed in with `unity auth login`) and its `unity-editor-mcp` server (registered user-scope in Claude Code by `unity mcp configure claude-code`) drive a running editor. The required `com.unity.pipeline` package already comes from upstream; don't run `unity pipeline install`, which could bump its version in `Packages/manifest.json`.
 
-Check `Get-Process Unity` first and leave a GUI editor alone — the CLI attaches to whichever editor owns the project, and two can't own it at once. If none is running, launch one (no `-quit`):
+Check `pgrep -lf Unity.app/Contents/MacOS/Unity` first and leave a GUI editor alone — the CLI attaches to whichever editor owns the project, and two can't own it at once. If none is running, launch one (no `-quit`), detached so it survives Claude Code restarts (a `run_in_background` Bash task is killed when the session exits):
 
 ```
-Start-Process "C:\Program Files\Unity\Hub\Editor\6000.3.5f2\Editor\Unity.exe" -ArgumentList "-batchmode","-nographics","-projectPath","<repo>","-logFile","<scratch>\unity-headless.log"
+nohup /Applications/Unity/Hub/Editor/6000.3.5f2/Unity.app/Contents/MacOS/Unity -batchmode -nographics -projectPath <repo> -logFile <scratch>/unity-headless.log </dev/null >/dev/null 2>&1 & disown
 ```
 
-It serves port 7800; `unity status` or `mcp__unity-editor-mcp__editor_status` confirms readiness. Use it for:
+With the `Library/` cache warm it reports ready in seconds; a cold first import took about a minute. It serves port 7800; `unity status` or `mcp__unity-editor-mcp__editor_status` confirms readiness. Use it for:
 
 - `recompile` — sub-second full-assembly build, covering the editor assemblies the dotnet check misses.
 - Structural prefab/scene verification: `find_assets`, `open_scene`, `get_serialized_fields`, `get_console_logs`, and `eval` (Roslyn C#, so `PrefabUtility.LoadPrefabContents` / `SerializedObject` sweeps find missing scripts and null refs).
