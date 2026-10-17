@@ -15,6 +15,7 @@ namespace YARG.Input
                 Keyboard keyboard => SetDefaultBindings(keyboard),
 #if UNITY_STANDALONE_OSX || UNITY_EDITOR_OSX
                 Devices.CrkdBluetoothGuitar guitar => SetDefaultBindings(guitar, GamepadBindingMode.CrkdGuitar_Mode1),
+                Devices.CrkdUsbGuitar guitar => SetDefaultBindings(guitar, GamepadBindingMode.CrkdGuitar_Mode1),
 #endif
                 Gamepad gamepad => SetDefaultBindings(gamepad, GamepadBindingMode.Gamepad),
 

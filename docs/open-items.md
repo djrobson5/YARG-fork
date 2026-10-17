@@ -1,6 +1,6 @@
 # Open Items
 
-Running list of known issues and possible follow-ups for the fork. Last updated 2026-10-15. Remove items when done; note the commit.
+Running list of known issues and possible follow-ups for the fork. Last updated 2026-10-17. Remove items when done; note the commit.
 
 Feature research lives in `docs/roadmap.md`; the state of each feature is in
 `docs/section-fc-handoff.md` → "Roadmap work, 2026-09-03". Rewind to section is in
@@ -9,8 +9,10 @@ Feature research lives in `docs/roadmap.md`; the state of each feature is in
 
 ## Branch state and next steps
 
-The branch is fully pushed to `fork/feature/section-fc` as of 2026-09-04 (head `c4441462` plus
-this commit). Next steps in order: (1) install `v0.15.0-sectionfc.4` on the user's other (nightly)
+The branch is pushed to `origin/feature/section-fc` through `0ad84351` (the 2026-10-06 upstream
+merge). The macOS input commits after it (CRKD over Bluetooth, USB cable and wireless receiver) were
+held back to be pushed as one bundle once all three connections were verified, which they were on
+2026-10-17. Next steps in order: (1) install `v0.15.0-sectionfc.4` on the user's other (nightly)
 machine and confirm scores appear, (2) periodic merge of upstream `dev`, (3) optional updater
 slice 5.
 
@@ -148,7 +150,10 @@ Accepted for v1. Detail and the issue each came from are in `docs/section-fc-han
 
 ## macOS (development moved to an Apple Silicon Mac, 2026-10-15)
 
-- **CRKD guitar over Bluetooth needs Input Monitoring.** macOS exposes the guitar as one HID device whose primary usage is Keyboard, so Unity left it unsupported. `Assets/Script/Input/Devices/CrkdBluetoothGuitar.cs` (macOS-only) reads its gamepad report (ID 7) as a `Gamepad`, and `BindingCollection.SetDefaultBindings` gives it the CRKD Mode 1 preset. It was verified by playing a song in the GUI editor. macOS withholds the reports until the app has Input Monitoring permission (System Settings → Privacy & Security), so a built YARG.app needs the same grant. The official nightly has neither fix. Not yet tested: the USB dongle on the Mac.
+- **CRKD guitar works over all three connections; Bluetooth needs Input Monitoring.** Each has a macOS-only layout presenting the guitar as a `Gamepad`, and `BindingCollection.SetDefaultBindings` gives both the CRKD Mode 1 preset (Mode Dial on 1). All three were verified by playing in the GUI editor (Bluetooth 2026-10-15, cable and receiver 2026-10-17). The official nightly supports none of them.
+  - **Bluetooth** (`1949:0402`): macOS exposes the guitar as one HID device whose primary usage is Keyboard, so Unity left it unsupported. `Assets/Script/Input/Devices/CrkdBluetoothGuitar.cs` reads its gamepad report (ID 7). macOS withholds the reports until the app has Input Monitoring permission (System Settings → Privacy & Security), so a built YARG.app needs the same grant.
+  - **USB cable and wireless receiver** (both `045e:028e`, a wired Xbox 360 controller): macOS's built-in Xbox driver claims them and passes the raw 20-byte 360 report through as a generic HID gamepad, which no stock layout matches by name. `Assets/Script/Input/Devices/CrkdUsbGuitar.cs` reads it, matched on the product name: "CRKD Guitar" (manufacturer CRKD) on the cable, "Guitar Controller" (manufacturer Microsoft) on the receiver. Matching the name keeps real 360 pads on Unity's layouts. No permission is needed. The receiver only appears on USB once it has paired: hold its Sync button 3 s, then the guitar's Sync button 3 s, and the guitar's status LEDs go solid green. Turn the Mac's Bluetooth off first, or the guitar reconnects over Bluetooth instead.
+  - **Hardware limits in Mode 1:** the lower frets report the same buttons as the upper ones, and tilt shares Back with the Star Power button and Select, so solo frets and tilt can't be told apart. Whammy is the left trigger, the joystick is the left stick, and there is no pickup-selector input.
 - **Mac player build not yet made or tested.** The editor loads every native plugin. `Assets/Plugins/Sqlite3/Mac/libsqlite3.dylib` is x86_64-only, and the arm64 editor fell back to the system SQLite; confirm that a built player does the same.
 - **No Mac releases.** `build-windows.yml` ships only the Windows zip, and the in-game updater is Windows-only by design (`docs/updater-design.md`).
 

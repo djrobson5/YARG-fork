@@ -335,8 +335,8 @@ Narrow, all understood, none blocking. Also listed in `docs/open-items.md`.
 
 ### What remains
 
-Slice 8 (#19) itself: end-to-end verification in the GUI editor and a release build. Nothing else
-is planned for rewind; the carry-overs above are accepted for v1.
+Nothing. Slice 8 (#19), end-to-end verification, was done by the user on 2026-10-15, so rewind to
+section is complete. The carry-overs above are accepted for v1.
 
 ## Workflow that worked
 
