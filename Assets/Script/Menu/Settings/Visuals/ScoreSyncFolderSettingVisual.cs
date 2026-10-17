@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using TMPro;
 using UnityEngine;
@@ -49,11 +50,27 @@ namespace YARG.Menu.Settings.Visuals
             }
             else
             {
-                string path = ScoreSyncFolder.GetSyncDirectory(root);
+                string path = DisplayPath(ScoreSyncFolder.GetSyncDirectory(root));
                 _pathText.text = exists ? path : $"<color={MISSING_COLOR}>{path}</color>";
             }
 
             _openButton.color = exists ? _enabledButtonColor : _disabledButtonColor;
+        }
+
+        /// <summary>
+        /// The path as shown. On macOS the home folder reads as "~", which keeps the end of a long
+        /// <c>~/Library/CloudStorage/...</c> path on screen.
+        /// </summary>
+        private static string DisplayPath(string path)
+        {
+#if UNITY_STANDALONE_OSX || UNITY_EDITOR_OSX
+            string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (!string.IsNullOrEmpty(home) && path.StartsWith(home + "/", StringComparison.Ordinal))
+            {
+                return "~" + path.Substring(home.Length);
+            }
+#endif
+            return path;
         }
 
         public void Browse()
@@ -73,10 +90,15 @@ namespace YARG.Menu.Settings.Visuals
                 return;
             }
 
-            // The subfolder only exists after the first export. Quoted because cloud folder
-            // names have spaces ("OneDrive - School", "My Drive").
+            // The subfolder only exists after the first export
             string syncDirectory = ScoreSyncFolder.GetSyncDirectory(root);
-            FileExplorerHelper.OpenFolder($"\"{(Directory.Exists(syncDirectory) ? syncDirectory : root)}\"");
+            string folder = Directory.Exists(syncDirectory) ? syncDirectory : root;
+#if UNITY_STANDALONE_WIN
+            // explorer.exe takes the path unquoted, and cloud folder names have spaces
+            // ("OneDrive - School", "My Drive"). The other platforms quote it themselves
+            folder = $"\"{folder}\"";
+#endif
+            FileExplorerHelper.OpenFolder(folder);
         }
     }
 }

@@ -72,6 +72,15 @@ namespace YARG.ScoreSyncTests
             Assert.That(a.ExportFileName, Is.Not.EqualTo(b.ExportFileName));
         }
 
+        [Test]
+        public void MacLocalSuffixIsDroppedFromTheMachineName()
+        {
+            var device = ScoreSyncDevice.LoadOrCreate(_root, "Dustins-MacBook-Pro.local");
+
+            Assert.That(device.MachineName, Is.EqualTo("Dustins-MacBook-Pro"));
+            Assert.That(device.ExportFileName, Does.StartWith("Dustins-MacBook-Pro-"));
+        }
+
         [TestCase("DESKTOP-GAMING", "DESKTOP-GAMING")]
         [TestCase("my:pc/one?", "my_pc_one_")]
         [TestCase("  ..PC.. ", "PC")]
@@ -296,10 +305,39 @@ namespace YARG.ScoreSyncTests
         }
 
         [Test]
+        public void MacOneDriveListsAccountsPersonalFirst()
+        {
+            // The Mac's shape, plus a work account and a Google Drive folder that must be ignored
+            const string cloud = "/Users/me/Library/CloudStorage";
+            var folders = new[] { "OneDrive-University Of Oregon", "GoogleDrive-me@gmail.com", "OneDrive-Personal", "OneDrive-" };
+
+            var found = ScoreSyncProviders.DetectOneDriveMac(cloud, folders);
+
+            Assert.That(found.Select(f => f.Label), Is.EqualTo(new[] { "Personal", "University Of Oregon" }));
+            Assert.That(found[0].Path, Is.EqualTo(Path.Combine(cloud, "OneDrive-Personal")));
+        }
+
+        [Test]
+        public void MacGoogleDriveFindsMyDriveInEachAccount()
+        {
+            const string cloud = "/Users/me/Library/CloudStorage";
+            var folders = new[] { "GoogleDrive-b@gmail.com", "OneDrive-Personal", "GoogleDrive-a@gmail.com", "GoogleDrive-gone@gmail.com" };
+            string a = Path.Combine(cloud, "GoogleDrive-a@gmail.com", "My Drive");
+            string b = Path.Combine(cloud, "GoogleDrive-b@gmail.com", "My Drive");
+            var existing = new HashSet<string> { a, b };
+
+            var found = ScoreSyncProviders.DetectGoogleDriveMac(cloud, folders, existing.Contains);
+
+            Assert.That(found.Select(f => f.Path), Is.EqualTo(new[] { a, b }));
+        }
+
+        [Test]
         public void NothingFoundIsEmpty()
         {
             Assert.That(ScoreSyncProviders.DetectOneDrive(Array.Empty<OneDriveAccountEntry>(), _ => true), Is.Empty);
             Assert.That(ScoreSyncProviders.DetectGoogleDrive(Array.Empty<DriveEntry>(), null, _ => true), Is.Empty);
+            Assert.That(ScoreSyncProviders.DetectOneDriveMac("/c", Array.Empty<string>()), Is.Empty);
+            Assert.That(ScoreSyncProviders.DetectGoogleDriveMac("/c", Array.Empty<string>(), _ => true), Is.Empty);
         }
 
         #endregion

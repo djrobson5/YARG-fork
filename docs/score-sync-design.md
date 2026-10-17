@@ -2,19 +2,20 @@
 
 ## What it is
 
-The user plays on more than one Windows PC and wants each PC's scores to show up on the others.
+The user plays on more than one Windows PC, and now a Mac, and wants each machine's scores to show up
+on the others.
 The fork already has a one-way, overwrite-only import (`tools/import-scores.ps1`, parked in
 `docs/roadmap.md` Feature 1). This replaces that need with a two-way merge that runs inside the
 game and travels through a cloud drive the user already has: OneDrive or Google Drive.
 
-The game never talks to Microsoft or Google. Each provider's Windows desktop app keeps a local
+The game never talks to Microsoft or Google. Each provider's desktop app keeps a local
 folder in sync with the cloud, and the game only reads and writes files in that folder.
 
 ## Decisions (locked 2026-09-22)
 
 | Question | Decision |
 |---|---|
-| Devices | Windows PCs only. Nothing here is built or tested for other platforms; the settings section is hidden outside `UNITY_STANDALONE_WIN`. |
+| Devices | Windows PCs, and macOS since 2026-10-17 (see **macOS (2026-10-17)**). Nothing here is built or tested for other platforms; the settings section is hidden elsewhere. |
 | Transport | **Sync folder.** The OneDrive or Google Drive for desktop app must be installed on every PC. No sign-in inside YARG, no app registration with either provider, no tokens. |
 | Provider choice | A setting: `Off` (default), `OneDrive`, `Google Drive`, `Custom Folder`. Picking a provider auto-detects its folder; the folder can always be overridden with Browse. `Custom Folder` covers any other sync tool (Dropbox, a NAS share, a USB stick). |
 | Trigger | **Automatic and manual.** Export after every song that records a score; import at startup; a **Sync Now** button in Settings that does both; a status line with the last sync time and result. |
@@ -160,6 +161,12 @@ also holds the last export time and the last result for the status line.
     `HKCU\Software\Google\DriveFS`, but none of them name the mount point directly, so the
     drive scan is the detection.
   - **Mirror mode is unverified.** When nothing is found, the user picks the folder with Browse.
+- **macOS:** both clients keep their sync roots in `~/Library/CloudStorage` (Apple's File
+  Provider). OneDrive has one `OneDrive-<account>` folder per signed-in account, where the account
+  part is `Personal` or the organization's name; Personal comes first, and since the folder name
+  carries no email, the dropdown labels accounts by that part. Google Drive is
+  `GoogleDrive-<email>/My Drive`. The probe lists the folder names and the rules in
+  `ScoreSyncProviders` pick from them.
 - Detection runs when the provider is chosen, and the result is stored as the folder setting.
   It is not re-detected on every launch, so an override sticks.
 - A folder that does not exist or is not writable makes the status line say so. Nothing else
@@ -167,7 +174,7 @@ also holds the last export time and the last result for the status line.
 
 ## UI
 
-Settings → **General**, a `Score Sync` section directly below `Updates`, Windows only.
+Settings → **General**, a `Score Sync` section directly below `Updates`, Windows and macOS only.
 Mocked up from real prefab values and reviewed before slice 4; decisions locked 2026-09-22:
 
 1. **Sync Provider**: dropdown with Off / OneDrive / Google Drive / Custom Folder. When several
@@ -411,6 +418,28 @@ Code in `Assets/Script/Scores/Sync/`, Unity-free and sqlite-free, compiled by li
   `SpPathTests` (49).
 - **Not yet exercised:** the triggers in the running game, and any import from another PC's
   file. That is slice 6's two-PC test.
+
+## macOS (2026-10-17)
+
+Score sync was opened to macOS after the first Mac player build passed its tests.
+
+- **Platform gate:** `ScoreSyncRunner.IsSupportedPlatform` (Windows or macOS, player or editor)
+  now decides both the settings rows (`SettingsManager.IsScoreSyncAvailable`) and the automatic
+  triggers (`ScoreSyncRunner.IsEnabled`).
+- **Detection:** `ScoreSyncProviders.DetectOneDriveMac` and `DetectGoogleDriveMac`, fed by
+  `ScoreSyncProviderProbe` on macOS (see "Folder detection").
+- **Machine name:** macOS reports its Bonjour host name (`Dustins-MacBook-Pro.local`), so
+  `ScoreSyncDevice` drops a trailing `.local` when it creates the identity.
+- **Open Folder:** the path is quoted only for `explorer.exe`; `open` on macOS quotes it
+  itself, and quoting twice broke paths with spaces.
+- **Sync Folder row:** the path text now stretches from the label to the buttons instead of a
+  fixed 830 px pinned to the right, which overlapped the label once the long macOS path filled
+  it. On macOS the home folder is shown as `~` (display only; the setting keeps the full path).
+- **Checked:** `tools/ScoreSyncTests` (129 tests, including the macOS detection rules and the
+  `.local` trim), fast compile.
+- **Verified by the user on 2026-10-17** in a packaged arm64 Mac build, with OneDrive Personal:
+  detection filled in the folder and score sync worked against the folder holding both PCs'
+  files. Google Drive on a Mac and OneDrive work/school accounts on a Mac are unverified.
 
 ## Gates
 

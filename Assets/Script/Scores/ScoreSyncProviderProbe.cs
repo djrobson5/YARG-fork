@@ -7,8 +7,9 @@ using YARG.Scores.Sync;
 namespace YARG.Scores
 {
     /// <summary>
-    /// Gathers what provider detection needs from this PC (registry, drives) and runs the rules
-    /// in <see cref="ScoreSyncProviders"/>. Windows only; elsewhere it finds nothing.
+    /// Gathers what provider detection needs from this machine (the registry and drives on
+    /// Windows, <c>~/Library/CloudStorage</c> on macOS) and runs the rules in
+    /// <see cref="ScoreSyncProviders"/>. Elsewhere it finds nothing.
     /// </summary>
     public static class ScoreSyncProviderProbe
     {
@@ -20,6 +21,17 @@ namespace YARG.Scores
         {
             try
             {
+#if UNITY_STANDALONE_OSX || UNITY_EDITOR_OSX
+                string cloudStorage = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    ScoreSyncProviders.MAC_CLOUD_STORAGE);
+                return provider switch
+                {
+                    ScoreSyncProvider.OneDrive    => ScoreSyncProviders.DetectOneDriveMac(cloudStorage, ReadFolderNames(cloudStorage)),
+                    ScoreSyncProvider.GoogleDrive => ScoreSyncProviders.DetectGoogleDriveMac(cloudStorage,
+                        ReadFolderNames(cloudStorage), Directory.Exists),
+                    _ => new List<SyncRootCandidate>(),
+                };
+#else
                 return provider switch
                 {
                     ScoreSyncProvider.OneDrive    => ScoreSyncProviders.DetectOneDrive(ReadOneDriveAccounts(), Directory.Exists),
@@ -27,12 +39,27 @@ namespace YARG.Scores
                         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), Directory.Exists),
                     _ => new List<SyncRootCandidate>(),
                 };
+#endif
             }
             catch (Exception e)
             {
                 YargLogger.LogException(e, $"Failed to detect the {provider} folder.");
                 return new List<SyncRootCandidate>();
             }
+        }
+
+        private static List<string> ReadFolderNames(string directory)
+        {
+            var names = new List<string>();
+            if (Directory.Exists(directory))
+            {
+                foreach (string path in Directory.EnumerateDirectories(directory))
+                {
+                    names.Add(Path.GetFileName(path));
+                }
+            }
+
+            return names;
         }
 
         private static List<OneDriveAccountEntry> ReadOneDriveAccounts()

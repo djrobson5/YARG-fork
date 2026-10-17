@@ -67,13 +67,7 @@ namespace YARG.Settings
             return UpdateChecker.IsReleaseBuild && !GlobalVariables.OfflineMode;
         }
 
-        /// <summary>
-        /// Score sync is built and tested for Windows only (docs/score-sync-design.md).
-        /// </summary>
-        private static bool IsScoreSyncAvailable()
-        {
-            return Application.platform is RuntimePlatform.WindowsPlayer or RuntimePlatform.WindowsEditor;
-        }
+        private static bool IsScoreSyncAvailable() => ScoreSyncRunner.IsSupportedPlatform;
 
         private static bool IsScoreSyncOn() => !Settings.SyncProvider.Value.IsOff;
 

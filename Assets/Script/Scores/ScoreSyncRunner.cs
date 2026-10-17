@@ -145,10 +145,17 @@ namespace YARG.Scores
         public static bool IsSyncNowPending { get; private set; }
 
         /// <summary>
-        /// Whether the automatic triggers run: Windows only, a provider chosen and a folder set.
+        /// Score sync is built and tested for Windows and macOS (docs/score-sync-design.md).
+        /// </summary>
+        public static bool IsSupportedPlatform =>
+            Application.platform is RuntimePlatform.WindowsPlayer or RuntimePlatform.WindowsEditor
+                or RuntimePlatform.OSXPlayer or RuntimePlatform.OSXEditor;
+
+        /// <summary>
+        /// Whether the automatic triggers run: a supported platform, a provider chosen and a folder set.
         /// </summary>
         public static bool IsEnabled =>
-            Application.platform is RuntimePlatform.WindowsPlayer or RuntimePlatform.WindowsEditor
+            IsSupportedPlatform
             && !SettingsManager.Settings.SyncProvider.Value.IsOff
             && !string.IsNullOrWhiteSpace(SettingsManager.Settings.SyncFolder.Value);
 

@@ -14,6 +14,8 @@ namespace YARG.Scores.Sync
     {
         public const string FILE_NAME = "score-sync-device.json";
 
+        private const string LOCAL_SUFFIX = ".local";
+
         public Guid   Id;
         public string MachineName;
 
@@ -57,10 +59,18 @@ namespace YARG.Scores.Sync
                 // and the union merge makes the old file harmless
             }
 
+            string name = string.IsNullOrWhiteSpace(machineName) ? "PC" : machineName.Trim();
+
+            // macOS reports its Bonjour host name, e.g. "Dustins-MacBook-Pro.local"
+            if (name.Length > LOCAL_SUFFIX.Length && name.EndsWith(LOCAL_SUFFIX, StringComparison.OrdinalIgnoreCase))
+            {
+                name = name.Substring(0, name.Length - LOCAL_SUFFIX.Length);
+            }
+
             var created = new ScoreSyncDevice
             {
                 Id = Guid.NewGuid(),
-                MachineName = string.IsNullOrWhiteSpace(machineName) ? "PC" : machineName.Trim(),
+                MachineName = name,
             };
 
             Directory.CreateDirectory(directory);
