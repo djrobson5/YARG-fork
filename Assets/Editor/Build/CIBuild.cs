@@ -12,8 +12,9 @@ using YARG;
 namespace Editor.Build
 {
     /// <summary>
-    /// Batchmode entry point used by CI (GitHub Actions / game-ci unity-builder) to produce a
-    /// Windows x64 player. Invoked with <c>-executeMethod Editor.Build.CIBuild.BuildWindows</c>.
+    /// Batchmode entry points used by CI (GitHub Actions / game-ci unity-builder) to produce a
+    /// Windows x64 or macOS Apple silicon player. Invoked with
+    /// <c>-executeMethod Editor.Build.CIBuild.BuildWindows</c> or <c>Editor.Build.CIBuild.BuildMac</c>.
     /// </summary>
     /// <remarks>
     /// Unlike <see cref="MakeTestBuild"/> this never touches <c>BuildPlayerWindow</c> (which needs a GUI),
@@ -25,8 +26,12 @@ namespace Editor.Build
     {
         private const string NIGHTLY_DEFINE = "YARG_NIGHTLY_BUILD";
 
-        private const string DEFAULT_BUILD_DIRECTORY = "build/StandaloneWindows64";
         private const string DEFAULT_BUILD_NAME = "YARG";
+
+        // The macOS architecture is a per-machine platform setting; these are the names Unity stores it under
+        private const string MAC_PLATFORM_SETTINGS = "OSXUniversal";
+        private const string MAC_ARCHITECTURE_SETTING = "Architecture";
+        private const string MAC_ARCHITECTURE_ARM64 = "ARM64";
 
         /// <summary>
         /// Builds a StandaloneWindows64 player with the nightly define set.
@@ -34,23 +39,42 @@ namespace Editor.Build
         /// </summary>
         public static void BuildWindows()
         {
+            Build(BuildTarget.StandaloneWindows64, "Win64", ".exe");
+        }
+
+        /// <summary>
+        /// Builds an Apple silicon (arm64) StandaloneOSX player with the nightly define set.
+        /// Exits the editor with code 0 on success and 1 on any failure.
+        /// </summary>
+        /// <remarks>
+        /// arm64 only, not universal: the libusb dylibs (ours and HIDrogen's) ship no x86_64 slice.
+        /// </remarks>
+        public static void BuildMac()
+        {
+            EditorUserBuildSettings.SetPlatformSettings(MAC_PLATFORM_SETTINGS, MAC_ARCHITECTURE_SETTING,
+                MAC_ARCHITECTURE_ARM64);
+            Build(BuildTarget.StandaloneOSX, "OSXUniversal", ".app");
+        }
+
+        private static void Build(BuildTarget target, string buildTargetArgument, string extension)
+        {
             try
             {
                 // Addressables resolves its [BuildTarget] profile variable from
                 // EditorUserBuildSettings.activeBuildTarget, not from the BuildPlayerOptions handed
-                // to BuildPipeline. If the editor is not already switched to Windows, the catalog
+                // to BuildPipeline. If the editor is not already switched to the target, the catalog
                 // and bundles land in StreamingAssets/aa/<wrong platform> and the player ships with
                 // no Addressables content at all. game-ci's unity-builder always passes
-                // -buildTarget StandaloneWindows64; a hand-rolled invocation might not.
-                if (EditorUserBuildSettings.activeBuildTarget != BuildTarget.StandaloneWindows64)
+                // -buildTarget; a hand-rolled invocation might not.
+                if (EditorUserBuildSettings.activeBuildTarget != target)
                 {
                     throw new InvalidOperationException(
                         $"Active build target is {EditorUserBuildSettings.activeBuildTarget}, not " +
-                        "StandaloneWindows64. Pass \"-buildTarget Win64\" on the command line so " +
+                        $"{target}. Pass \"-buildTarget {buildTargetArgument}\" on the command line so " +
                         "Addressables content is built for the right platform.");
                 }
 
-                var options = CreateBuildPlayerOptions();
+                var options = CreateBuildPlayerOptions(target, extension);
 
                 Debug.Log($"[CIBuild] Building to \"{options.locationPathName}\"");
                 Debug.Log($"[CIBuild] Scenes ({options.scenes.Length}): {string.Join(", ", options.scenes)}");
@@ -84,7 +108,7 @@ namespace Editor.Build
             }
         }
 
-        private static BuildPlayerOptions CreateBuildPlayerOptions()
+        private static BuildPlayerOptions CreateBuildPlayerOptions(BuildTarget target, string extension)
         {
             var scenes = EditorBuildSettings.scenes
                 .Where(scene => scene.enabled && !string.IsNullOrEmpty(scene.path))
@@ -102,8 +126,8 @@ namespace Editor.Build
             return new BuildPlayerOptions
             {
                 scenes = scenes,
-                locationPathName = ResolveOutputPath(),
-                target = BuildTarget.StandaloneWindows64,
+                locationPathName = ResolveOutputPath(target, extension),
+                target = target,
                 targetGroup = BuildTargetGroup.Standalone,
                 subtarget = (int) StandaloneBuildSubtarget.Player,
                 extraScriptingDefines = new[] { NIGHTLY_DEFINE },
@@ -112,24 +136,24 @@ namespace Editor.Build
         }
 
         /// <summary>
-        /// Works out where the .exe should land.
+        /// Works out where the .exe or .app should land.
         /// game-ci's unity-builder passes <c>-customBuildPath</c> as a full path to the output *file*
-        /// (<c>&lt;workspace&gt;/&lt;buildsPath&gt;/StandaloneWindows64/&lt;buildName&gt;.exe</c>) plus
+        /// (<c>&lt;workspace&gt;/&lt;buildsPath&gt;/&lt;target&gt;/&lt;buildName&gt;.exe</c>) plus
         /// <c>-customBuildName</c>. When run by hand, <c>-buildPath</c> may be given as a directory instead.
         /// </summary>
-        private static string ResolveOutputPath()
+        private static string ResolveOutputPath(BuildTarget target, string extension)
         {
             string name = GetArgument("-customBuildName") ?? DEFAULT_BUILD_NAME;
-            if (!name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            if (!name.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
             {
-                name += ".exe";
+                name += extension;
             }
 
             // game-ci passes a full file path here.
             string customBuildPath = GetArgument("-customBuildPath");
             if (!string.IsNullOrWhiteSpace(customBuildPath))
             {
-                return customBuildPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+                return customBuildPath.EndsWith(extension, StringComparison.OrdinalIgnoreCase)
                     ? customBuildPath
                     : Path.Combine(customBuildPath, name);
             }
@@ -138,10 +162,10 @@ namespace Editor.Build
             string buildPath = GetArgument("-buildPath");
             if (string.IsNullOrWhiteSpace(buildPath))
             {
-                buildPath = DEFAULT_BUILD_DIRECTORY;
+                buildPath = $"build/{target}";
             }
 
-            return buildPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            return buildPath.EndsWith(extension, StringComparison.OrdinalIgnoreCase)
                 ? buildPath
                 : Path.Combine(buildPath, name);
         }
