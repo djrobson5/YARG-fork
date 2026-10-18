@@ -9,13 +9,16 @@ Feature research lives in `docs/roadmap.md`; the state of each feature is in
 
 ## Branch state and next steps
 
-The branch is pushed to `origin/feature/section-fc` through `31671f6a` (the release workflow
-fix). Local and not yet pushed: `155550a4` (genres and song sources out of the macOS bundle),
-`88e594d4` (the 2026-10-17 upstream merge) and the Score Sync folder-row layout fix after it. Next
-steps in order: (1) push, review `c25aa01f..HEAD`, and tag `v0.15.0-sectionfc.11`, the first
-release with a macOS zip, (2) install `v0.15.0-sectionfc.4` or later on the user's other
-(nightly) machine and confirm scores appear, (3) periodic merge of upstream `dev`, (4) optional
-updater slice 5.
+The branch is pushed to `origin/feature/section-fc` through `6cbf1220`, which is tagged
+`v0.15.0-sectionfc.11` (2026-10-17): the first release with both a Windows x64 zip and a macOS
+arm64 zip, and the first to include the 2026-10-17 upstream merge. Release run 39096297927
+passed every job in about 13 minutes. The Mac zip passed `codesign --verify --deep --strict`
+before and after a launch from `/Applications`, so the `155550a4` fix holds on a CI build. That
+run also warned that `ubuntu-latest` moves to Ubuntu 26 from 2026-10-19; if the next release
+breaks on the runner image, pin `ubuntu-24.04` in `build-release.yml`. Next steps in order:
+(1) play one song on the `.11` Windows build (the merge was only play-tested on the Mac),
+(2) install `v0.15.0-sectionfc.4` or later on the user's other (nightly) machine and confirm
+scores appear, (3) periodic merge of upstream `dev`, (4) optional updater slice 5.
 
 ## Parked
 
