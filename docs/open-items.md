@@ -9,7 +9,7 @@ Feature research lives in `docs/roadmap.md`; the state of each feature is in
 
 ## Branch state and next steps
 
-The branch is pushed to `origin/feature/section-fc` through `6cbf1220`, which is tagged
+`feature/section-fc` was renamed to `main` (the default branch) on 2026-10-17, when the Section FC work was declared done; new work goes on `feature/<name>` branches off `main`. It is pushed through `6cbf1220`, which is tagged
 `v0.15.0-sectionfc.11` (2026-10-17): the first release with both a Windows x64 zip and a macOS
 arm64 zip, and the first to include the 2026-10-17 upstream merge. Release run 39096297927
 passed every job in about 13 minutes. The Mac zip passed `codesign --verify --deep --strict`
@@ -158,7 +158,7 @@ Accepted for v1. Detail and the issue each came from are in `docs/section-fc-han
 
 ## Maintenance
 
-- Merge upstream `dev` into `feature/section-fc` every week or two; routine in `docs/section-fc-handoff.md` (Nightly tracking).
+- Merge upstream `dev` into `main` every week or two; routine in `docs/section-fc-handoff.md` (Nightly tracking).
 - Disable the Crowdin and label-conflicts workflows in the fork's Actions tab; they exist on the default branch and fail without upstream's secrets.
 - If the `Library` cache in `build-release.yml` never saves (GitHub's 10 GB cap), remove the cache step to save time.
 - The release pipeline is proven as of `v0.15.0-sectionfc.1` (run 33797702460); outcome recorded in `docs/release-build.md`. The `Library` cache did save on that run (~1.28 GB, well under GitHub's 10 GB cap), so the "cache never saves" concern above did not materialize — but it was a cold-cache first save, so watch whether it still saves once the cache grows over repeated runs.

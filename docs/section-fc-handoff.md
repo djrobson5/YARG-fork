@@ -369,14 +369,14 @@ stable tag.
 |---|---|---|
 | `master` | `upstream/master` | Upstream stable (v0.15.0). Never merged into anything now; kept as a reference point. |
 | `dev` | `upstream/dev` | Read-only mirror of the nightly branch. Never commit to it. |
-| `feature/section-fc` | `fork/feature/section-fc` | The feature. Merges `dev` in; never rebased, so the history stays reviewable. |
+| `main` (was `feature/section-fc` until 2026-10-17) | `origin/main` | The fork's trunk. Merges `dev` in; never rebased, so the history stays reviewable. |
 
 ### Refreshing
 
 ```
 git fetch upstream --prune
 git checkout dev && git merge --ff-only upstream/dev
-git checkout feature/section-fc && git merge --no-ff dev
+git checkout main && git merge --no-ff dev
 git submodule update --init --recursive
 ```
 

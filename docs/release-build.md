@@ -69,7 +69,7 @@ can leak one), release it at <https://id.unity.com/en/subscriptions>.
 
 `workflow_dispatch` only appears in the Actions UI / `gh workflow run` if the workflow
 file exists **on the repository's default branch**. The fork's default branch is
-`feature/section-fc`, where the workflow lives, so this is already satisfied. You can still
+`main` (renamed from `feature/section-fc` on 2026-10-17), where the workflow lives, so this is already satisfied. You can still
 run the build against any ref with `--ref` (see below), and a dispatch that publishes tags
 the commit it built. Pushing a matching tag works regardless of the default branch.
 
@@ -82,7 +82,7 @@ the commit it built. Pushing a matching tag works regardless of the default bran
 ```powershell
 gh workflow run build-release.yml `
   --repo djrobson5/YARG-fork `
-  --ref feature/section-fc `
+  --ref main `
   -f version=v0.15.0-sectionfc.1 `
   -f prerelease=true
 ```

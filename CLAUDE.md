@@ -27,6 +27,7 @@ Invoke `/opus5-prompts` when writing an agent brief or any prompt that runs on O
 - Feature spec and locked design decisions: `docs/section-fc-design.md`. Session handoff with current state and next steps: `docs/section-fc-handoff.md`. Running list of open items: `docs/open-items.md`. Read all three before touching section-completion code.
 - The four roadmap features have their own locked designs: `docs/updater-design.md` (in-game updater), `docs/delete-song-design.md` (delete songs), `docs/sp-path-design.md` (Star Power path); the Star Power model has a headless harness, run with `dotnet test tools/SpPathTests/SpPathTests.csproj` (49 tests). The rewind-to-section feature's locked design is `docs/rewind-design.md`; its decision record is the wayfinder map, issue #2 on the fork.
 - The fork never modifies the `YARG.Core` submodule; fixes that would belong there are worked around from the main repo.
+- `main` is the fork's trunk and default branch (renamed from `feature/section-fc` on 2026-10-17, when the Section FC work was declared done). New work goes on `feature/<name>` branches off it. Release naming stays `v<x>-sectionfc.<n>` with `YARG-SectionFC_*` zips: installed builds' updaters (`UpdateChecker.TagPattern` and its asset pattern, `tools/update-yarg.ps1`) only match those names, so changing them needs a bridge release first.
 
 ## Building headlessly
 
