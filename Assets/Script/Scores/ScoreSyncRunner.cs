@@ -321,9 +321,18 @@ namespace YARG.Scores
 
         private static void RefreshSettingsStatus()
         {
-            if (SettingsMenu.Instance != null)
+            // Runs while the gate is held (Enter) and while it is released (Exit), outside their
+            // try blocks, so a throw from the settings UI would leave sync wedged until restart
+            try
             {
-                SettingsMenu.Instance.OnSettingChanged();
+                if (SettingsMenu.Instance != null)
+                {
+                    SettingsMenu.Instance.OnSettingChanged();
+                }
+            }
+            catch (Exception e)
+            {
+                YargLogger.LogException(e, "Failed to refresh the score sync status in the settings menu.");
             }
         }
 

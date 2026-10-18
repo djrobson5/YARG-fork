@@ -533,6 +533,7 @@ namespace YARG.Gameplay
                     // to take another Confirm while the screen is going dark. IsRewindFading
                     // covers the two pause bindings, which are not part of the menu.
                     _pauseMenu.PopAllMenus();
+                    CloseAllPlayerMenus();
                 }
 
                 // Once, here, so it plays under the fade rather than after it. The unpause path's
@@ -740,6 +741,7 @@ namespace YARG.Gameplay
         private void RestartLeadIn()
         {
             _pauseMenu.PopAllMenus();
+            CloseAllPlayerMenus();
             Time.timeScale = 1f;
 
             // Audio Calibration and song speed are both editable from the pause menu, and the

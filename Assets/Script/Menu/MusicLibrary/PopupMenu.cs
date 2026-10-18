@@ -21,6 +21,7 @@ using YARG.Menu.Persistent;
 using YARG.Player;
 using YARG.Playlists;
 using YARG.Settings;
+using YARG.Settings.Customization;
 using YARG.Song;
 
 namespace YARG.Menu.MusicLibrary
@@ -624,6 +625,10 @@ namespace YARG.Menu.MusicLibrary
             }
 
             PruneFromPlaylists(song);
+
+            // Career tiers hold their own SongEntry references, refreshed only after a scan, so
+            // without this a deleted song stays listed and startable from Career
+            CustomContentManager.Careers.RefreshSongEntries();
 
             ToastManager.ToastSuccess(Localize.KeyFormat(
                 ("Menu.Dialog.DeleteSong", trashed ? "Trashed" : "Deleted"), EscapeRichText(name)));

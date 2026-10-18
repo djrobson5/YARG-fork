@@ -193,14 +193,22 @@ namespace YARG.Settings.Metadata
                 pair.Value.RefreshVisual();
             }
 
+            // Search results can replace this tab's rows while it stays the current tab, so skip
+            // rows that were destroyed with them
             foreach (var (button, metadata) in _buttonRows)
             {
-                button.SetEditable(metadata.IsEditable);
+                if (button != null)
+                {
+                    button.SetEditable(metadata.IsEditable);
+                }
             }
 
             foreach (var (text, metadata) in _statusTexts)
             {
-                RefreshStatusText(text, metadata);
+                if (text != null)
+                {
+                    RefreshStatusText(text, metadata);
+                }
             }
         }
 
