@@ -68,17 +68,10 @@ can leak one), release it at <https://id.unity.com/en/subscriptions>.
 ### 1c. Repository settings you must check
 
 `workflow_dispatch` only appears in the Actions UI / `gh workflow run` if the workflow
-file exists **on the repository's default branch**. This fork's default branch is
-`master`, and the workflow currently lives on `feature/section-fc`.
-
-So one of these has to happen before you can dispatch it:
-
-- merge `feature/section-fc` (or at least `.github/workflows/build-release.yml`) into
-  `master`, **or**
-- change the fork's default branch to `feature/section-fc` in the repo settings.
-
-Once the file is on the default branch you can still run the build against any ref with
-`--ref` (see below). Pushing a matching tag works regardless of the default branch.
+file exists **on the repository's default branch**. The fork's default branch is
+`feature/section-fc`, where the workflow lives, so this is already satisfied. You can still
+run the build against any ref with `--ref` (see below), and a dispatch that publishes tags
+the commit it built. Pushing a matching tag works regardless of the default branch.
 
 ---
 
@@ -108,16 +101,18 @@ gh run watch --repo djrobson5/YARG-fork <run-id>
 
 `version` is used as the release tag, in the release title, and in the asset filenames
 (`YARG-SectionFC_<version>-Windows-x64.zip`, `YARG-SectionFC_<version>-macOS-arm64.zip`). It is also stamped into
-`PlayerSettings.bundleVersion`.
+`PlayerSettings.bundleVersion`. The first job rejects a version with spaces or slashes, and
+one that publishes must end in `-sectionfc.<n>`, the form the in-game updater parses; a
+`publish=false` test run may use anything else, e.g. `v0.15.0-sectionfc.11-test`.
 
 ### By tag
 
-Pushing a tag matching `v*-sectionfc*` triggers the same build automatically and always
+Pushing a tag matching `v*-sectionfc.*` triggers the same build automatically and always
 publishes a pre-release:
 
 ```powershell
 git tag v0.15.0-sectionfc.1
-git push fork v0.15.0-sectionfc.1
+git push origin v0.15.0-sectionfc.1
 ```
 
 Pick **one** of the two triggers per version. If you dispatch `v0.15.0-sectionfc.1` and then

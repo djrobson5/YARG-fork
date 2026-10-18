@@ -58,6 +58,10 @@ namespace YARG.Scores.Sync
         public const string MAC_CLOUD_STORAGE = "Library/CloudStorage";
         public const string MAC_ONEDRIVE_PREFIX = "OneDrive-";
         public const string MAC_ONEDRIVE_PERSONAL = "Personal";
+
+        // Synced SharePoint libraries sit beside the accounts as OneDrive-SharedLibraries-<org>;
+        // they are not a OneDrive, and other PCs would never see files exported there
+        public const string MAC_ONEDRIVE_SHARED_LIBRARIES_PREFIX = "OneDrive-SharedLibraries-";
         public const string MAC_GOOGLE_PREFIX = "GoogleDrive-";
 
         /// <summary>
@@ -137,7 +141,8 @@ namespace YARG.Scores.Sync
         {
             return folderNames
                 .Where(n => n.StartsWith(MAC_ONEDRIVE_PREFIX, StringComparison.OrdinalIgnoreCase)
-                    && n.Length > MAC_ONEDRIVE_PREFIX.Length)
+                    && n.Length > MAC_ONEDRIVE_PREFIX.Length
+                    && !n.StartsWith(MAC_ONEDRIVE_SHARED_LIBRARIES_PREFIX, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(n => string.Equals(n.Substring(MAC_ONEDRIVE_PREFIX.Length), MAC_ONEDRIVE_PERSONAL,
                     StringComparison.OrdinalIgnoreCase) ? 0 : 1)
                 .ThenBy(n => n, StringComparer.OrdinalIgnoreCase)

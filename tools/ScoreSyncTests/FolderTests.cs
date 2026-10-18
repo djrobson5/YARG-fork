@@ -318,6 +318,19 @@ namespace YARG.ScoreSyncTests
         }
 
         [Test]
+        public void MacOneDriveSkipsSharedLibraries()
+        {
+            // A work account with a synced SharePoint library: the library sorts first by name,
+            // so without the filter it would be picked as the sync root
+            const string cloud = "/Users/me/Library/CloudStorage";
+            var folders = new[] { "OneDrive-SharedLibraries-University Of Oregon", "OneDrive-University Of Oregon" };
+
+            var found = ScoreSyncProviders.DetectOneDriveMac(cloud, folders);
+
+            Assert.That(found.Select(f => f.Label), Is.EqualTo(new[] { "University Of Oregon" }));
+        }
+
+        [Test]
         public void MacGoogleDriveFindsMyDriveInEachAccount()
         {
             const string cloud = "/Users/me/Library/CloudStorage";

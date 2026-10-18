@@ -17,10 +17,11 @@ on:
         type: boolean
   push:
     tags:
-      - "v*-sectionfc*"
+      - "v*-sectionfc.*"
 
+# Only the release job writes; the builds run third-party actions with a read-only token.
 permissions:
-  contents: write
+  contents: read
 
 # Keyed on the release version rather than the ref, so a dispatch for v1.2.3 and a push of
 # the v1.2.3 tag do not race each other into publishing the same release.
@@ -42,15 +43,32 @@ jobs:
     steps:
       - name: "[Setup] Resolve version"
         id: meta
+        # Inputs go through env rather than being pasted into the script, so a version
+        # string cannot inject shell.
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
             VERSION="${GITHUB_REF_NAME}"
             PRERELEASE="true"
             PUBLISH="true"
           else
-            VERSION="${{ inputs.version }}"
-            PRERELEASE="${{ inputs.prerelease }}"
-            PUBLISH="${{ inputs.publish }}"
+            VERSION="${INPUT_VERSION}"
+            PRERELEASE="${INPUT_PRERELEASE}"
+            PUBLISH="${INPUT_PUBLISH}"
+          fi
+          # The version names the zips and artifacts, so no spaces or slashes. A published
+          # release must also end in -sectionfc.<n>: that is what UpdateChecker.TagPattern and
+          # update-yarg.ps1 parse, and a build tagged otherwise hides its own updater.
+          if ! printf '%s' "${VERSION}" | grep -Eq '^v[^[:space:]/]+$'; then
+            echo "::error::Version '${VERSION}' must start with v and contain no spaces or slashes."
+            exit 1
+          fi
+          if [ "${PUBLISH}" = "true" ] && ! printf '%s' "${VERSION}" | grep -Eq -- '-sectionfc\.[0-9]+$'; then
+            echo "::error::A published version must end in -sectionfc.<n>, e.g. v0.15.0-sectionfc.11."
+            exit 1
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
@@ -191,6 +209,13 @@ jobs:
           if [ "${{ matrix.targetPlatform }}" = "StandaloneOSX" ]; then
             test -x "$BUILD_DIR/YARG.app/Contents/MacOS/YARG"
             ls -alh "$BUILD_DIR/YARG.app/Contents/PlugIns"
+            # Must be a thin arm64 Mach-O (MH_MAGIC_64 + CPU_TYPE_ARM64, little-endian): the
+            # libusb dylibs have no x86_64 slice, so a universal or x64 player cannot load them.
+            HEADER=$(od -An -tx1 -N8 "$BUILD_DIR/YARG.app/Contents/MacOS/YARG" | tr -d ' \n')
+            if [ "$HEADER" != "cffaedfe0c000001" ]; then
+              echo "::error::The macOS player is not a thin arm64 binary (header $HEADER)."
+              exit 1
+            fi
           else
             test -f "$BUILD_DIR/YARG.exe"
             test -d "$BUILD_DIR/YARG_Data"
@@ -234,6 +259,8 @@ jobs:
     needs: [meta, build]
     if: needs.meta.outputs.publish == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: "[Release] Download the zips"
@@ -247,6 +274,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.meta.outputs.version }}
+          # A dispatch that publishes creates the tag; pin it to the commit that was built
+          # rather than the default branch's head.
+          target_commitish: ${{ github.sha }}
           name: ${{ needs.meta.outputs.version }}
           prerelease: ${{ needs.meta.outputs.prerelease == 'true' }}
           generate_release_notes: true

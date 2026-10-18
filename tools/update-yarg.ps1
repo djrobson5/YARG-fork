@@ -106,7 +106,8 @@ $UserAgent = 'YARG-fork-updater'
 $TagFilter = '-sectionfc'
 
 # The workflow names the asset "YARG-SectionFC_<tag>-Windows-x64.zip"
-# (.github/workflows/build-release.yml, "[Setup] Resolve version" step).
+# (.github/workflows/build-release.yml, the build job's ASSET_ZIP). Releases also carry a
+# "-macOS-arm64.zip", which must never be picked.
 $AssetPattern = '^YARG-SectionFC_.*-Windows-x64\.zip$'
 
 # Marker file written into the install dir after a successful update, so the next run knows
@@ -226,8 +227,8 @@ function Get-WindowsAsset {
 
     $match = @($assets | Where-Object { $_.name -match $AssetPattern })
     if ($match.Count -eq 0) {
-        # Be forgiving if the workflow's naming ever changes: any single .zip will do.
-        $match = @($assets | Where-Object { $_.name -like '*.zip' })
+        # Be forgiving if the workflow's naming ever changes: any non-macOS .zip will do.
+        $match = @($assets | Where-Object { $_.name -like '*.zip' -and $_.name -notmatch '-macOS-' })
     }
 
     if ($match.Count -eq 0) {

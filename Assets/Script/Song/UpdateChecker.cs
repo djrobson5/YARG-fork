@@ -94,7 +94,8 @@ namespace YARG.Song
 
         /// <summary>
         /// The name the release workflow gives the Windows build
-        /// (<c>.github/workflows/build-release.yml</c>, "[Setup] Resolve version").
+        /// (<c>.github/workflows/build-release.yml</c>, the build job's <c>ASSET_ZIP</c>).
+        /// Releases also carry a <c>-macOS-arm64.zip</c>, which this never matches.
         /// </summary>
         private static readonly Regex WindowsAssetPattern =
             new(@"^YARG-SectionFC_.*-Windows-x64\.zip$",
@@ -277,7 +278,9 @@ namespace YARG.Song
                     continue;
                 }
 
-                if (assetName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                // The lone-zip fallback must never pick the macOS build
+                if (assetName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
+                    && assetName.IndexOf("-macOS-", StringComparison.OrdinalIgnoreCase) < 0)
                 {
                     zipCount++;
                     onlyZip = asset;
