@@ -68,9 +68,13 @@ A gzip-compressed JSON document:
 }
 ```
 
-- Every row in the local database is exported, **including rows that came from other PCs**. That
+- Every row of the tables above is exported, **including rows that came from other PCs**. That
   makes the merge transitive (a third PC gets everything) and costs nothing, because the import
   deduplicates.
+- **Career progress is not synced** (upstream's Career mode, merged 2026-10-17). Its tables live in
+  `scores.db` too, but they are not in the export, and imported `GameRecords` get fresh IDs with
+  no Career completion rows, so a tier finished on one PC stays locked on another while the scores
+  themselves sync. Left alone for now; syncing it means adding the Career tables to the format.
 - Auto-increment IDs (`GameRecord.Id`, `PlayerScoreRecord.Id`, the section tables' `Id`) are
   local and are not used for matching. Player scores are nested under their game so the link
   survives without them.

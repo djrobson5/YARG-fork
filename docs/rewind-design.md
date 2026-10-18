@@ -130,6 +130,7 @@ Roughly in dependency order, for later sessions to slice from:
 | Song speed | No restriction. Recorded input times are already song-time, so re-sim needs no conversion; sub-1.0 speed is already not a valid high score. |
 | Song ended | Offered for as long as the pause menu can open, including the end-delay tail after the last note. Once the end-of-song flow starts, nothing is offered. |
 | Cap | None, per run or per section. |
+| Career (upstream, 2026-10-17) | Available, and a rewound run counts toward Career completion and tier unlocks like any other score, including after a rewind from the fail menu. User decision 2026-10-17. |
 | Current section | A valid target (restart-section); the cursor starts there. |
 | First section | Rewinds to song start, since it owns the intro. Matches section-FC's index-0 folding; negative song time is already accepted. |
 | Section starting inside a BRE/coda | Not a target: dimmed and skipped like an unplayed section, because coda lane timers and the success latch cannot be re-entered cleanly without a `YARG.Core` edit. Sections before the BRE are fine; the fresh engine rebuilds the coda. |

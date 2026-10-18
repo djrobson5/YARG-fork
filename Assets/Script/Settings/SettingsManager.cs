@@ -87,24 +87,6 @@ namespace YARG.Settings
         {
             new MetadataTab("General", icon: "Engine")
             {
-                // Hidden outside of CI release builds (nothing to compare) and in offline
-                // mode. See docs/updater-design.md.
-                new HeaderMetadata("Updates", visibleWhen: IsUpdateCheckAvailable),
-                new ButtonRowMetadata(nameof(Settings.CheckForUpdates), IsUpdateCheckAvailable),
-
-                // Windows and macOS only. The rows below the provider grey out while it is Off.
-                new HeaderMetadata("ScoreSync", visibleWhen: IsScoreSyncAvailable),
-                new FieldMetadata(nameof(Settings.SyncProvider), visibleWhen: IsScoreSyncAvailable),
-                new FieldMetadata(nameof(Settings.SyncFolder), visibleWhen: IsScoreSyncAvailable),
-                new ButtonRowMetadata(nameof(Settings.SyncScoresNow), IsScoreSyncAvailable)
-                {
-                    EditableWhen = IsScoreSyncOn,
-                },
-                new StatusTextMetadata(ScoreSyncStatusLine, IsScoreSyncAvailable)
-                {
-                    EditableWhen = IsScoreSyncOn,
-                },
-
                 new HeaderMetadata("Calibration"),
                 new ButtonRowMetadata(nameof(Settings.OpenCalibrator)),
                 nameof(Settings.AudioCalibration),
@@ -152,6 +134,27 @@ namespace YARG.Settings
                 nameof(Settings.WrapAroundNavigation),
                 nameof(Settings.DiscordRichPresence),
                 nameof(Settings.AmIAwesome),
+
+                // Last, so General opens on Calibration as upstream's does (each header is a
+                // section under the new settings UI, and the first visible one is shown first).
+
+                // Hidden outside of CI release builds (nothing to compare) and in offline
+                // mode. See docs/updater-design.md.
+                new HeaderMetadata("Updates", visibleWhen: IsUpdateCheckAvailable),
+                new ButtonRowMetadata(nameof(Settings.CheckForUpdates), IsUpdateCheckAvailable),
+
+                // Windows and macOS only. The rows below the provider grey out while it is Off.
+                new HeaderMetadata("ScoreSync", visibleWhen: IsScoreSyncAvailable),
+                new FieldMetadata(nameof(Settings.SyncProvider), visibleWhen: IsScoreSyncAvailable),
+                new FieldMetadata(nameof(Settings.SyncFolder), visibleWhen: IsScoreSyncAvailable),
+                new ButtonRowMetadata(nameof(Settings.SyncScoresNow), IsScoreSyncAvailable)
+                {
+                    EditableWhen = IsScoreSyncOn,
+                },
+                new StatusTextMetadata(ScoreSyncStatusLine, IsScoreSyncAvailable)
+                {
+                    EditableWhen = IsScoreSyncOn,
+                },
             },
             new SongManagerTab("SongManager", icon: "Songs")
             {
