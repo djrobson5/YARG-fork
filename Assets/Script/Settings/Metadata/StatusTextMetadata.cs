@@ -18,7 +18,7 @@ namespace YARG.Settings.Metadata
         public bool IsEditable => EditableWhen?.Invoke() ?? true;
 
         public StatusTextMetadata(Func<string> text, Func<bool> visibleWhen = null)
-            : base(false, visibleWhen)
+            : base(visibleWhen)
         {
             Text = text;
         }

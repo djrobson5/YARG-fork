@@ -520,6 +520,7 @@ namespace YARG.Gameplay
             {
                 _pauseMenu.PopAllMenus();
                 _songRunner.Resume();
+                CloseAllPlayerMenus();
                 ResumeCore();
                 return;
             }
@@ -564,6 +565,7 @@ namespace YARG.Gameplay
             try
             {
                 _pauseMenu.PopAllMenus();
+                CloseAllPlayerMenus();
                 Time.timeScale = 1f;
 
                 // Update the last PauseInfo with the pause length. The list can legitimately be

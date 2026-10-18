@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -36,6 +36,12 @@ namespace YARG.Gameplay
 
         protected virtual void Awake()
         {
+            // Don't prewarm gameplay pools outside the gameplay scene
+            if (FindAnyObjectByType<GameManager>() == null)
+            {
+                return;
+            }
+
             PrewarmTo(_prewarmAmount);
         }
 
