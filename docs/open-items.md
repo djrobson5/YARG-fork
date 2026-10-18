@@ -9,12 +9,13 @@ Feature research lives in `docs/roadmap.md`; the state of each feature is in
 
 ## Branch state and next steps
 
-The branch is pushed to `origin/feature/section-fc` through `0ad84351` (the 2026-10-06 upstream
-merge). The macOS input commits after it (CRKD over Bluetooth, USB cable and wireless receiver) were
-held back to be pushed as one bundle once all three connections were verified, which they were on
-2026-10-17. Next steps in order: (1) install `v0.15.0-sectionfc.4` on the user's other (nightly)
-machine and confirm scores appear, (2) periodic merge of upstream `dev`, (3) optional updater
-slice 5.
+The branch is pushed to `origin/feature/section-fc` through `31671f6a` (the release workflow
+fix). Local and not yet pushed: `155550a4` (genres and song sources out of the macOS bundle),
+`88e594d4` (the 2026-10-17 upstream merge) and the Score Sync folder-row layout fix after it. Next
+steps in order: (1) push, review `c25aa01f..HEAD`, and tag `v0.15.0-sectionfc.11`, the first
+release with a macOS zip, (2) install `v0.15.0-sectionfc.4` or later on the user's other
+(nightly) machine and confirm scores appear, (3) periodic merge of upstream `dev`, (4) optional
+updater slice 5.
 
 ## Parked
 
@@ -42,6 +43,12 @@ slice 5.
 
 ## Done, lightly verified
 
+- **Upstream merge 2026-10-17 (upstream `dev` at `d3a03bea`, YARG.Core `7da84a1a`) — verified in-game
+  by the user on a local macOS build.** New settings UI, Career mode, the new time stretch. A song
+  played normally, the pause menu still offers Rewind to Section, and the settings rows checked out
+  once the Score Sync folder row was widened: upstream's layout gives the label 55% of a row, which
+  truncated the path, so `ScoreSyncFolderSetting.prefab` overrides the split to 25/75. Not yet
+  checked on Windows.
 - **Upstream merge 2026-10-06 (upstream `dev` at `f91ba737`, YARG.Core `6d4161d5`) — verified in-game
   by the user on the Windows build after the merge.** Free Harmonies earning no section credit and
   rewinding cleanly, missed phrases versus missed percussion on vocals and harmonies, score card
@@ -137,7 +144,7 @@ Accepted for v1. Detail and the issue each came from are in `docs/section-fc-han
   - **Hardware limits in Mode 1:** the lower frets report the same buttons as the upper ones, and tilt shares Back with the Star Power button and Select, so solo frets and tilt can't be told apart. Whammy is the left trigger, the joystick is the left stick, and there is no pickup-selector input.
 - **Mac player build works (2026-10-17).** `Editor.Build.CIBuild.BuildMac` builds an arm64-only player (`-buildTarget OSXUniversal`; the libusb dylibs have no x86_64 slice). The user verified a song scan, CRKD input, score saving and score sync in it. `libsqlite3.dylib` is x86_64-only and the player falls back to the system SQLite with no errors. `libVLCUnityPlugin.dylib` fails to load because upstream ships no `libvlc` on any platform, so video uses Unity's `VideoPlayer` fallback, as on Windows. Each local build makes `Assets/Settings/AddressableAssetsData/link.xml` (delete it), and upstream's `YargAudioAutoBuilder` may rebuild `libyarg_audio.dylib` on editor start when sources look newer after a checkout (revert it).
 - **Song folders whose names end in a period are unreadable on a Mac from an exFAT drive.** macOS's exFAT driver lists them but can't open, copy or rename them (109 folders on the user's drive, e.g. `H.E.R.`). Fix on Windows with `tools/fix-trailing-dot-names.ps1` (dry run by default, `-Apply` to rename); not yet run.
-- **Mac releases: CI job written, not yet run (2026-10-17).** `build-release.yml` builds the Mac player on Linux alongside Windows and publishes both zips in one release. Open: whether a Linux-built `.app` is code-signed (Apple silicon refuses unsigned arm64 code); if not, add an ad-hoc `rcodesign` step. The in-game updater stays Windows-only by design (`docs/updater-design.md`); on a Mac it only offers the release page.
+- **Mac releases: CI verified (2026-10-17).** `build-release.yml` builds the Mac player on Linux alongside Windows and publishes both zips in one release; test run 39084059442 (`publish=false`) passed on both. The Linux-built `.app` is ad-hoc signed and arm64-only, and passes `codesign --verify --deep --strict` as downloaded, so no `rcodesign` step is needed. YARG used to break that seal on first launch by downloading genres and song sources into StreamingAssets inside the bundle; on macOS they now go to the persistent data folder (`155550a4`). The in-game updater stays Windows-only by design (`docs/updater-design.md`); on a Mac it only offers the release page.
 
 ## Optional follow-ups (not requested)
 

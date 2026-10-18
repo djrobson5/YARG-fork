@@ -59,9 +59,11 @@ license belongs to.
 
 > `UNITY_SERIAL` is only for Plus/Pro licenses. Do not set it for Personal.
 
-A Personal license allows **two** activated seats. CI returns the license at the end of
-each run, but a cancelled/killed run can leak a seat. If activation starts failing with
-"too many activations", release seats at <https://id.unity.com/en/subscriptions>.
+Personal is an account-based seat now, not a count of per-machine activations: on
+2026-10-17 the Windows and macOS jobs activated from the same `UNITY_LICENSE` in parallel
+while the Mac editor was also licensed, with no errors. CI returns the license at the end
+of each run. If activation ever fails with "too many activations" (a cancelled or killed run
+can leak one), release it at <https://id.unity.com/en/subscriptions>.
 
 ### 1c. Repository settings you must check
 
