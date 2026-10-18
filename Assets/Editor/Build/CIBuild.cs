@@ -138,8 +138,10 @@ namespace Editor.Build
         /// <summary>
         /// Works out where the .exe or .app should land.
         /// game-ci's unity-builder passes <c>-customBuildPath</c> as a full path to the output *file*
-        /// (<c>&lt;workspace&gt;/&lt;buildsPath&gt;/&lt;target&gt;/&lt;buildName&gt;.exe</c>) plus
-        /// <c>-customBuildName</c>. When run by hand, <c>-buildPath</c> may be given as a directory instead.
+        /// plus <c>-customBuildName</c>. It only appends the extension for Windows
+        /// (<c>&lt;workspace&gt;/&lt;buildsPath&gt;/&lt;target&gt;/&lt;buildName&gt;.exe</c>); for macOS
+        /// the path has no extension, so it is completed here rather than treated as a directory.
+        /// When run by hand, <c>-buildPath</c> may be given as a directory instead.
         /// </summary>
         private static string ResolveOutputPath(BuildTarget target, string extension)
         {
@@ -149,13 +151,13 @@ namespace Editor.Build
                 name += extension;
             }
 
-            // game-ci passes a full file path here.
+            // game-ci passes a full file path here, with the extension on Windows only.
             string customBuildPath = GetArgument("-customBuildPath");
             if (!string.IsNullOrWhiteSpace(customBuildPath))
             {
                 return customBuildPath.EndsWith(extension, StringComparison.OrdinalIgnoreCase)
                     ? customBuildPath
-                    : Path.Combine(customBuildPath, name);
+                    : customBuildPath + extension;
             }
 
             // Manual invocation: -buildPath is a directory.

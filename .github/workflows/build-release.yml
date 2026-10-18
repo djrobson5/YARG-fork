@@ -80,8 +80,10 @@ jobs:
             buildMethod: Editor.Build.CIBuild.BuildMac
             assetSuffix: macOS-arm64
 
+    # Not "ZIP": Info-ZIP's zip reads $ZIP as default arguments, so the bare file name would
+    # become the archive path relative to the build folder.
     env:
-      ZIP: YARG-SectionFC_${{ needs.meta.outputs.version }}-${{ matrix.assetSuffix }}.zip
+      ASSET_ZIP: YARG-SectionFC_${{ needs.meta.outputs.version }}-${{ matrix.assetSuffix }}.zip
       BUILD_DIR: build/${{ matrix.targetPlatform }}
 
     steps:
@@ -208,19 +210,19 @@ jobs:
           cd "$BUILD_DIR"
           rm -rf ./*_BurstDebugInformation_DoNotShip ./*_BackUpThisFolder_ButDontShipItWithYourGame
           if [ "${{ matrix.targetPlatform }}" = "StandaloneOSX" ]; then
-            zip -qry "${GITHUB_WORKSPACE}/${ZIP}" YARG.app
+            zip -qry "${GITHUB_WORKSPACE}/${ASSET_ZIP}" YARG.app
           else
-            zip -qr "${GITHUB_WORKSPACE}/${ZIP}" .
+            zip -qr "${GITHUB_WORKSPACE}/${ASSET_ZIP}" .
           fi
           cd "${GITHUB_WORKSPACE}"
-          ls -alh "${ZIP}"
-          unzip -l "${ZIP}" | head -20
+          ls -alh "${ASSET_ZIP}"
+          unzip -l "${ASSET_ZIP}" | head -20
 
       - name: "[Post-build] Upload .zip to artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ZIP }}
-          path: ${{ env.ZIP }}
+          name: ${{ env.ASSET_ZIP }}
+          path: ${{ env.ASSET_ZIP }}
           retention-days: 14
 
   ###########################
