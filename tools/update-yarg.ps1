@@ -106,7 +106,7 @@ $UserAgent = 'YARG-fork-updater'
 $TagFilter = '-sectionfc'
 
 # The workflow names the asset "YARG-SectionFC_<tag>-Windows-x64.zip"
-# (.github/workflows/build-windows.yml, "[Setup] Resolve version" step).
+# (.github/workflows/build-release.yml, "[Setup] Resolve version" step).
 $AssetPattern = '^YARG-SectionFC_.*-Windows-x64\.zip$'
 
 # Marker file written into the install dir after a successful update, so the next run knows

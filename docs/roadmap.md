@@ -46,7 +46,7 @@ subfolder of Unity's `Application.persistentDataPath`
 hatch for testing an import without touching the live folder.
 
 **This fork's own builds are nightly-flavoured.** `Assets/Editor/Build/CIBuild.cs`
-defines `NIGHTLY_DEFINE = "YARG_NIGHTLY_BUILD"`, and `.github/workflows/build-windows.yml`
+defines `NIGHTLY_DEFINE = "YARG_NIGHTLY_BUILD"`, and `.github/workflows/build-release.yml`
 says so in its release notes. So the fork's packaged build reads and writes
 `…\YARG\nightly`, while day-to-day editor work writes `…\YARG\dev`. **These are two
 different databases** and any import plan has to name which one is the target.
@@ -375,7 +375,7 @@ on next launch.
 
 **Recycle Bin vs permanent delete.** No `Microsoft.VisualBasic` reference exists in any
 asmdef or in `Assets/packages.config`. The fork builds **both** Windows
-(`.github/workflows/build-windows.yml`, `StandaloneWindows64`) and macOS
+(`.github/workflows/build-release.yml`, `StandaloneWindows64`) and macOS
 (`build-release-mac.yml`, `StandaloneOSX`), so this is a genuine platform split. Pulling
 in the VB runtime for `FileSystem.DeleteDirectory(..., RecycleOption.SendToRecycleBin)`
 is an IL2CPP stripping/AOT risk; P/Invoking `SHFileOperation` from shell32 with
@@ -767,7 +767,7 @@ newer `-sectionfc` release, offer it, and apply it.
 
 **The build already knows its own release tag.** `Assets/Editor/Build/CIBuild.cs:156-165`
 reads `-version` / `-buildVersion` and assigns `PlayerSettings.bundleVersion = version`,
-and `.github/workflows/build-windows.yml` passes the release tag. So in a CI build
+and `.github/workflows/build-release.yml` passes the release tag. So in a CI build
 `Application.version` is exactly `v0.15.0-sectionfc.N` — a string that can be compared
 directly against a release tag with no parsing beyond the trailing integer.
 

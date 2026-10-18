@@ -1,13 +1,18 @@
-# Building and releasing a Windows player from CI
+# Building and releasing Windows and macOS players from CI
 
-This fork ships a GitHub Actions workflow that builds a Windows x64 YARG player and
-publishes it as a GitHub Release, so you can hand someone a `.zip` without asking them
-to install Unity.
+This fork ships a GitHub Actions workflow that builds a Windows x64 and a macOS arm64 YARG
+player and publishes both as one GitHub Release, so you can hand someone a `.zip` without
+asking them to install Unity.
 
-- Workflow: `.github/workflows/build-windows.yml`
-- Build entry point: `Assets/Editor/Build/CIBuild.cs` → `Editor.Build.CIBuild.BuildWindows`
+- Workflow: `.github/workflows/build-release.yml` (renamed from `build-windows.yml` on
+  2026-10-17, when the macOS build was added). Jobs: `meta` resolves the version, `build`
+  runs once per platform (a matrix, both on `ubuntu-latest` with game-ci; the macOS player
+  comes from the editor image's macOS module), and `release` publishes both zips once both
+  builds pass.
+- Build entry points: `Assets/Editor/Build/CIBuild.cs` → `Editor.Build.CIBuild.BuildWindows`
+  and `Editor.Build.CIBuild.BuildMac` (arm64 only: the libusb dylibs have no x86_64 slice).
 
-Upstream YARG has no Windows CI (only a stale macOS workflow pinned to Unity 2021), so
+Upstream YARG has no CI for these (only a stale macOS workflow pinned to Unity 2021), so
 this is fork-only machinery.
 
 ---
@@ -66,7 +71,7 @@ file exists **on the repository's default branch**. This fork's default branch i
 
 So one of these has to happen before you can dispatch it:
 
-- merge `feature/section-fc` (or at least `.github/workflows/build-windows.yml`) into
+- merge `feature/section-fc` (or at least `.github/workflows/build-release.yml`) into
   `master`, **or**
 - change the fork's default branch to `feature/section-fc` in the repo settings.
 
@@ -80,24 +85,27 @@ Once the file is on the default branch you can still run the build against any r
 ### By dispatch
 
 ```powershell
-gh workflow run build-windows.yml `
+gh workflow run build-release.yml `
   --repo djrobson5/YARG-fork `
   --ref feature/section-fc `
   -f version=v0.15.0-sectionfc.1 `
   -f prerelease=true
 ```
 
+Add `-f publish=false` to build both zips as run artifacts (kept 14 days) without creating a
+release, e.g. to test a workflow change.
+
 Watch it:
 
 ```powershell
-gh run list --repo djrobson5/YARG-fork --workflow build-windows.yml --limit 1
+gh run list --repo djrobson5/YARG-fork --workflow build-release.yml --limit 1
 gh run watch --repo djrobson5/YARG-fork <run-id>
 ```
 
 (`gh run watch` with no run id drops into an interactive picker.)
 
-`version` is used as the release tag, in the release title, and in the asset filename
-(`YARG-SectionFC_<version>-Windows-x64.zip`). It is also stamped into
+`version` is used as the release tag, in the release title, and in the asset filenames
+(`YARG-SectionFC_<version>-Windows-x64.zip`, `YARG-SectionFC_<version>-macOS-arm64.zip`). It is also stamped into
 `PlayerSettings.bundleVersion`.
 
 ### By tag
@@ -339,7 +347,7 @@ failure happens earlier, in the editor compile.
   `Packages/manifest.json` entry is deliberately left at `0.5.3` — embedded packages take
   precedence over registry ones, so it is inert, but it keeps a working fallback if the folder is
   ever deleted.
-- `.github/workflows/build-windows.yml` has a `[Setup] Check vendored HIDrogen is present` step
+- `.github/workflows/build-release.yml` has a `[Setup] Check vendored HIDrogen is present` step
   that fails in seconds if the folder or the `OS: AnyOS` line goes missing.
 
 Loosening the *editor* import setting does not make the Linux editor try to P/Invoke into

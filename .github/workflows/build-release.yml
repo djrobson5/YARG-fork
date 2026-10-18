@@ -1,4 +1,4 @@
-name: Build Windows release
+name: Build release
 
 on:
   workflow_dispatch:
@@ -9,6 +9,10 @@ on:
         type: string
       prerelease:
         description: "Mark the GitHub release as a pre-release"
+        default: true
+        type: boolean
+      publish:
+        description: "Publish a GitHub release (off: build the zips as artifacts only)"
         default: true
         type: boolean
   push:
@@ -25,29 +29,62 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: Windows x64 player
+  ###########################
+  #      Resolve inputs     #
+  ###########################
+  meta:
+    name: Resolve version
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      publish: ${{ steps.meta.outputs.publish }}
     steps:
-      ###########################
-      #        Resolve inputs   #
-      ###########################
       - name: "[Setup] Resolve version"
         id: meta
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
             VERSION="${GITHUB_REF_NAME}"
             PRERELEASE="true"
+            PUBLISH="true"
           else
             VERSION="${{ inputs.version }}"
             PRERELEASE="${{ inputs.prerelease }}"
+            PUBLISH="${{ inputs.publish }}"
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
-          echo "zip=YARG-SectionFC_${VERSION}-Windows-x64.zip" >> "$GITHUB_OUTPUT"
+          echo "publish=${PUBLISH}" >> "$GITHUB_OUTPUT"
 
+  ###########################
+  #          Build          #
+  ###########################
+  build:
+    name: ${{ matrix.name }} player
+    needs: meta
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    strategy:
+      # One platform failing should not cancel the other's build
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            targetPlatform: StandaloneWindows64
+            buildMethod: Editor.Build.CIBuild.BuildWindows
+            assetSuffix: Windows-x64
+          # Built on Linux like Windows: the editor image's macOS module produces the .app
+          - name: macOS arm64
+            targetPlatform: StandaloneOSX
+            buildMethod: Editor.Build.CIBuild.BuildMac
+            assetSuffix: macOS-arm64
+
+    env:
+      ZIP: YARG-SectionFC_${{ needs.meta.outputs.version }}-${{ matrix.assetSuffix }}.zip
+      BUILD_DIR: build/${{ matrix.targetPlatform }}
+
+    steps:
       ###########################
       #       Disk space        #
       ###########################
@@ -114,9 +151,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: Library
-          key: YARG-Library-StandaloneWindows64-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
+          key: YARG-Library-${{ matrix.targetPlatform }}-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
           restore-keys: |
-            YARG-Library-StandaloneWindows64-
+            YARG-Library-${{ matrix.targetPlatform }}-
             YARG-Library-
 
       ###########################
@@ -130,15 +167,15 @@ jobs:
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
           unityVersion: 6000.3.5f2
-          targetPlatform: StandaloneWindows64
+          targetPlatform: ${{ matrix.targetPlatform }}
           buildName: YARG
           buildsPath: build
-          buildMethod: Editor.Build.CIBuild.BuildWindows
+          buildMethod: ${{ matrix.buildMethod }}
           # Take the version verbatim from the workflow input rather than deriving a
           # semantic version from git tags (which would also trip the dirty-tree check,
           # since NuGetForUnity writes into Assets/Packages).
           versioning: Custom
-          version: ${{ steps.meta.outputs.version }}
+          version: ${{ needs.meta.outputs.version }}
           allowDirtyBuild: true
           # Produce build output owned by the runner user so the later steps (and the
           # Library cache save) can read and write it without sudo.
@@ -146,47 +183,72 @@ jobs:
 
       - name: "[Build] Show build output"
         run: |
-          ls -alh build/StandaloneWindows64
+          ls -alh "$BUILD_DIR"
           # unity-builder reports success from the container exit code alone, so make sure
           # the player actually exists before we try to package it.
-          test -f build/StandaloneWindows64/YARG.exe
-          test -d build/StandaloneWindows64/YARG_Data
+          if [ "${{ matrix.targetPlatform }}" = "StandaloneOSX" ]; then
+            test -x "$BUILD_DIR/YARG.app/Contents/MacOS/YARG"
+            ls -alh "$BUILD_DIR/YARG.app/Contents/PlugIns"
+          else
+            test -f "$BUILD_DIR/YARG.exe"
+            test -d "$BUILD_DIR/YARG_Data"
+          fi
 
       ###########################
       #        Compress         #
       ###########################
-      # Zip from inside the build folder so YARG.exe sits at the archive root.
       # Unity emits sidecar folders next to the player that must not be shipped:
       # <name>_BurstDebugInformation_DoNotShip (Burst is pulled in via Collections/URP) and,
       # if the scripting backend is ever switched to IL2CPP,
       # <name>_BackUpThisFolder_ButDontShipItWithYourGame.
+      # Windows zips the folder's contents so YARG.exe sits at the archive root; macOS zips
+      # YARG.app itself, keeping symlinks (-y) and the executable bit.
       - name: "[Post-build] Compress to a .zip"
         run: |
-          cd build/StandaloneWindows64
+          cd "$BUILD_DIR"
           rm -rf ./*_BurstDebugInformation_DoNotShip ./*_BackUpThisFolder_ButDontShipItWithYourGame
-          zip -qr "${GITHUB_WORKSPACE}/${{ steps.meta.outputs.zip }}" .
+          if [ "${{ matrix.targetPlatform }}" = "StandaloneOSX" ]; then
+            zip -qry "${GITHUB_WORKSPACE}/${ZIP}" YARG.app
+          else
+            zip -qr "${GITHUB_WORKSPACE}/${ZIP}" .
+          fi
           cd "${GITHUB_WORKSPACE}"
-          ls -alh "${{ steps.meta.outputs.zip }}"
-          unzip -l "${{ steps.meta.outputs.zip }}" | head -20
+          ls -alh "${ZIP}"
+          unzip -l "${ZIP}" | head -20
 
       - name: "[Post-build] Upload .zip to artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.meta.outputs.zip }}
-          path: ${{ steps.meta.outputs.zip }}
+          name: ${{ env.ZIP }}
+          path: ${{ env.ZIP }}
           retention-days: 14
 
-      ###########################
-      #         Release         #
-      ###########################
+  ###########################
+  #         Release         #
+  ###########################
+  # One job publishes both zips, so the two builds never race to create the same release.
+  release:
+    name: Publish release
+    needs: [meta, build]
+    if: needs.meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "[Release] Download the zips"
+        uses: actions/download-artifact@v4
+        with:
+          pattern: YARG-SectionFC_*
+          merge-multiple: true
+          path: dist
+
       - name: "[Release] Publish GitHub release"
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.meta.outputs.version }}
-          name: ${{ steps.meta.outputs.version }}
-          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          tag_name: ${{ needs.meta.outputs.version }}
+          name: ${{ needs.meta.outputs.version }}
+          prerelease: ${{ needs.meta.outputs.prerelease == 'true' }}
           generate_release_notes: true
-          files: ${{ steps.meta.outputs.zip }}
+          files: dist/*.zip
           body: |
             **Unofficial fork build.** This is not an official YARG release and is not
             supported by the YARC team — please do not report bugs from this build upstream.
@@ -194,13 +256,23 @@ jobs:
             Built from `${{ github.ref_name }}` (`${{ github.sha }}`) with the **Section FC**
             feature, which tracks and displays per-section full-combo progress.
 
-            ### Install
-            1. Download the `.zip` below and unzip it anywhere.
+            ### Install on Windows
+            1. Download the `-Windows-x64.zip` below and unzip it anywhere.
             2. Run `YARG.exe`.
 
-            This build is **not compatible with the YARC Launcher** — the launcher will not
-            see it and cannot update it. Install and update it by hand.
+            ### Install on macOS (Apple silicon)
+            1. Download the `-macOS-arm64.zip` below, unzip it, and move `YARG.app` to
+               Applications.
+            2. The app is not notarized, so macOS blocks the first launch. Right-click
+               `YARG.app` → Open → Open, or run `xattr -dr com.apple.quarantine /Applications/YARG.app`.
+            3. A CRKD guitar over Bluetooth needs Input Monitoring for YARG (System Settings →
+               Privacy & Security). USB and the wireless receiver need nothing.
 
-            It is a nightly-flavoured build, so its settings, scores and song cache live in
-            `%USERPROFILE%\AppData\LocalLow\YARC\YARG\nightly` — separate from a stable YARG
-            install (which uses `...\release`). Your official install is left untouched.
+            These builds are **not compatible with the YARC Launcher** — the launcher will not
+            see them and cannot update them. Install and update them by hand.
+
+            They are nightly-flavoured builds, so settings, scores and the song cache live in
+            the nightly data folder, separate from a stable YARG install: Windows
+            `%USERPROFILE%\AppData\LocalLow\YARC\YARG\nightly`, macOS
+            `~/Library/Application Support/YARC/YARG/nightly`. Your official install is left
+            untouched.

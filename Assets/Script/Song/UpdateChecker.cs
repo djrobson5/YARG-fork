@@ -94,7 +94,7 @@ namespace YARG.Song
 
         /// <summary>
         /// The name the release workflow gives the Windows build
-        /// (<c>.github/workflows/build-windows.yml</c>, "[Setup] Resolve version").
+        /// (<c>.github/workflows/build-release.yml</c>, "[Setup] Resolve version").
         /// </summary>
         private static readonly Regex WindowsAssetPattern =
             new(@"^YARG-SectionFC_.*-Windows-x64\.zip$",

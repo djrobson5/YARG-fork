@@ -358,7 +358,7 @@ Why this beats the alternatives:
 - **vs. a replay-based check:** needs a recorded replay per scenario, and the replay format is versioned upstream.
 
 **Making it permanent:** add a `dotnet test Tools/SpPathTests` step to
-`.github/workflows/build-windows.yml` before the Unity build (or a small dedicated
+`.github/workflows/build-release.yml` before the Unity build (or a small dedicated
 workflow). It needs no Unity licence and no `Assets/Packages/` bootstrap, so it is the
 cheapest possible CI gate. Agents run it locally with
 `dotnet test Tools/SpPathTests/SpPathTests.csproj -nologo -v q`.

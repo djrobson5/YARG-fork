@@ -137,7 +137,7 @@ Accepted for v1. Detail and the issue each came from are in `docs/section-fc-han
   - **Hardware limits in Mode 1:** the lower frets report the same buttons as the upper ones, and tilt shares Back with the Star Power button and Select, so solo frets and tilt can't be told apart. Whammy is the left trigger, the joystick is the left stick, and there is no pickup-selector input.
 - **Mac player build works (2026-10-17).** `Editor.Build.CIBuild.BuildMac` builds an arm64-only player (`-buildTarget OSXUniversal`; the libusb dylibs have no x86_64 slice). The user verified a song scan, CRKD input, score saving and score sync in it. `libsqlite3.dylib` is x86_64-only and the player falls back to the system SQLite with no errors. `libVLCUnityPlugin.dylib` fails to load because upstream ships no `libvlc` on any platform, so video uses Unity's `VideoPlayer` fallback, as on Windows. Each local build makes `Assets/Settings/AddressableAssetsData/link.xml` (delete it), and upstream's `YargAudioAutoBuilder` may rebuild `libyarg_audio.dylib` on editor start when sources look newer after a checkout (revert it).
 - **Song folders whose names end in a period are unreadable on a Mac from an exFAT drive.** macOS's exFAT driver lists them but can't open, copy or rename them (109 folders on the user's drive, e.g. `H.E.R.`). Fix on Windows with `tools/fix-trailing-dot-names.ps1` (dry run by default, `-Apply` to rename); not yet run.
-- **No Mac releases yet.** `build-windows.yml` ships only the Windows zip, and the in-game updater is Windows-only by design (`docs/updater-design.md`). A Mac job is next.
+- **Mac releases: CI job written, not yet run (2026-10-17).** `build-release.yml` builds the Mac player on Linux alongside Windows and publishes both zips in one release. Open: whether a Linux-built `.app` is code-signed (Apple silicon refuses unsigned arm64 code); if not, add an ad-hoc `rcodesign` step. The in-game updater stays Windows-only by design (`docs/updater-design.md`); on a Mac it only offers the release page.
 
 ## Optional follow-ups (not requested)
 
@@ -150,7 +150,7 @@ Accepted for v1. Detail and the issue each came from are in `docs/section-fc-han
 
 - Merge upstream `dev` into `feature/section-fc` every week or two; routine in `docs/section-fc-handoff.md` (Nightly tracking).
 - Disable the Crowdin and label-conflicts workflows in the fork's Actions tab; they exist on the default branch and fail without upstream's secrets.
-- If the `Library` cache in `build-windows.yml` never saves (GitHub's 10 GB cap), remove the cache step to save time.
+- If the `Library` cache in `build-release.yml` never saves (GitHub's 10 GB cap), remove the cache step to save time.
 - The release pipeline is proven as of `v0.15.0-sectionfc.1` (run 33797702460); outcome recorded in `docs/release-build.md`. The `Library` cache did save on that run (~1.28 GB, well under GitHub's 10 GB cap), so the "cache never saves" concern above did not materialize — but it was a cold-cache first save, so watch whether it still saves once the cache grows over repeated runs.
 - Downloaded update zips accumulate under `nightly/updates` (roughly 130 MB per version) and are never pruned; periodically clear old ones by hand.
 - The updater helper deletes any folder named `backup` beside the install when it makes a new one, so don't keep anything else there under that name.
