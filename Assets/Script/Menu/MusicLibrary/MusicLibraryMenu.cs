@@ -2,9 +2,10 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
-using System.Threading.Tasks;
+using Cysharp.Threading.Tasks;
 using TMPro;
 using UnityEngine;
+using YARG.Audio;
 using YARG.Core;
 using YARG.Core.Audio;
 using YARG.Core.Game;
@@ -170,11 +171,13 @@ namespace YARG.Menu.MusicLibrary
         private CancellationTokenSource _previewCanceller;
         private PreviewContext _previewContext;
 
-        // The in-flight PreviewContext.Create, if any. Until it finishes it holds the song's
-        // audio files open through LoadPreviewAudio without _previewContext being set yet, so a
-        // file operation has to await this as well as the running preview.
-        private Task _previewStartTask;
+        // The latest PreviewPlayer.StartPreview task. Until it finishes, PreviewContext.Create may
+        // hold the song's audio files open with no preview playing yet, so a file operation has to
+        // await this as well as stopping the running preview. Preserved so it can be awaited later.
+        private UniTask _previewStartTask;
         private double _previewDelay;
+
+        private readonly PreviewPlayer _previewPlayer = new();
 
         private SongEntry _currentSong;
         public List<(string, int)> Shortcuts { get; private set; } = new();
@@ -257,6 +260,8 @@ namespace YARG.Menu.MusicLibrary
             }
             else if (_reloadState == MusicLibraryReloadState.Partial)
             {
+                SetRecommendedSongs();
+
                 // Note that the order matters here: SelectedPlaylist must be set before calling UpdateSearch,
                 // but SelectedIndex must be set _after_ calling UpdateSearch
                 SelectedPlaylist = _savedPlaylist;
@@ -529,8 +534,7 @@ namespace YARG.Menu.MusicLibrary
             }
 
             StopPreview();
-            _previewCanceller = new CancellationTokenSource();
-            StartPreview(_previewDelay, _previewCanceller);
+            StartPreview(_previewDelay);
 
             _previewDelay = PREVIEW_SCROLL_DELAY;
         }
@@ -742,7 +746,11 @@ namespace YARG.Menu.MusicLibrary
                 }
 
                 var secondaryAlbumSort = SettingsManager.Settings.SecondaryAlbumSort.Value;
-                if (includeSongs && SettingsManager.Settings.LibrarySort == SortAttribute.Source &&
+                // Qualified filters preserve the configured sort hierarchy, just like primary
+                // headers do. Unrestricted text searches flatten results by relevance instead.
+                bool includeSecondaryGroups = includeSongs &&
+                    (!_searchField.IsSearching || !_searchField.IsUnspecified);
+                if (includeSecondaryGroups && SettingsManager.Settings.LibrarySort == SortAttribute.Source &&
                     SettingsManager.Settings.SecondarySourceSort.Value == SecondarySourceSortMode.Intensity)
                 {
                     var players = PlayerContainer.Players
@@ -790,7 +798,7 @@ namespace YARG.Menu.MusicLibrary
                         intensityHeader.HasGoldStars = !intensityHasNonGoldSong;
                     }
                 }
-                else if (includeSongs && SettingsManager.Settings.LibrarySort >= SortAttribute.Instrument &&
+                else if (includeSecondaryGroups && SettingsManager.Settings.LibrarySort >= SortAttribute.Instrument &&
                     SettingsManager.Settings.SecondaryIntensitySort.Value == SecondaryIntensitySortMode.Source)
                 {
                     var sourceGroups = displayedSongs
@@ -831,7 +839,8 @@ namespace YARG.Menu.MusicLibrary
                         sourceHeader.HasGoldStars = !sourceHasNonGoldSong;
                     }
                 }
-                else if (includeSongs && SettingsManager.Settings.LibrarySort == SortAttribute.Artist &&
+                else if (includeSecondaryGroups &&
+                    SettingsManager.Settings.LibrarySort == SortAttribute.Artist &&
                     secondaryAlbumSort != SecondaryAlbumSortMode.Off)
                 {
                     IEnumerable<IGrouping<SortString, SongEntry>> albumGroups = displayedSongs
@@ -908,9 +917,7 @@ namespace YARG.Menu.MusicLibrary
         private void ExitLibrary()
         {
             ShowPlaylist.Clear();
-            _previewCanceller?.Cancel();
-            _previewContext?.Dispose();
-            _previewContext = null;
+            _ = _previewPlayer.StopPreview();
             StemSettings.ApplySettings = true;
             MenuManager.Instance.PopMenu();
         }
@@ -969,7 +976,12 @@ namespace YARG.Menu.MusicLibrary
 
         private void StopPreview(bool clearCurrentSong = false)
         {
-            _ = StopPreviewAsync(clearCurrentSong);
+            if (clearCurrentSong)
+            {
+                _currentSong = null;
+            }
+
+            _ = _previewPlayer.StopPreview();
         }
 
         /// <summary>
@@ -979,78 +991,28 @@ namespace YARG.Menu.MusicLibrary
         /// Must be awaited before touching a song's files on disk — the preview holds them
         /// open, and a delete would fail with a sharing violation on Windows.
         /// <para>
-        /// Stopping the running preview is not enough on its own: a <c>PreviewContext.Create</c>
-        /// started moments ago may still be inside <c>LoadPreviewAudio</c>, holding the same
-        /// files with nothing yet assigned to <c>_previewContext</c>. Cancelling only asks it to
-        /// stop, so the create task has to be awaited too.
+        /// <c>PreviewPlayer.StopPreview</c> is not enough on its own: a preview started moments
+        /// ago may still be inside <c>PreviewContext.Create</c>, holding the same files, and
+        /// stopping only cancels it. Awaiting the start task covers that case, since a cancelled
+        /// start disposes whatever context it produced before completing.
         /// </para>
         /// </remarks>
-        public async Task StopPreviewForFileOperationAsync()
+        public async UniTask StopPreviewForFileOperationAsync()
         {
             var startTask = _previewStartTask;
-
-            // Cancels the token the in-flight create is watching, then waits out the preview.
-            await StopPreviewAsync(true);
-
-            if (startTask != null)
-            {
-                try
-                {
-                    await startTask;
-                }
-                catch (Exception ex)
-                {
-                    YargLogger.LogException(ex, "Error while waiting for the song preview to load.");
-                }
-            }
-
-            // If the create landed after the cancel, it installed a fresh context. Clear that too.
-            await StopPreviewAsync(true);
-
-            _previewStartTask = null;
-        }
-
-        private async Task StopPreviewAsync(bool clearCurrentSong = false)
-        {
-            if (clearCurrentSong)
-            {
-                _currentSong = null;
-            }
-
-            // Snapshot the current preview before awaiting so a newer preview started in the meantime
-            // cannot be canceled, disposed, or cleared by this older shutdown path.
-            var previewCanceller = _previewCanceller;
-            var previewContext = _previewContext;
-
-            _previewCanceller = null;
-            _previewContext = null;
-
-            previewCanceller?.Cancel();
-            if (previewContext != null)
-            {
-                await previewContext.WaitForCompletionAsync();
-
-                // The loop task returns without disposing if it threw, which leaves the mixer
-                // holding the song's audio files open and blocks moving or deleting them.
-                // PreviewContext.Dispose is idempotent, so this is a no-op on the normal path.
-                previewContext.Dispose();
-            }
-
-            previewCanceller?.Dispose();
-        }
-
-        private void DisposePreview()
-        {
-            var previewCanceller = _previewCanceller;
-            var previewContext = _previewContext;
-
-            _previewCanceller = null;
-            _previewContext = null;
+            _previewStartTask = default;
             _currentSong = null;
 
-            previewCanceller?.Cancel();
-            previewContext?.Dispose();
-            previewCanceller?.Dispose();
+            await _previewPlayer.StopPreview();
+
+            try
+            {
+                await startTask;
+            }
+            catch (Exception ex)
+            {
+                YargLogger.LogException(ex, "Error while waiting for the song preview to load.");
+            }
         }
 
         private void EnterPlaylistSelectFromLibrary()
@@ -1079,13 +1041,7 @@ namespace YARG.Menu.MusicLibrary
             }
         }
 
-        private void StartPreview(double delay, CancellationTokenSource canceller)
-        {
-            // Kept so a file operation can wait for a create that has not landed yet.
-            _previewStartTask = StartPreviewAsync(delay, canceller);
-        }
-
-        private async Task StartPreviewAsync(double delay, CancellationTokenSource canceller)
+        private void StartPreview(double delay)
         {
             if (_currentSong == null)
             {
@@ -1104,25 +1060,13 @@ namespace YARG.Menu.MusicLibrary
                 return;
             }
 
-            var context = await PreviewContext.Create(
+            _previewStartTask = _previewPlayer.StartPreview(
                 _currentSong,
                 previewVolume,
                 GlobalVariables.State.SongSpeed,
                 delay,
                 FADE_DURATION,
-                SettingsManager.Settings.CensorMatureContent.Value,
-                canceller.Token);
-            if (context != null)
-            {
-                if (_previewCanceller == canceller && !canceller.IsCancellationRequested)
-                {
-                    _previewContext = context;
-                }
-                else
-                {
-                    context.Dispose();
-                }
-            }
+                SettingsManager.Settings.CensorMatureContent.Value).Preserve();
         }
 
         protected override void OnDisable()
@@ -1157,7 +1101,7 @@ namespace YARG.Menu.MusicLibrary
 
         private void OnDestroy()
         {
-            DisposePreview();
+            _previewPlayer.Dispose();
             _reloadState = MusicLibraryReloadState.Partial;
             StemSettings.ApplySettings = true;
         }
@@ -1641,7 +1585,7 @@ namespace YARG.Menu.MusicLibrary
             using var context = new LoadingContext();
 
             // Stop any library preview audio so the loading screen doesn't inherit it
-            await StopPreviewAsync();
+            await _previewPlayer.StopPreview();
 
             SetSidebarDifficultiesVisible(false);
             _sidebar.gameObject.SetActive(false);

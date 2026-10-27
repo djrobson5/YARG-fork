@@ -1,6 +1,6 @@
 # Open Items
 
-Running list of known issues and possible follow-ups for the fork. Last updated 2026-10-17. Remove items when done; note the commit.
+Running list of known issues and possible follow-ups for the fork. Last updated 2026-10-27. Remove items when done; note the commit.
 
 Feature research lives in `docs/roadmap.md`; the state of each feature is in
 `docs/section-fc-handoff.md` → "Roadmap work, 2026-09-03". Rewind to section is in
@@ -37,6 +37,17 @@ scores appear, (3) periodic merge of upstream `dev`, (4) optional updater slice 
 
 ## Needs verification
 
+- **Upstream merge 2026-10-27 (upstream `dev` at `696e149f`, YARG.Core `9dafd346`) — compiles and
+  SpPathTests pass, not yet played.** Brings section preview audio in practice mode, Career tier
+  changes, the 5-lane-keys lift option and a list-menu/slider refactor. Two conflicts:
+  `SliderSetting` now carries both the fork's `step` and upstream's `wholeNumbers`/`clampMax`/
+  `inputMax` (step snaps first, `step` is the last parameter); and upstream moved library previews
+  into `PreviewPlayer`, so `MusicLibraryMenu.StopPreviewForFileOperationAsync` now stops the player
+  and awaits the preserved start task, which disposes any context a cancelled start produced.
+  Check in-game: Delete Song on the song whose preview is playing and on one selected a moment
+  earlier (no sharing-violation toast on Windows), the three stepped sliders (Rewind lead-in, SP
+  path chip lead-in and hold), and a practice-mode run with Rewind to Section now that practice has
+  no `CrowdEventHandler`.
 - **`tools/update-yarg.ps1`'s own copy-over-and-relaunch step is still untested against a real
   install**, if that remains true per `docs/updater-design.md`. The in-game helper path is verified
   (see "Done, lightly verified" below).

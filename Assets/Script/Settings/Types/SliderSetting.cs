@@ -9,6 +9,9 @@ namespace YARG.Settings.Types
 
         public float Min { get; private set; }
         public float Max { get; private set; }
+        public bool WholeNumbers { get; }
+        public bool ClampMax { get; }
+        public Func<float> InputMax { get; }
 
         /// <summary>
         /// Increment the value snaps to, or <c>0</c> for a continuous slider.
@@ -21,10 +24,14 @@ namespace YARG.Settings.Types
         public float Step { get; private set; }
 
         public SliderSetting(float value, float min = float.NegativeInfinity, float max = float.PositiveInfinity,
-            Action<float> onChange = null, float step = 0f) : base(onChange)
+            Action<float> onChange = null, bool wholeNumbers = false, bool clampMax = true,
+            Func<float> inputMax = null, float step = 0f) : base(onChange)
         {
             Min = min;
             Max = max;
+            WholeNumbers = wholeNumbers;
+            ClampMax = clampMax;
+            InputMax = inputMax;
             Step = step;
 
             _value = value;
@@ -38,7 +45,10 @@ namespace YARG.Settings.Types
                 value = Min + Mathf.Round((value - Min) / Step) * Step;
             }
 
-            _value = Mathf.Clamp(value, Min, Max);
+            if (WholeNumbers)
+                value = Mathf.Round(value);
+
+            _value = ClampMax ? Mathf.Clamp(value, Min, Max) : Mathf.Max(value, Min);
         }
 
         public override bool ValueEquals(float value)
