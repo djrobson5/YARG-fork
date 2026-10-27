@@ -9,14 +9,13 @@ Feature research lives in `docs/roadmap.md`; the state of each feature is in
 
 ## Branch state and next steps
 
-`feature/section-fc` was renamed to `main` (the default branch) on 2026-10-17, when the Section FC work was declared done; new work goes on `feature/<name>` branches off `main`. It is pushed through `6cbf1220`, which is tagged
-`v0.15.0-sectionfc.11` (2026-10-17): the first release with both a Windows x64 zip and a macOS
-arm64 zip, and the first to include the 2026-10-17 upstream merge. Release run 39096297927
-passed every job in about 13 minutes. The Mac zip passed `codesign --verify --deep --strict`
-before and after a launch from `/Applications`, so the `155550a4` fix holds on a CI build. That
-run also warned that `ubuntu-latest` moves to Ubuntu 26 from 2026-10-19; if the next release
-breaks on the runner image, pin `ubuntu-24.04` in `build-release.yml`. Next steps in order:
-(1) play one song on the `.11` Windows build (the merge was only play-tested on the Mac),
+`feature/section-fc` was renamed to `main` (the default branch) on 2026-10-17, when the Section FC work was declared done; new work goes on `feature/<name>` branches off `main`. It is pushed through `a1a5e3ca` (the 2026-10-27 upstream merge), which is tagged
+`v0.15.0-sectionfc.12` (2026-10-27), with a Windows x64 zip and a macOS arm64 zip. Release run
+40592537175 passed every job on the Ubuntu 26 `ubuntu-latest` image, so no runner pin is needed.
+The previous release, `v0.15.0-sectionfc.11` (`6cbf1220`, run 39096297927), was the first with
+both zips and the first to include the 2026-10-17 upstream merge. Next steps in order:
+(1) play `.12` on Windows and the Mac, including the 2026-10-27 merge checks under "Needs
+verification" (the 2026-10-17 merge was also only play-tested on the Mac),
 (2) install `v0.15.0-sectionfc.4` or later on the user's other (nightly) machine and confirm
 scores appear, (3) periodic merge of upstream `dev`, (4) optional updater slice 5.
 
