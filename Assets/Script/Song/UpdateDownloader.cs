@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Threading;
@@ -25,7 +26,7 @@ namespace YARG.Song
             /// <summary>The build was downloaded, verified, extracted and looks like a YARG build.</summary>
             Staged,
 
-            /// <summary>The release carried no Windows .zip asset to download.</summary>
+            /// <summary>The release carried no .zip asset for this platform to download.</summary>
             NoAsset,
 
             /// <summary>The download never completed (offline, timeout, 404 on the asset).</summary>
@@ -43,7 +44,10 @@ namespace YARG.Song
             /// </summary>
             StageIoError,
 
-            /// <summary>The extracted tree is not a YARG build (no YARG.exe or no YARG_Data).</summary>
+            /// <summary>
+            /// The extracted tree is not a YARG build: no YARG.exe or no YARG_Data on Windows, no
+            /// YARG.app bundle on macOS.
+            /// </summary>
             InvalidLayout,
 
             /// <summary>The user closed the progress dialog. Nothing to report.</summary>
@@ -209,13 +213,13 @@ namespace YARG.Song
             }
 
             // The workflow zips from inside build/StandaloneWindows64, so YARG.exe and YARG_Data
-            // are at the archive root. If that ever changes, catch it here rather than after the
-            // apply step has already clobbered an install.
-            if (!File.Exists(Path.Combine(tempPath, "YARG.exe")) ||
-                !Directory.Exists(Path.Combine(tempPath, "YARG_Data")))
+            // are at the archive root; the macOS zip holds YARG.app at its root. If that ever
+            // changes, catch it here rather than after the apply step has already clobbered an
+            // install.
+            if (!UpdateInstaller.IsStagedBuildValid(tempPath))
             {
                 YargLogger.LogFormatWarning(
-                    "The staged build at {0} has no YARG.exe and/or YARG_Data at its root; refusing it.",
+                    "The staged build at {0} does not have a YARG build at its root; refusing it.",
                     tempPath);
                 DeleteDirectoryQuietly(tempPath);
                 return new UpdateStageResult(StageStatus.InvalidLayout);
@@ -354,8 +358,77 @@ namespace YARG.Song
             }
 
             Directory.CreateDirectory(tempPath);
+
+#if UNITY_STANDALONE_OSX
+            // ZipFile drops the executable bit and turns the bundle's symlinks into plain files,
+            // which leaves an app that will not launch and whose signature no longer verifies.
+            // ditto is what Finder's own unzip uses and keeps both.
+            if (RunTool("/usr/bin/ditto", $"-x -k {QuoteArgument(zipPath)} {QuoteArgument(tempPath)}") != 0)
+            {
+                throw new InvalidDataException($"ditto could not extract {zipPath}.");
+            }
+
+            // The release publishes no checksum, so the code signature is the check that the
+            // bundle came out of the archive intact. A missing bundle is left for the layout
+            // check to report.
+            string app = Path.Combine(tempPath, UpdateInstaller.MAC_BUNDLE_NAME);
+            if (Directory.Exists(app) &&
+                RunTool("/usr/bin/codesign", $"--verify --deep --strict {QuoteArgument(app)}") != 0)
+            {
+                throw new InvalidDataException($"The extracted {app} does not pass codesign --verify.");
+            }
+#else
             ZipFile.ExtractToDirectory(zipPath, tempPath);
+#endif
         }
+
+#if UNITY_STANDALONE_OSX
+        /// <summary>
+        /// Runs a command-line tool to completion and returns its exit code, logging whatever it
+        /// printed. Runs on a thread pool thread; must touch no Unity API.
+        /// </summary>
+        private static int RunTool(string fileName, string arguments)
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = arguments,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+
+            using var process = Process.Start(startInfo);
+            if (process == null)
+            {
+                throw new IOException($"{fileName} did not start.");
+            }
+
+            // Read both streams before waiting, or a tool that fills one pipe blocks forever.
+            var stderr = process.StandardError.ReadToEndAsync();
+            string stdout = process.StandardOutput.ReadToEnd();
+            process.WaitForExit();
+
+            string output = (stdout + stderr.Result).Trim();
+            if (process.ExitCode != 0)
+            {
+                YargLogger.LogFormatWarning<string, int, string>("{0} exited with {1}: {2}", fileName, process.ExitCode, output);
+            }
+
+            return process.ExitCode;
+        }
+
+        /// <summary>
+        /// Quotes a path for <see cref="ProcessStartInfo.Arguments"/>, which Mono splits with the
+        /// Windows command-line rules even on macOS. Under those rules a backslash is only special
+        /// before a quote, and a macOS path has neither in practice.
+        /// </summary>
+        internal static string QuoteArgument(string value)
+        {
+            return "\"" + value.Replace("\"", "\\\"") + "\"";
+        }
+#endif
 
         /// <summary>
         /// Waits for an extraction that outlived its cancellation and throws its output away.

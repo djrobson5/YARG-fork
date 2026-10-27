@@ -277,6 +277,8 @@ dangling over an empty section.
    (`#if UNITY_STANDALONE_WIN`); other platforms degrade to "Open Release Page". *(Done.)*
 5. **Optional automatic check** behind a `ToggleSetting`, plus a "latest build" line near the
    version watermark.
+6. **macOS download + apply.** Slices 3 and 4 for Apple silicon packaged builds. See
+   "macOS (locked 2026-10-27)" below.
 
 ## Files
 
@@ -428,3 +430,56 @@ running install to it. Releases `.2`, `.3` and `.4` came from CI runs 3391361207
 Slices 1-4 are done and user-verified on packaged builds. Slice 5 (optional automatic check
 behind a toggle, plus a "latest build" line by the version watermark) remains unimplemented and
 is optional.
+
+## macOS (locked 2026-10-27)
+
+Slices 3 and 4 were Windows-only because there was no Mac build when they were designed; the
+first macOS release was `v0.15.0-sectionfc.11` (2026-10-17). This section extends the in-game
+download and install to Apple silicon packaged builds. Everything not listed here (manual check,
+caching, no retries, no downgrade, no elevation, one download at a time, the dialogs' shape)
+applies unchanged.
+
+The Mac release zip holds `YARG.app` at its root, zipped with `zip -y` so its symlinks survive
+(`build-release.yml`, "Compress to a .zip"). In a Mac player `Application.dataPath` is
+`<bundle>/Contents`, so `PathHelper.ExecutablePath`, and therefore
+`UpdateInstaller.InstallDirectory`, is **the `.app` bundle itself**, not a folder holding it.
+
+| Question | Decision |
+|---|---|
+| Where it applies | `UNITY_STANDALONE_OSX && !UNITY_EDITOR`. No runtime architecture check: the player is a thin arm64 binary (`build-release.yml` checks the Mach-O header), so a build that is running at all is on Apple silicon, and a misreported architecture would only hide the feature. |
+| Asset selection | `^YARG-SectionFC_.*-macOS-arm64\.zip$`, exact match, **no lone-zip fallback**: a fallback could only ever pick the Windows build. |
+| Extraction | `/usr/bin/ditto -x -k <zip> <tmp>`, run as a child process on the thread pool. `ZipFile.ExtractToDirectory` drops the executable bit and turns symlinks into plain files, which breaks the bundle and its code signature. Cancellation works as on Windows: the extraction is left to finish and its output is discarded. |
+| Layout check | The staging root holds `YARG.app/Contents/MacOS/YARG` and `YARG.app/Contents/Info.plist`. Used both after extraction and by `UpdateInstaller.IsStagedBuildValid`. |
+| Integrity check | `/usr/bin/codesign --verify --deep --strict` on the staged `YARG.app` before it is called staged. The release publishes no checksum; this is the check that catches a bad extraction, which a size match cannot. A failure counts as a corrupt archive: `ExtractFailed`, and the `.zip` is deleted. `codesign` ships with macOS; no Xcode tools are needed. |
+| What gets replaced | The running bundle at its **current path and name**. A user who renamed `YARG.app` keeps their name. |
+| Backup location | `<UpdatesRoot>/backup/<old-tag>/<bundle name>`, **not** next to the install as on Windows: a second `YARG.app` in `/Applications` would show up in Launchpad and Spotlight as another YARG. Exactly one backup is kept, as on Windows. |
+| Writability | The probe file is created and deleted in **both** the bundle's parent folder (the swap renames entries there) and the bundle itself (moving a directory to a new parent needs write access to it). Nothing is left behind, so the signature seal is untouched. Still never elevates. |
+| App Translocation | If the bundle path contains `/AppTranslocation/`, macOS is running a read-only copy because the app was opened where it was unzipped while quarantined. That is its own status, `Translocated`, with its own message: move `YARG.app` into Applications with Finder and open it from there. |
+| Marker file | **Not written on macOS.** A `.yarg-update-tag` in the bundle root would break `codesign --strict` ("unsealed contents present in the bundle root"; see `155550a4` for the same problem with StreamingAssets), and nothing on a Mac reads it. |
+| Helper | A `/bin/sh` script, `<UpdatesRoot>/apply-<tag>.sh`, held as a C# constant beside the `.cmd` one and started as `/bin/sh <path>` with `UseShellExecute = false` and `UpdatesRoot` as its working directory. It sends all of its own output to `apply-<tag>.log` (`exec >>log 2>&1 </dev/null`) and ignores `SIGHUP`, so the game quitting cannot take it down. External tools are called by absolute path. Paths are substituted single-quoted with embedded `'` escaped; the tag is sanitized as on Windows. |
+| Helper steps | 1. Poll `kill -0 <pid>` once a second for two minutes; on timeout, change nothing and do not relaunch. 2. Delete `<UpdatesRoot>/backup`, create `backup/<old-tag>`. 3. `mv` the bundle into it. 4. `mv` the staged `YARG.app` to the bundle's path. 5. Check `Contents/MacOS/YARG` is executable there. 6. Delete the staging folder (the `.zip` is kept). 7. `/usr/bin/open` the bundle path. 8. Delete itself. A failure in steps 3-5 moves any half-installed bundle aside, moves the backup back, relaunches the old build and leaves the log. |
+| Quarantine | Not touched. A file downloaded by `UnityWebRequest` gets no `com.apple.quarantine` attribute (only browsers and sandboxed apps add it), so the installed build launches without the first-run Gatekeeper prompt. Verified in the end-to-end test rather than assumed. |
+| Privacy permissions | Each CI build is ad-hoc signed with a new code hash, so macOS may ask again for Input Monitoring (CRKD over Bluetooth) after an update. This is the same as a manual update; nothing the updater can fix. |
+| Strings | Text that names Windows tools or paths gets a macOS variant (`*Mac` keys), chosen in C#. Text that was simply inaccurate on both platforms is reworded once: there is no window to leave open while installing, and "no Windows download" becomes "no download for this platform". |
+
+### Compile coverage
+
+The generated `Assembly-CSharp.csproj` on the Mac defines `UNITY_STANDALONE_OSX`, so the dotnet
+fast check never compiles the Windows branches. Changes to `#if UNITY_STANDALONE_WIN` code are
+also built with the define list rewritten to `UNITY_STANDALONE_WIN` before merging, and the CI
+release build compiles both players for real.
+
+### Test (needs a packaged Mac build)
+
+The in-game updater only installs a newer published release, and `v0.15.0-sectionfc.12` has no
+Mac updater in it, so the test build is local:
+
+1. Build the player locally with `Editor.Build.CIBuild.BuildMac` and `-version v0.15.0-sectionfc.11`.
+2. Put it at `~/Applications/YARG Updater Test/YARG.app` (a path with a space). The real
+   `/Applications/YARG.app` is left alone.
+3. Settings → General → Updates → Check for Updates → Download Update → Install and Restart.
+4. Verify: the game reopens from the same path, and Check for Updates there reports Up to Date at
+   `.12`; `codesign --verify --deep --strict` passes on the installed app; neither the zip nor the
+   app has a `com.apple.quarantine` attribute; `<UpdatesRoot>/backup/v0.15.0-sectionfc.11/YARG.app`
+   exists; `staging/` is empty; `apply-*.sh` is gone and `apply-*.log` ends with "Installed".
+
