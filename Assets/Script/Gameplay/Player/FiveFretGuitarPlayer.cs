@@ -367,6 +367,19 @@ namespace YARG.Gameplay.Player
                 return;
             }
 
+            // An engine preset with NoStarPowerOverlap strips a whole phrase once any of its notes
+            // is hit during Star Power (StripStarPower, BaseEngine.Generic.cs:1164), which the model
+            // does not reproduce, so a path there would be wrong. No stock preset sets it; only a
+            // custom one can. See docs/sp-path-design.md, "Requires Star Power overlap".
+            if (EngineParams.NoStarPowerOverlap)
+            {
+                YargLogger.LogFormatInfo(
+                    "SP path ({0}): skipped, the engine preset does not allow Star Power overlap",
+                    Player.Profile.CurrentInstrument);
+                SetStarPowerPath(null);
+                return;
+            }
+
             try
             {
                 var stopwatch = System.Diagnostics.Stopwatch.StartNew();

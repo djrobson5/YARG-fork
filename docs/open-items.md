@@ -41,15 +41,6 @@ scores appear, (3) periodic merge of upstream `dev`, (4) optional updater slice 
   out with it) and play a sustain-heavy song with it on: the log line `SP path (...)` should say
   `full whammy`. The model itself is verified against the engine (`docs/sp-path-design.md` →
   "Whammy").
-- **The Star Power path model is wrong under `NoStarPowerOverlap` (found 2026-10-27).** The engine
-  strips a whole phrase when any of its notes is hit during Star Power (`StripStarPower`,
-  `BaseEngine.Generic.cs:1164`), including the phrase-end note when it falls after the window, so
-  that phrase never banks; the model only stops phrases from extending a window, and banks one
-  that ends after it. On `drawntotheflame` guitar the optimizer's own path projects 391,950 and
-  the engine scores 389,174 (8 windows planned, 7 opened); on the synthetic chart 47,767 against
-  44,567. No stock preset sets the flag, only a custom engine preset can, and the existing
-  no-overlap test is model-only. Needs the strip modelled (a phrase straddling the window end
-  carries into the next state) and an engine-backed test.
 - **Upstream merge 2026-10-27 (upstream `dev` at `696e149f`, YARG.Core `9dafd346`) — compiles and
   SpPathTests pass, not yet played.** Brings section preview audio in practice mode, Career tier
   changes, the 5-lane-keys lift option and a list-menu/slider refactor. Two conflicts:

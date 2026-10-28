@@ -1815,7 +1815,7 @@
             },
             "ShowStarPowerPath": {
                 "Name": "Show Star Power Path",
-                "Description": "Rings the notes where a perfect run should activate Star Power to score the most points, and counts down to them in a chip above your track. 5-fret guitar and bass only, and only when you are playing alone. The path assumes a full combo, and no whammy unless \"Star Power Path Assumes Whammy\" is on, so it is a target rather than a promise."
+                "Description": "Rings the notes where a perfect run should activate Star Power to score the most points, and counts down to them in a chip above your track. 5-fret guitar and bass only, only when you are playing alone, and not with an engine preset that turns off Star Power overlap. The path assumes a full combo, and no whammy unless \"Star Power Path Assumes Whammy\" is on, so it is a target rather than a promise."
             },
             "StarPowerPathWhammy": {
                 "Name": "Star Power Path Assumes Whammy",

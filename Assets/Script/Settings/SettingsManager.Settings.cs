@@ -1106,7 +1106,9 @@ namespace YARG.Settings
             /// </summary>
             /// <remarks>
             /// 5-fret guitar and bass only, single player only (band Star Power is coupled across
-            /// players, so a per-player path would be wrong). The path assumes a full combo, and
+            /// players, so a per-player path would be wrong), and not with an engine preset that
+            /// sets <c>NoStarPowerOverlap</c> (the model does not reproduce its phrase stripping).
+            /// The path assumes a full combo, and
             /// either no whammy or full whammy per <see cref="StarPowerPathWhammy"/>. Read at song
             /// start, so flipping it mid-song does nothing until the next run.
             /// </remarks>

@@ -1517,7 +1517,7 @@ Line numbers are against `YARG.Core` at `9dafd346`.
 | DP shape | A forward pass enumerates the reachable meter set at each note; the existing backward evaluation then runs over those sets with the same `>=` activate-here rule, so the earliest-activation tie-break is unchanged. Not top-down (stack depth), not a forward max-relax (different tie resolution). State count and solve time are logged with the path and measured on both fixtures below. |
 | Activation output | `Activation` gains `MeterTicksAtActivation`; `MeterAtActivation` stays as whole quarter bars for the logs. The log-only meter divergence check compares ticks. In whammy mode it is expected to fire on most human runs, since a person starts whammying a moment late and a lapse resets the remainder; it changes nothing on screen. |
 | API | The existing constructors and `Optimize`/`FromParameters` overloads keep meaning "no whammy", so the existing tests compile and pass untouched. New overloads take `assumeWhammy` with **no default**, and the game calls those. |
-| `NoStarPowerOverlap` | Out of scope here, and already wrong (see the open item recorded 2026-10-27: the engine strips a whole phrase when any note of it is hit during Star Power, which the model does not reproduce). Whammy mode does not model stripping either; a stripped phrase's sustains would stop earning, and the model counts them. |
+| `NoStarPowerOverlap` | The path is not shown at all under it (see "Requires Star Power overlap" below), so neither mode models the stripping. |
 | Known limitation | An exact plan can activate on the note where whammy has only just crossed half a bar. A player slightly short of full whammy cannot activate there, and the marker cannot know. |
 
 ### Verification
@@ -1574,4 +1574,24 @@ Not yet checked in the game: the settings row (it appears after "Show Star Power
 out with it) and a song played with the toggle on. Not covered by an engine-backed test: unisons
 and whammy together. The two compose in the model (a unison's second quarter is applied in the
 same window walk whammy drifts through), but no fixture has both.
+
+## Requires Star Power overlap (locked 2026-10-27)
+
+**User decision, 2026-10-27:** the Star Power path is only offered when the player's engine preset
+allows Star Power overlap, rather than modelling `NoStarPowerOverlap`.
+
+Why: with the flag set, hitting any note of a Star Power phrase while Star Power is active strips
+the *whole* phrase (`StripStarPower`, `BaseEngine.Generic.cs:1164`) — including its phrase-end note
+when that falls after the window, so the phrase never banks, and its sustains stop earning whammy.
+The model only stopped phrases from extending a window. Checked against the engine with the flag
+forced on: on `drawntotheflame` guitar the optimizer's own path projected 391,950 and the engine
+scored 389,174 (8 windows planned, 7 opened); on the synthetic chart 47,767 against 44,567. No stock
+preset sets the flag; only a custom engine preset can.
+
+How: `FiveFretGuitarPlayer.RecomputeStarPowerPath` sets no path and logs
+`SP path (...): skipped, the engine preset does not allow Star Power overlap` when
+`EngineParams.NoStarPowerOverlap` is true — per player, since the preset is, and on every
+recompute, like the practice gate beside it. The setting's description says so. `SpScoreModel`
+keeps its `noStarPowerOverlap` parameter and its existing model-only test; it is simply never
+`true` in the game.
 
