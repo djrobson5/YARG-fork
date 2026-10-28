@@ -36,6 +36,10 @@ scores appear, (3) periodic merge of upstream `dev`, (4) optional updater slice 
 
 ## Needs verification
 
+- **Windows in-game update after the macOS updater change (`feature/mac-updater`).** The Windows
+  path's code was only refactored (`TryReadAsset`, `CanWriteTo`) and two strings reworded
+  (Installing, NoAsset); it compiles with the Windows defines but has not been run. Check it on
+  the first Windows update to a release that contains it.
 - **Upstream merge 2026-10-27 (upstream `dev` at `696e149f`, YARG.Core `9dafd346`) — compiles and
   SpPathTests pass, not yet played.** Brings section preview audio in practice mode, Career tier
   changes, the 5-lane-keys lift option and a list-menu/slider refactor. Two conflicts:
@@ -56,6 +60,10 @@ scores appear, (3) periodic merge of upstream `dev`, (4) optional updater slice 
 
 ## Done, lightly verified
 
+- **macOS in-game updater — verified end to end 2026-10-27** on a local packaged build updating
+  itself to `v0.15.0-sectionfc.12` (`docs/updater-design.md` → "macOS"). It ships in the first
+  release cut after `feature/mac-updater` merges; Mac installs older than that have to be updated
+  to it by hand once.
 - **Upstream merge 2026-10-17 (upstream `dev` at `d3a03bea`, YARG.Core `7da84a1a`) — verified in-game
   by the user on a local macOS build.** New settings UI, Career mode, the new time stretch. A song
   played normally, the pause menu still offers Rewind to Section, and the settings rows checked out

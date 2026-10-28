@@ -483,3 +483,27 @@ Mac updater in it, so the test build is local:
    app has a `com.apple.quarantine` attribute; `<UpdatesRoot>/backup/v0.15.0-sectionfc.11/YARG.app`
    exists; `staging/` is empty; `apply-*.sh` is gone and `apply-*.log` ends with "Installed".
 
+### 2026-10-27: verified end to end on a packaged Mac build
+
+A local `CIBuild.BuildMac` build of `a8bb69dc`, stamped `v0.15.0-sectionfc.11` with
+`-buildVersion` (Unity's batchmode intercepts `-version` and only prints the editor version), was
+put at `~/Applications/YARG Updater Test/YARG.app`. From there the user ran Check for Updates →
+Download Update → Install and Restart, and the game came back up as `v0.15.0-sectionfc.12` (CI run
+40592537175) with no other action needed. Afterwards the installed app passed
+`codesign --verify --deep --strict`, neither it nor the downloaded zip had a
+`com.apple.quarantine` attribute, `updates/backup/v0.15.0-sectionfc.11/YARG.app` was the only
+backup, `staging/` was empty, the helper had deleted itself, and its log showed the game exiting
+within a second and the swap finishing in under one.
+
+Before that, the helper was run outside Unity against a fixture at `…/Bob's Apps & Co/My YARG.app`
+(a renamed bundle under a path with a space, an apostrophe and an ampersand), with `open` replaced
+by `echo`: a dead PID (installs, clears a stale backup), a live PID killed after 3 s (waits, then
+installs), a missing staged app and a staged app without its executable bit (both restore the old
+build and relaunch it), a PID that never exits (times out, changes nothing, no relaunch), and a
+read-only parent folder (the move into the backup fails, the original is left in place and
+relaunched). `ditto` extracted the real `.12` zip in about 1.3 s and `codesign` verified the result
+in 0.3 s.
+
+Not yet exercised: the translocated-app and not-writable dialogs, and the Windows path since its
+strings and `TryReadAsset`/`CanWriteTo` refactor (compiled with the Windows defines, not run).
+
