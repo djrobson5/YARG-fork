@@ -62,7 +62,7 @@ Exit code 0 and no `error CS` lines means green. Gotchas:
 
 ### Persistent headless editor (Unity CLI + MCP)
 
-Unity's beta `unity` CLI (1.0.0-beta.13, Homebrew cask `unity-cli` at `/opt/homebrew/bin/unity`; signed in with `unity auth login`) and its `unity-editor-mcp` server (registered user-scope in Claude Code by `unity mcp configure claude-code`) drive a running editor. The required `com.unity.pipeline` package already comes from upstream; don't run `unity pipeline install`, which could bump its version in `Packages/manifest.json`.
+Unity's beta `unity` CLI (1.0.0-beta.14, Homebrew cask `unity-cli` at `/opt/homebrew/bin/unity`; signed in with `unity auth login`) and its `unity-editor-mcp` server (registered user-scope in Claude Code by `unity mcp configure claude-code`) drive a running editor. The required `com.unity.pipeline` package already comes from upstream; don't run `unity pipeline install`, which could bump its version in `Packages/manifest.json`.
 
 Check `pgrep -lf Unity.app/Contents/MacOS/Unity` first and leave a GUI editor alone — the CLI attaches to whichever editor owns the project, and two can't own it at once. If none is running, launch one (no `-quit`), detached so it survives Claude Code restarts (a `run_in_background` Bash task is killed when the session exits):
 
