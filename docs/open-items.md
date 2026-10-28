@@ -11,16 +11,16 @@ Feature research lives in `docs/roadmap.md`; the state of each feature is in
 
 `feature/section-fc` was renamed to `main` (the default branch) on 2026-10-17, when the Section FC work was declared done; new work goes on `feature/<name>` branches off `main`. It is pushed through `ea19f534`, which is tagged `v0.15.0-sectionfc.13` (2026-10-27), with a Windows x64 zip and a macOS arm64 zip (release run 40614755615). `.13` merges `feature/mac-updater` (in-game download and install on macOS) and `feature/single-whammy`, which brings `feature/sp-whammy` with it (the "Star Power Path Assumes Whammy" toggle, the path's `NoStarPowerOverlap` gate, and the Single Whammy setting). The previous release, `v0.15.0-sectionfc.12` (`a1a5e3ca`, run 40592537175), brought the 2026-10-27 upstream merge. Next steps in order:
 (1) check the Windows in-game update path on the first Windows update to `.13` (single whammy,
-the whammy path toggle and the 2026-10-27 merge were verified in-game on `.13`), (2) install
-`v0.15.0-sectionfc.4` or later on the user's other (nightly) machine and confirm scores appear,
-(3) periodic merge of upstream `dev`, (4) optional updater slice 5.
+the whammy path toggle and the 2026-10-27 merge were verified in-game on `.13`), (2) periodic
+merge of upstream `dev`, (3) optional updater slice 5.
 
 ## Parked
 
 - **Feature 1, score import.** The user's other machine runs the official nightly, and the fork's
   CI build defines `YARG_NIGHTLY_BUILD`, so it reads the same
   `%USERPROFILE%\AppData\LocalLow\YARC\YARG\nightly` folder; installing the fork there picks up
-  scores and profiles automatically, so no import is needed. `tools/import-scores.ps1` stays for
+  scores and profiles automatically, so no import is needed. Confirmed by the user 2026-10-27: the
+  fork installed on that machine shows its existing scores. `tools/import-scores.ps1` stays for
   the stable-install (release folder) case.
 
 ## Unfinished features
