@@ -1566,12 +1566,12 @@ Results, all exact against the engine with a bot that whammies on every pass, at
 | `SyntheticChart` | 55,204 | **58,479** | 149 / 243 | 0.4 ms / 0.3 ms |
 | `SyntheticChart.Whammy` | 30,834 | **33,718** | 204 / 177 | 0.2 ms / 0.1 ms |
 
-The whammy model has *fewer* states than the plain one on the real chart: the plain DP counts
-every one of the five meter values at every note, while the forward pass only visits the ones a
-legal path can reach. The engine's meter on every note's pass matched the model's on all four
+Both modes count only the `(note, meter)` states some legal path reaches. The engine's meter on every note's pass matched the model's on all four
 fixtures with Star Power never activated, as did its raw whammy total; the whammy DP agrees with
-the brute force on the 300-note prefix. The existing 49 tests pass unedited (76 in all now).
+the brute force on the 300-note prefix. The existing 49 tests pass unedited (77 in all now). On `SyntheticChart.Whammy` the brute force agrees with the DP (11,884), though the optimum there uses no carry, so the carry-funded activation is pinned by the engine-backed hand-picked test instead.
 
 Not yet checked in the game: the settings row (it appears after "Show Star Power Path" and greys
-out with it) and a song played with the toggle on.
+out with it) and a song played with the toggle on. Not covered by an engine-backed test: unisons
+and whammy together. The two compose in the model (a unison's second quarter is applied in the
+same window walk whammy drifts through), but no fixture has both.
 

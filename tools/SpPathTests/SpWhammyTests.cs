@@ -341,6 +341,29 @@ public class SpWhammyTests
     }
 
     /// <summary>
+    /// The same, on the whammy fixture: all 3/4, so windows release inside Star Power sustains and
+    /// the DP's states include carried meter, which the 4/4 prefix above never produces.
+    /// </summary>
+    [Test]
+    public void Optimizer_AgreesWithBruteForce_OnCarryStates()
+    {
+        var sp = Load("whammy").Whammy;
+
+        var dp = SpPathOptimizer.Optimize(sp);
+        var brute = BruteForce.Best(sp);
+
+        var windows = new List<SpWindow>();
+        sp.DoubledPointsForActivations(brute.Activations, windows);
+
+        TestContext.Out.WriteLine($"dp = {dp.ScoreGainOverNoActivations} at " +
+            $"[{string.Join(",", dp.Activations.Select(a => a.ScoringNoteIndex))}], " +
+            $"brute = {brute.Extra} at [{string.Join(",", brute.Activations)}]; " +
+            $"brute's windows carry [{string.Join(",", windows.Select(w => w.CarriedMeterTicks))}]");
+
+        Assert.That(dp.ScoreGainOverNoActivations, Is.EqualTo((int) brute.Extra));
+    }
+
+    /// <summary>
     /// The first scoring note at or after <paramref name="from"/> where the meter, starting from
     /// <paramref name="meter"/>, reaches half a bar; -1 if it never does.
     /// </summary>
