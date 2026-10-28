@@ -1664,6 +1664,10 @@
                     "NoMeter": "On + No Meter"
                 }
             },
+            "SingleWhammy": {
+                "Name": "Single Whammy",
+                "Description": "One whammy on a Star Power sustain earns all the Star Power that sustain can give, as if you whammied it from start to end. Works on guitar, bass and keys. The Star Power path plans for full whammy while this is on. Takes effect on the next song."
+            },
             "NoteStreakFrequency": {
                 "Name": "Note Streak Frequency",
                 "Description": "Sets the frequency of note streak notifications.",
@@ -1819,7 +1823,11 @@
             },
             "ShowStarPowerPath": {
                 "Name": "Show Star Power Path",
-                "Description": "Rings the notes where a perfect run should activate Star Power to score the most points, and counts down to them in a chip above your track. 5-fret guitar and bass only, and only when you are playing alone. The path assumes a full combo with no whammy, so it is a target rather than a promise."
+                "Description": "Rings the notes where a perfect run should activate Star Power to score the most points, and counts down to them in a chip above your track. 5-fret guitar and bass only, only when you are playing alone, and not with an engine preset that turns off Star Power overlap. The path assumes a full combo, and no whammy unless \"Star Power Path Assumes Whammy\" is on, so it is a target rather than a promise."
+            },
+            "StarPowerPathWhammy": {
+                "Name": "Star Power Path Assumes Whammy",
+                "Description": "Plans the path as if you whammy every Star Power sustain from start to end, which earns extra Star Power and stretches a running activation, so the planned activations can move or be added. Off plans for no whammy at all. Takes effect on the next song."
             },
             "SyncProvider": {
                 "Name": "Sync Provider",

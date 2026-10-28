@@ -924,7 +924,10 @@ namespace YARG.Gameplay.Player
                     continue;
                 }
 
-                uint needed = (uint) activation.MeterAtActivation * ticksPerQuarter;
+                // In ticks: with whammy assumed the plan's meter is rarely a whole number of
+                // quarter bars, and a person starts whammying a moment late, so in that mode this
+                // log-only check is expected to fire on most runs.
+                uint needed = activation.MeterTicksAtActivation;
                 if (BaseStats.StarPowerTickAmount >= needed)
                 {
                     continue;
@@ -933,7 +936,8 @@ namespace YARG.Gameplay.Player
                 SetStarPowerPathDiverged(
                     $"the meter is short at planned activation {_spPlanMeterIndex} — " +
                     $"{BaseStats.StarPowerTickAmount} tick(s) banked, {needed} needed " +
-                    $"({activation.MeterAtActivation}/4 bar)");
+                    $"(~{activation.MeterAtActivation}/4 bar" +
+                    (StarPowerPath.AssumesWhammy ? ", assuming full whammy)" : ")"));
                 return;
             }
         }
@@ -1013,7 +1017,8 @@ namespace YARG.Gameplay.Player
                 var activation = activations[_spPlanLateIndex];
                 next = $"#{_spPlanLateIndex + 1} on note {activation.NoteIndex} at " +
                     $"tick {activation.ActivationTick} ({activation.ActivationTime:0.000}s) " +
-                    $"spending {activation.MeterAtActivation}/4 bar, window " +
+                    $"spending {activation.MeterTicksAtActivation} tick(s) " +
+                    $"(~{activation.MeterAtActivation}/4 bar), window " +
                     $"[{activation.ActivationMeasureTick}, {activation.EndMeasureTick})";
             }
 

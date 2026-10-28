@@ -19,10 +19,14 @@ public static class BotRunner
     public static double ChartEndTime(InstrumentDifficulty<GuitarNote> notes) =>
         notes.Notes.Count == 0 ? 0.0 : notes.Notes[^1].TimeEnd + TailSeconds;
 
-    public static void RunToEnd(GuitarEngine engine, InstrumentDifficulty<GuitarNote> notes)
+    public static void RunToEnd(GuitarEngine engine, InstrumentDifficulty<GuitarNote> notes) =>
+        RunToEnd(engine, notes, StepSeconds);
+
+    public static void RunToEnd(GuitarEngine engine, InstrumentDifficulty<GuitarNote> notes,
+        double stepSeconds)
     {
         double end = ChartEndTime(notes);
-        for (double t = 0.0; t < end; t += StepSeconds)
+        for (double t = 0.0; t < end; t += stepSeconds)
         {
             engine.Update(t);
         }

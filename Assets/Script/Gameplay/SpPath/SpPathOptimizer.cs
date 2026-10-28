@@ -8,22 +8,25 @@ using YARG.Core.Engine.Guitar;
 namespace YARG.Gameplay.SpPath
 {
     /// <summary>
-    /// Exact dynamic program over <c>(scoring note index, meter in quarter bars)</c>, producing the
-    /// activation list that maximises <c>TotalScore</c> for a perfect run.
+    /// Exact dynamic program over <c>(scoring note index, meter in Star Power ticks)</c>, producing
+    /// the activation list that maximises <c>TotalScore</c> for a perfect run.
     /// <para/>
-    /// <b>Why this is exact for the modelled subset.</b> With phrases-only gain the meter takes
-    /// exactly five values (0, ¼, ½, ¾, full), and a window is a closed-form function of its
-    /// activation note and the meter spent (<see cref="SpScoreModel.SimulateWindow"/>) — the walk
-    /// through the phrase ends inside it is deterministic, and it always leaves the meter at 0. So
-    /// the whole future depends only on <c>(next note, meter)</c>, and taking the max over "skip
-    /// this note" and "activate here" at every state is exhaustive over the reachable activation
-    /// sets. It is <em>not</em> exact for real play: full combo, no whammy, no squeezes, and
-    /// activation exactly on a note are all assumptions (<c>docs/sp-path-design.md</c> §2.2).
+    /// <b>Why this is exact for the modelled subset.</b> A window is a closed-form function of its
+    /// activation note and the meter spent (<see cref="SpScoreModel.SimulateWindowTicks"/>), and
+    /// what it leaves behind — the next note and the whammy carried to it — is too. Passing a note
+    /// without activating is deterministic as well (<see cref="SpScoreModel.MeterTicksAfter"/>).
+    /// So the whole future depends only on <c>(next note, meter)</c>, and taking the max over "skip
+    /// this note" and "activate here" at every reachable state is exhaustive over the legal
+    /// activation sets. It is <em>not</em> exact for real play: full combo, no squeezes,
+    /// activation exactly on a note, and either no whammy or full whammy are all assumptions
+    /// (<c>docs/sp-path-design.md</c> §2.2 and "Whammy").
     /// <para/>
-    /// Cost is <c>O(notes × 5 × window length)</c>: five meter states per note, and the activation
-    /// transition walks the notes inside its window. On a 1,269-note chart that is well under a
-    /// millisecond, which is why no candidate pruning is attempted — the simple version is exact
-    /// and fast enough, and pruning is where an "optimizer" quietly stops being optimal.
+    /// Without whammy the meter only ever holds 0, ¼, ½, ¾ or a full bar, so there are at most
+    /// five states per note — the model this was locked with. With whammy the meter at a note is
+    /// whatever has been banked since the last release, so a forward pass first collects the
+    /// values that are actually reachable at each note; the backward evaluation then runs over
+    /// those exactly as before. No candidate pruning is attempted: pruning is where an
+    /// "optimizer" quietly stops being optimal.
     /// </summary>
     public static class SpPathOptimizer
     {
@@ -43,11 +46,22 @@ namespace YARG.Gameplay.SpPath
         /// </param>
         public static StarPowerPath Optimize(InstrumentDifficulty<GuitarNote> track,
             SyncTrack syncTrack, GuitarEngineParameters parameters,
-            IReadOnlyList<SpUnisonPhrase> unisonPhrases = null)
+            IReadOnlyList<SpUnisonPhrase> unisonPhrases = null) =>
+            Optimize(track, syncTrack, parameters, assumeWhammy: false, unisonPhrases);
+
+        /// <param name="assumeWhammy">
+        /// Plan as if every Star Power sustain is whammied over its whole span
+        /// (<see cref="SpScoreModel.AssumeWhammy"/>). No default; the overload without it means
+        /// "no whammy".
+        /// </param>
+        public static StarPowerPath Optimize(InstrumentDifficulty<GuitarNote> track,
+            SyncTrack syncTrack, GuitarEngineParameters parameters, bool assumeWhammy,
+            IReadOnlyList<SpUnisonPhrase> unisonPhrases)
         {
             if (parameters is null) throw new ArgumentNullException(nameof(parameters));
-            return Optimize(track, syncTrack, parameters.MaxMultiplier,
-                parameters.NoStarPowerOverlap, unisonPhrases);
+            var model = ScoreModel.Build(track, syncTrack, parameters.MaxMultiplier);
+            return Optimize(new SpScoreModel(model, parameters.NoStarPowerOverlap, assumeWhammy,
+                unisonPhrases));
         }
 
         /// <param name="noStarPowerOverlap">
@@ -66,39 +80,93 @@ namespace YARG.Gameplay.SpPath
             if (sp is null) throw new ArgumentNullException(nameof(sp));
 
             int n = sp.NoteCount;
-            int states = SpScoreModel.MaxQuarterBars + 1;
+            uint half = sp.TicksPerHalfSpBar;
 
-            // best[i * states + q] = the most extra points obtainable from note i onwards with
-            // meter q. choice[...] = the note to activate on, or -1 for "don't activate here".
-            var best = new long[(n + 1) * states];
-            var choice = new int[(n + 1) * states];
-
-            for (int i = 0; i < best.Length; i++)
+            // Forward: the meter values reachable on arriving at each note. Index n is "past the
+            // last note", where nothing more can be earned.
+            var reachable = new List<uint>[n + 1];
+            for (int i = 0; i <= n; i++)
             {
-                best[i] = Unsolved;
-                choice[i] = -1;
+                reachable[i] = new List<uint>();
             }
 
-            for (int q = 0; q < states; q++)
+            var seen = new HashSet<uint>[n + 1];
+            for (int i = 0; i <= n; i++)
             {
-                best[n * states + q] = 0;
+                seen[i] = new HashSet<uint>();
             }
+
+            void Reach(int note, uint meter)
+            {
+                if (seen[note].Add(meter))
+                {
+                    reachable[note].Add(meter);
+                }
+            }
+
+            // The window opened at (note, meter), computed once and reused by both passes.
+            var windows = new Dictionary<(int, uint), SpWindow>();
+
+            SpWindow WindowAt(int note, uint meter)
+            {
+                if (!windows.TryGetValue((note, meter), out var window))
+                {
+                    window = sp.SimulateWindowTicks(note, meter);
+                    windows.Add((note, meter), window);
+                }
+
+                return window;
+            }
+
+            if (n > 0)
+            {
+                Reach(0, sp.InitialMeterTicks);
+            }
+
+            for (int i = 0; i < n; i++)
+            {
+                foreach (uint meter in reachable[i])
+                {
+                    Reach(i + 1, sp.MeterTicksAfter(i, meter));
+
+                    if (meter >= half)
+                    {
+                        var window = WindowAt(i, meter);
+                        Reach(window.NextNoteIndex, window.CarriedMeterTicks);
+                    }
+                }
+            }
+
+            // Backward: best[(i, meter)] = the most extra points obtainable from note i onwards
+            // with that meter; choice = true when the best move is to activate on note i.
+            var best = new Dictionary<(int, uint), long>();
+            var choice = new Dictionary<(int, uint), bool>();
+
+            foreach (uint meter in reachable[n])
+            {
+                best[(n, meter)] = 0;
+            }
+
+            int states = 0;
 
             // Solved backwards so no recursion (and no stack depth worry on long charts).
             for (int i = n - 1; i >= 0; i--)
             {
-                for (int q = 0; q < states; q++)
+                foreach (uint meter in reachable[i])
                 {
-                    // Option 1: don't activate on this note. Collect its phrase if it has one.
-                    int nextMeter = sp.MeterAfter(i, q);
-                    long value = best[(i + 1) * states + nextMeter];
-                    int pick = -1;
+                    states++;
+
+                    // Option 1: don't activate on this note. Collect its phrase and the whammy up
+                    // to the next note.
+                    long value = best[(i + 1, sp.MeterTicksAfter(i, meter))];
+                    bool activate = false;
 
                     // Option 2: activate here, if there is half a bar.
-                    if (q >= SpScoreModel.MinQuarterBarsToActivate)
+                    if (meter >= half)
                     {
-                        var window = sp.SimulateWindow(i, q);
-                        long candidate = window.DoubledPoints + best[window.NextNoteIndex * states];
+                        var window = WindowAt(i, meter);
+                        long candidate = window.DoubledPoints +
+                            best[(window.NextNoteIndex, window.CarriedMeterTicks)];
 
                         // Ties go to activating *here* rather than later. A human has to hit the
                         // marker: an earlier activation leaves more chart behind it to absorb a
@@ -106,18 +174,19 @@ namespace YARG.Gameplay.SpPath
                         // they have not reached yet. `>=` is what makes that happen — with `>`
                         // the "skip" branch keeps its value and the activation slides to the last
                         // note that still ties. It cannot introduce a pointless zero-gain window:
-                        // the activation note is itself inside [m, E), so DoubledPoints is always
-                        // at least POINTS_PER_NOTE. Deterministic either way — the scan order over
-                        // (i, q) is fixed, so the same chart always produces the same path.
+                        // the activation note is itself inside the window, so DoubledPoints is
+                        // always at least POINTS_PER_NOTE. Deterministic either way — every state
+                        // is solved from fixed inputs, so the same chart always produces the same
+                        // path.
                         if (candidate >= value)
                         {
                             value = candidate;
-                            pick = i;
+                            activate = true;
                         }
                     }
 
-                    best[i * states + q] = value;
-                    choice[i * states + q] = pick;
+                    best[(i, meter)] = value;
+                    choice[(i, meter)] = activate;
                 }
             }
 
@@ -125,16 +194,17 @@ namespace YARG.Gameplay.SpPath
             var activations = new List<Activation>();
             var syncTrack = sp.Model.SyncTrack;
 
-            for (int i = 0, q = 0; i < n;)
+            uint walkMeter = sp.InitialMeterTicks;
+            for (int i = 0; i < n;)
             {
-                if (choice[i * states + q] < 0)
+                if (!choice[(i, walkMeter)])
                 {
-                    q = sp.MeterAfter(i, q);
+                    walkMeter = sp.MeterTicksAfter(i, walkMeter);
                     i++;
                     continue;
                 }
 
-                var window = sp.SimulateWindow(i, q);
+                var window = WindowAt(i, walkMeter);
                 activations.Add(new Activation(
                     window.NoteIndex,
                     window.ActivationTick,
@@ -145,11 +215,12 @@ namespace YARG.Gameplay.SpPath
                     // call once per emitted marker and never in a loop (design doc §2.1).
                     syncTrack.FindMinTimeForMeasureTick(window.EndMeasureTick),
                     window.MeterQuarterBars,
+                    window.MeterTicks,
                     (int) window.DoubledPoints,
                     window.ScoringNoteIndex));
 
                 i = window.NextNoteIndex;
-                q = 0;
+                walkMeter = window.CarriedMeterTicks;
             }
 
             // The phrase ends the model is counting on, kept so the log can be checked against the
@@ -165,10 +236,10 @@ namespace YARG.Gameplay.SpPath
                 }
             }
 
-            long extra = n == 0 ? 0 : best[0];
+            long extra = n == 0 ? 0 : best[(0, sp.InitialMeterTicks)];
             return new StarPowerPath(activations, sp.Model.ProjectPerfectScore() + (int) extra,
                 (int) extra, sp.TicksPerQuarterSpBar, phraseEndTicks,
-                sp.UnisonPhraseEndTicks);
+                sp.UnisonPhraseEndTicks, sp.AssumeWhammy, states);
         }
     }
 
@@ -179,7 +250,8 @@ namespace YARG.Gameplay.SpPath
     {
         public StarPowerPath(IReadOnlyList<Activation> activations, int projectedScore,
             int scoreGainOverNoActivations, uint ticksPerQuarterSpBar,
-            IReadOnlyList<uint> phraseEndTicks, IReadOnlyList<uint> unisonPhraseEndTicks = null)
+            IReadOnlyList<uint> phraseEndTicks, IReadOnlyList<uint> unisonPhraseEndTicks = null,
+            bool assumesWhammy = false, int stateCount = 0)
         {
             Activations = activations;
             ProjectedScore = projectedScore;
@@ -187,7 +259,18 @@ namespace YARG.Gameplay.SpPath
             TicksPerQuarterSpBar = ticksPerQuarterSpBar;
             PhraseEndTicks = phraseEndTicks ?? Array.Empty<uint>();
             UnisonPhraseEndTicks = unisonPhraseEndTicks ?? Array.Empty<uint>();
+            AssumesWhammy = assumesWhammy;
+            StateCount = stateCount;
         }
+
+        /// <summary>Whether the plan assumes every Star Power sustain is whammied in full.</summary>
+        public bool AssumesWhammy { get; }
+
+        /// <summary>
+        /// <c>(note, meter)</c> states the optimizer solved — at most five per note without whammy.
+        /// Logged with the path so the cost of the whammy model can be watched on real charts.
+        /// </summary>
+        public int StateCount { get; }
 
         /// <summary>Ordered by activation tick.</summary>
         public IReadOnlyList<Activation> Activations { get; }
@@ -226,7 +309,8 @@ namespace YARG.Gameplay.SpPath
             $"{Activations.Count} activation(s), projected {ProjectedScore} " +
             $"(+{ScoreGainOverNoActivations} over no Star Power), " +
             $"{PhraseEndTicks.Count} phrase(s), " +
-            $"{UnisonPhraseEndTicks.Count} unison(s)";
+            $"{UnisonPhraseEndTicks.Count} unison(s), " +
+            $"{(AssumesWhammy ? "full whammy" : "no whammy")}, {StateCount} state(s)";
     }
 
     /// <summary>One point on the path. Plain C#, no <c>UnityEngine</c> types — see §3 of the design doc.</summary>
@@ -250,8 +334,11 @@ namespace YARG.Gameplay.SpPath
         /// <summary>Time the window ends, for rendering the far edge of a region marker.</summary>
         public readonly double EndTime;
 
-        /// <summary>Meter spent, in quarter bars (2..4) — the divergence check compares against this.</summary>
+        /// <summary>Meter spent, in whole quarter bars (2..4). Exact without whammy; for logs.</summary>
         public readonly int MeterAtActivation;
+
+        /// <summary>Meter spent, in Star Power ticks — the divergence check compares against this.</summary>
+        public readonly uint MeterTicksAtActivation;
 
         /// <summary>Points this window adds over not activating.</summary>
         public readonly int ScoreGain;
@@ -261,8 +348,9 @@ namespace YARG.Gameplay.SpPath
 
         public Activation(int noteIndex, uint activationTick, uint activationMeasureTick,
             uint endMeasureTick, double activationTime, double endTime, int meterAtActivation,
-            int scoreGain, int scoringNoteIndex)
+            uint meterTicksAtActivation, int scoreGain, int scoringNoteIndex)
         {
+            MeterTicksAtActivation = meterTicksAtActivation;
             NoteIndex = noteIndex;
             ActivationTick = activationTick;
             ActivationMeasureTick = activationMeasureTick;

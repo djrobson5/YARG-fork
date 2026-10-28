@@ -38,6 +38,8 @@
   <ItemGroup>
     <!-- The Unity-free scoring model / optimizer, compiled by link. -->
     <Compile Include="..\..\Assets\Script\Gameplay\SpPath\**\*.cs" LinkBase="SpPath" />
+    <!-- The single-whammy engines, which the same Star Power model is checked against. -->
+    <Compile Include="..\..\Assets\Script\Gameplay\SingleWhammy\**\*.cs" LinkBase="SingleWhammy" />
   </ItemGroup>
 
 </Project>

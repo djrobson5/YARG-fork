@@ -6,6 +6,7 @@ using YARG.Core.Logging;
 using YARG.Core.Replays;
 using YARG.Core.Replays.Analyzer;
 using YARG.Core.Song;
+using YARG.Gameplay.SingleWhammy;
 using YARG.Helpers;
 using YARG.Localization;
 using YARG.Menu.Persistent;
@@ -156,12 +157,23 @@ namespace YARG.Menu.History
             }
 
             var results = ReplayAnalyzer.AnalyzeReplay(chart, _entry, data);
+
+            // The analyzer runs YARG.Core's stock engines, which cannot reproduce single whammy,
+            // and runs the band together, so one single-whammy player makes the whole replay
+            // unverifiable. See docs/sp-path-design.md, "Single whammy".
+            bool singleWhammy = data.Frames.Any(frame =>
+                SingleWhammyParameters.IsEnabled(frame.EngineParameters));
             for (int i = 0; i < results.Length; i++)
             {
                 var analysisResult = results[i];
 
                 var profile = data.Frames[i].Profile;
-                if (analysisResult.Passed)
+                if (singleWhammy)
+                {
+                    YargLogger.LogFormatInfo("({0}, {1}/{2}) NOT VERIFIABLE: single whammy is on in this replay",
+                        profile.Name, profile.CurrentInstrument, profile.CurrentDifficulty);
+                }
+                else if (analysisResult.Passed)
                 {
                     YargLogger.LogFormatInfo("({0}, {1}/{2}) PASSED verification!", profile.Name, profile.CurrentInstrument, profile.CurrentDifficulty);
                 }
@@ -211,7 +223,14 @@ namespace YARG.Menu.History
             }
 
             var results = ReplayAnalyzer.AnalyzeReplay(chart, _entry, data);
-            bool replayConsistent = results.All(r => r.Passed);
+
+            // The analyzer re-simulates on YARG.Core's stock engines, which cannot reproduce
+            // single whammy, and runs the band together, so if anyone played with it every card
+            // shows the stats recorded during play and the replay is not checked. See
+            // docs/sp-path-design.md, "Single whammy".
+            bool singleWhammy = data.Frames.Any(frame =>
+                SingleWhammyParameters.IsEnabled(frame.EngineParameters));
+            bool replayConsistent = singleWhammy || results.All(r => r.Passed);
             if (!replayConsistent)
             {
                 YargLogger.LogInfo("Replay did not pass verification!");
@@ -243,7 +262,7 @@ namespace YARG.Menu.History
                     // This compares ids, so imported replays should never be the high score.
                     IsHighScore = isHighScore,
                     Player = new YargPlayer(playerResult.Frame, data),
-                    Stats = playerResult.ResultStats,
+                    Stats = singleWhammy ? data.Frames[i].Stats : playerResult.ResultStats,
                     IsReplay = playerEntry.IsReplayPlayer
                 };
             }
@@ -254,7 +273,7 @@ namespace YARG.Menu.History
                 BandScore = _entry.BandScore,
                 BandStars = (int) _entry.BandStars,
                 ReplayInfo = _entry,
-                ReplayWasConsistent = results.All(r => r.Passed),
+                ReplayWasConsistent = replayConsistent,
             };
             // Go to the score screen
             GlobalVariables.Instance.LoadScene(SceneIndex.Score);

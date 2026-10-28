@@ -112,6 +112,7 @@ namespace YARG.Settings
                 nameof(Settings.PracticeRestartDelay),
                 nameof(Settings.RewindLeadIn),
                 nameof(Settings.NoFail),
+                nameof(Settings.SingleWhammy),
                 nameof(Settings.LearningGuides),
                 nameof(Settings.ReduceNoteSpeedByDifficulty),
 
@@ -285,6 +286,7 @@ namespace YARG.Settings
                 nameof(Settings.KeepSongInfoVisible),
                 nameof(Settings.ShowSectionStrip),
                 nameof(Settings.ShowStarPowerPath),
+                nameof(Settings.StarPowerPathWhammy),
                 nameof(Settings.StarPowerPathColor),
                 nameof(Settings.StarPowerPathChipLeadIn),
                 nameof(Settings.StarPowerPathChipHold),

@@ -50,14 +50,16 @@ namespace YARG.Gameplay.SpPath
 
         private readonly List<ScoreEvent> _events;
         private readonly List<ScoringNote> _scoringNotes;
+        private readonly List<TickSpan> _starPowerSustains;
 
         private ScoreModel(SyncTrack syncTrack, int maxMultiplier, List<ScoreEvent> events,
-            List<ScoringNote> scoringNotes, int soloBonusTotal)
+            List<ScoringNote> scoringNotes, List<TickSpan> starPowerSustains, int soloBonusTotal)
         {
             SyncTrack = syncTrack;
             MaxMultiplier = maxMultiplier;
             _events = events;
             _scoringNotes = scoringNotes;
+            _starPowerSustains = starPowerSustains;
             SoloBonusTotal = soloBonusTotal;
 
             TicksPerQuarterSpBar = syncTrack.MeasureResolution * 2;
@@ -95,6 +97,16 @@ namespace YARG.Gameplay.SpPath
         /// note track.
         /// </summary>
         public IReadOnlyList<ScoringNote> ScoringNotes => _scoringNotes;
+
+        /// <summary>
+        /// Every sustain a full combo holds whose note carries <c>NoteFlags.StarPower</c>, as the
+        /// quarter-tick span <c>[Tick, TickEnd]</c> it is held over — one per sustained child of a
+        /// disjoint chord, as the engine starts them. In chart order by start, possibly
+        /// overlapping. Whammying one of these is the only way to gain Star Power from a sustain
+        /// (<c>IsStarPowerSustainActive</c>, <c>BaseEngine.Generic.cs:1113-1122</c>); see
+        /// <c>docs/sp-path-design.md</c>, "Whammy".
+        /// </summary>
+        public IReadOnlyList<TickSpan> StarPowerSustains => _starPowerSustains;
 
         /// <summary>Combo steps a full combo takes — one per scoring note (chords count once).</summary>
         public int ComboSteps => _scoringNotes.Count;
@@ -135,6 +147,7 @@ namespace YARG.Gameplay.SpPath
             var noteEvents = new List<ScoreEvent>(notes.Count);
             var sustainEvents = new List<PendingSustain>();
             var scoringNotes = new List<ScoringNote>(notes.Count);
+            var starPowerSustains = new List<TickSpan>();
 
             // Ticks of the notes that take a combo step, in order — used to resolve the
             // multiplier at each sustain burst.
@@ -186,12 +199,14 @@ namespace YARG.Gameplay.SpPath
                         if (child.IsSustain)
                         {
                             AddSustain(sustainEvents, i, child, ticksPerSustainPoint, sustainBurstThreshold);
+                            AddStarPowerSustain(starPowerSustains, child);
                         }
                     }
                 }
                 else if (note.IsSustain)
                 {
                     AddSustain(sustainEvents, i, note, ticksPerSustainPoint, sustainBurstThreshold);
+                    AddStarPowerSustain(starPowerSustains, note);
                 }
 
                 comboTicks.Add(note.Tick);
@@ -217,7 +232,19 @@ namespace YARG.Gameplay.SpPath
 
             int soloBonus = CalculateFullComboSoloBonus(notes);
 
-            return new ScoreModel(syncTrack, maxMultiplier, events, scoringNotes, soloBonus);
+            return new ScoreModel(syncTrack, maxMultiplier, events, scoringNotes, starPowerSustains,
+                soloBonus);
+        }
+
+        private static void AddStarPowerSustain(List<TickSpan> into, GuitarNote note)
+        {
+            // The sustain is in ActiveSustains from its note's hit logic until the update at
+            // TickEnd (BaseEngine.Generic.cs:1003-1007, which the engine queues exactly at
+            // :221-226), so that is the span whammy can earn over.
+            if (note.IsStarPower && note.TickEnd > note.Tick)
+            {
+                into.Add(new TickSpan(note.Tick, note.TickEnd));
+            }
         }
 
         // ---------------------------------------------------------------------------------
@@ -340,6 +367,21 @@ namespace YARG.Gameplay.SpPath
         /// One combo step: a note the engine will actually score, with the two coordinates the
         /// Star Power window model needs and whether it completes a Star Power phrase.
         /// </summary>
+        /// <summary>A half-open quarter-tick range, <c>[Start, End)</c>.</summary>
+        public readonly struct TickSpan
+        {
+            public readonly uint Start;
+            public readonly uint End;
+
+            public TickSpan(uint start, uint end)
+            {
+                Start = start;
+                End = end;
+            }
+
+            public override string ToString() => $"[{Start}, {End})";
+        }
+
         public readonly struct ScoringNote
         {
             /// <summary>Index into the post-modifier note track.</summary>
