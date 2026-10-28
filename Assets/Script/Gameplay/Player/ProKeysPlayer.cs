@@ -12,8 +12,10 @@ using YARG.Core.Engine.Keys.Engines;
 using YARG.Core.Input;
 using YARG.Core.Logging;
 using YARG.Core.Replays;
+using YARG.Gameplay.SingleWhammy;
 using YARG.Gameplay.Visuals;
 using YARG.Helpers.Extensions;
+using YARG.Settings;
 
 namespace YARG.Gameplay.Player
 {
@@ -148,6 +150,10 @@ namespace YARG.Gameplay.Player
             {
                 // Create the engine params from the engine preset
                 EngineParams = Player.EnginePreset.ProKeys.Create(StarMultiplierThresholds, SoloBonusStarMultiplierThresholds, false);
+                if (SettingsManager.Settings.SingleWhammy.Value && !Player.Profile.IsBot)
+                {
+                    EngineParams = SingleWhammyParameters.WithSingleWhammy(EngineParams);
+                }
             }
             else
             {
@@ -161,7 +167,9 @@ namespace YARG.Gameplay.Player
                 EngineContainer = null;
             }
 
-            var engine = new YargProKeysEngine(NoteTrack, SyncTrack, EngineParams, Player.Profile.IsBot);
+            var engine = SingleWhammyParameters.IsEnabled(EngineParams)
+                ? new SingleWhammyProKeysEngine(NoteTrack, SyncTrack, EngineParams, Player.Profile.IsBot)
+                : new YargProKeysEngine(NoteTrack, SyncTrack, EngineParams, Player.Profile.IsBot);
             EngineContainer = GameManager.EngineManager.Register(engine, NoteTrack, Chart, Player.RockMeterPreset);
 
             HitWindow = EngineParams.HitWindow;

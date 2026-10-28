@@ -29,6 +29,7 @@ using YARG.Menu.Persistent;
 using YARG.Scores;
 using YARG.Song;
 using YARG.Playlists;
+using YARG.Gameplay.SingleWhammy;
 using YARG.Helpers;
 using YARG.Helpers.Extensions;
 using YARG.Core.Engine;
@@ -418,6 +419,17 @@ namespace YARG.Menu.ScoreScreen
                     data.Frames[i].Profile.CurrentDifficulty, item4: analysisResult.Passed ? "Passed" : "Failed",
                     item5: analysisResult.StatLog);
 #endif
+
+                // The analyzer re-runs the replay on YARG.Core's stock engines, which cannot
+                // reproduce single whammy, so such a player cannot be verified. See
+                // docs/sp-path-design.md, "Single whammy".
+                if (SingleWhammyParameters.IsEnabled(data.Frames[i].EngineParameters))
+                {
+                    YargLogger.LogFormatInfo("({0}, {1}/{2}) Not verified: single whammy is on",
+                        data.Frames[i].Profile.Name, data.Frames[i].Profile.CurrentInstrument,
+                        data.Frames[i].Profile.CurrentDifficulty);
+                    continue;
+                }
 
                 if (!analysisResult.Passed)
                 {

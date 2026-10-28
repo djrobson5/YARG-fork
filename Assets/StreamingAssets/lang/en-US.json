@@ -1660,6 +1660,10 @@
                     "NoMeter": "On + No Meter"
                 }
             },
+            "SingleWhammy": {
+                "Name": "Single Whammy",
+                "Description": "One whammy on a Star Power sustain earns all the Star Power that sustain can give, as if you whammied it from start to end. Works on guitar, bass and keys. The Star Power path plans for full whammy while this is on. Takes effect on the next song."
+            },
             "NoteStreakFrequency": {
                 "Name": "Note Streak Frequency",
                 "Description": "Sets the frequency of note streak notifications.",

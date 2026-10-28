@@ -1595,3 +1595,39 @@ recompute, like the practice gate beside it. The setting's description says so. 
 keeps its `noStarPowerOverlap` parameter and its existing model-only test; it is simply never
 `true` in the game.
 
+
+## Single whammy (locked 2026-10-27)
+
+**User decisions, 2026-10-27:** an accessibility setting where one whammy on a Star Power sustain
+earns all the Star Power that sustain can give, so the player doesn't have to keep whammying. No
+score marking. Every whammy-capable instrument (5- and 6-fret guitar and bass, 5-lane keys, pro
+keys). While it is on, the Star Power path plans for full whammy. Mechanism: once per sustain,
+with full credit backdated to the sustain's start (the alternatives were a song-long whammy buffer
+and fully automatic whammy).
+
+| Decision | Choice |
+|---|---|
+| The setting | `SingleWhammy`, a `ToggleSetting`, **default off**. Settings → General → Gameplay, after No Fail. Global; applied to human players only, read at song start. |
+| Engines | `Assets/Script/Gameplay/SingleWhammy/`: one subclass per stock engine (`SingleWhammyFiveFretGuitarEngine` and the six-fret, five-lane keys and pro keys ones), with the shared logic in `SingleWhammyState`. Fork code only; YARG.Core is untouched. |
+| Behaviour | A *run* is a stretch of passes with at least one Star Power sustain active. The run is *held* from the first pass the whammy timer is active (a whammy, or one that landed within the buffer before the run). While held, the engine restarts the timer every pass (`EngineTimer.Start`, not `StartWhammyTimer`, which zeroes the remainder) and credits gain from `max(earliest active Star Power sustain tick, credited-through tick)`. The stock `UpdateStarPower` does the crediting, with `LastTick`/`FirstWhammyTick` lowered to that tick for the call, so the half-bar event, stats, end-time update and clamp are all stock. |
+| Rounding | The whammy remainder is carried from one held run to the next, so the cumulative gain is `round(16·S/15)` — the full-whammy model's `C(q)` exactly. |
+| Replays | The replay format is YARG.Core's, so the flag rides in `StarPowerWhammyBuffer`: it stores `-1 - buffer` (a real buffer is never negative). The engine subclass rebuilds the whammy timer from the real buffer. Engine choice and the Star Power path's whammy assumption key off the **parameters**, not the setting, so a replay plays back as recorded whatever the setting is now. |
+| Star Power path | Assumes full whammy if `StarPowerPathWhammy` is on **or** the parameters carry single whammy. |
+| Replay analyzer | `ReplayAnalyzer` (YARG.Core) always re-runs stock engines, so a single-whammy player can't be verified. **User decision:** the post-song check (nightly/test builds) skips them, so there is no false "Inconsistent Replay Results" dialog. The History score card shows their recorded stats and leaves them out of `ReplayWasConsistent`, and Analyze Replay logs them as not verifiable. With bots and *save scores with bots* on, the human-only re-simulation behind the saved band score undercounts their Star Power, so that band score comes out low; **accepted**. |
+
+### Results
+
+`SingleWhammyTests` (56 tests, 133 in all; the earlier 77 unedited) on the four whammy fixtures:
+
+- **Exact gain.** A bot that whammies once per run 0, 1 or 3 passes in, at 1/30, 1/120 and
+  1/240 s, earns exactly the model's `WhammyTotal` with Star Power never activated.
+- **Control.** The same whammies on the stock engine earn less.
+- **Meter and path.** A whammy on each run's first pass matches the full-whammy meter on arriving
+  at every note, and the full-whammy path reproduces its projected score on all three grids.
+- **Parameter copy.** It keeps every public field but the buffer (checked by reflection, to catch
+  a field upstream adds later).
+
+Not covered by a test:
+
+- **Real input.** Human input reaches the engine through `MutateStateWithInput` → `StartWhammyTimer`, the same timer the bot starts directly.
+- **Late whammy during an activation.** A whammy that lands late in a sustain while Star Power is active credits the backlog in one lump. A window that ran dry before that whammy releases early, so the path can differ for a late whammier. Totals still match.

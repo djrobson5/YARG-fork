@@ -13,6 +13,7 @@ using YARG.Core.Input;
 using YARG.Core.Logging;
 using YARG.Core.Replays;
 using YARG.Gameplay.HUD;
+using YARG.Gameplay.SingleWhammy;
 using YARG.Gameplay.SpPath;
 using YARG.Gameplay.Visuals;
 using YARG.Helpers;
@@ -221,7 +222,9 @@ namespace YARG.Gameplay.Player
 
         /// <summary>Creates the concrete guitar engine instance.</summary>
         protected virtual GuitarEngine BuildEngine(GuitarEngineParameters parameters)
-            => new YargFiveFretGuitarEngine(NoteTrack, SyncTrack, parameters, Player.Profile.IsBot);
+            => SingleWhammyParameters.IsEnabled(parameters)
+                ? new SingleWhammyFiveFretGuitarEngine(NoteTrack, SyncTrack, parameters, Player.Profile.IsBot)
+                : new YargFiveFretGuitarEngine(NoteTrack, SyncTrack, parameters, Player.Profile.IsBot);
 
         /// <summary>
         /// Logs the phrases the model is counting on next to the ones the engine says exist, so a
@@ -383,8 +386,12 @@ namespace YARG.Gameplay.Player
             try
             {
                 var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                // Single whammy earns exactly what full whammy does (SingleWhammyTests), so it
+                // implies the whammy plan. Read from the parameters so a replay plans as it was played.
+                bool assumeWhammy = SettingsManager.Settings.StarPowerPathWhammy.Value ||
+                    SingleWhammyParameters.IsEnabled(EngineParams);
                 var path = SpPathOptimizer.Optimize(NoteTrack, SyncTrack, EngineParams,
-                    SettingsManager.Settings.StarPowerPathWhammy.Value, GetUnisonPhrases());
+                    assumeWhammy, GetUnisonPhrases());
                 stopwatch.Stop();
 
                 if (path.Activations.Count == 0)
@@ -469,6 +476,10 @@ namespace YARG.Gameplay.Player
             if (!Player.IsReplay)
             {
                 EngineParams = GetEnginePreset().Create(StarMultiplierThresholds, SoloBonusStarMultiplierThresholds, isBass);
+                if (SettingsManager.Settings.SingleWhammy.Value && !Player.Profile.IsBot)
+                {
+                    EngineParams = SingleWhammyParameters.WithSingleWhammy(EngineParams);
+                }
             }
             else
             {

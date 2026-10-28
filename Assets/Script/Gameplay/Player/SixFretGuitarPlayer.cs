@@ -8,6 +8,7 @@ using YARG.Core.Engine.Guitar;
 using YARG.Core.Engine.Guitar.Engines;
 using YARG.Core.Input;
 using YARG.Core.Logging;
+using YARG.Gameplay.SingleWhammy;
 using YARG.Gameplay.Visuals;
 using YARG.Helpers.Extensions;
 using YARG.Themes;
@@ -94,7 +95,9 @@ namespace YARG.Gameplay.Player
         protected override EnginePreset.FiveFretGuitarPreset GetEnginePreset() => Player.EnginePreset.SixFretGuitar;
 
         protected override GuitarEngine BuildEngine(GuitarEngineParameters parameters)
-            => new YargSixFretGuitarEngine(NoteTrack, SyncTrack, parameters, Player.Profile.IsBot);
+            => SingleWhammyParameters.IsEnabled(parameters)
+                ? new SingleWhammySixFretGuitarEngine(NoteTrack, SyncTrack, parameters, Player.Profile.IsBot)
+                : new YargSixFretGuitarEngine(NoteTrack, SyncTrack, parameters, Player.Profile.IsBot);
 
         // --- End CreateEngine() hooks ---
 

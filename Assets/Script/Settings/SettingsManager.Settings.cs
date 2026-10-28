@@ -605,6 +605,17 @@ namespace YARG.Settings
                 NoFailMode.NoMeter
             };
 
+            /// <summary>
+            /// One whammy on a Star Power sustain earns all the Star Power that sustain can give.
+            /// </summary>
+            /// <remarks>
+            /// 5- and 6-fret guitar and bass, 5-lane keys and pro keys; human players only. Stored
+            /// in the replay through the engine parameters, and makes the Star Power path plan
+            /// for full whammy. Read at song start. See <c>docs/sp-path-design.md</c>,
+            /// "Single whammy".
+            /// </remarks>
+            public ToggleSetting SingleWhammy { get; } = new(false);
+
             public ToggleSetting DisableDefaultBackground  { get; } = new(false);
             public ToggleSetting DisableGlobalBackgrounds  { get; } = new(false);
             public ToggleSetting DisablePerSongBackgrounds { get; } = new(false);

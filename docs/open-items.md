@@ -36,6 +36,13 @@ scores appear, (3) periodic merge of upstream `dev`, (4) optional updater slice 
 
 ## Needs verification
 
+- **Single whammy (`feature/single-whammy`) — not yet seen in the game.** Check the "Single
+  Whammy" row under General → Gameplay (after No Fail). Then, with it on, play a song with Star
+  Power sustains on guitar and on keys: whammy once partway into a Star Power sustain, and the meter
+  should jump to what a full whammy would have given. Also check that no "Inconsistent Replay
+  Results" dialog appears after the song, that the replay plays back with the same Star Power, and
+  that the 5-fret `SP path (...)` log line says `full whammy` with the path toggle off. The engine
+  side is verified headlessly (`docs/sp-path-design.md` → "Single whammy").
 - **Star Power path whammy toggle (`feature/sp-whammy`) — not yet seen in the game.** Check the
   "Star Power Path Assumes Whammy" row under Graphics → HUD (after "Show Star Power Path", greyed
   out with it) and play a sustain-heavy song with it on: the log line `SP path (...)` should say

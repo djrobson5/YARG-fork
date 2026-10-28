@@ -843,6 +843,9 @@ namespace YARG.Gameplay
             {
                 // Simulate the replay with only human players to calculate the correct score.
                 // This will remove band multiplier and Star Power contribution from bots
+                // The simulation runs YARG.Core's stock engines, so a single-whammy human earns
+                // less Star Power here than in play and the band score comes out low; accepted
+                // (docs/sp-path-design.md, "Single whammy").
                 if (replayInfo == null || ReplayData == null)
                 {
                     return false;

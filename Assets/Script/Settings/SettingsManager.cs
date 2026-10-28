@@ -112,6 +112,7 @@ namespace YARG.Settings
                 nameof(Settings.PracticeRestartDelay),
                 nameof(Settings.RewindLeadIn),
                 nameof(Settings.NoFail),
+                nameof(Settings.SingleWhammy),
                 nameof(Settings.LearningGuides),
                 nameof(Settings.ReduceNoteSpeedByDifficulty),
 
