@@ -1617,11 +1617,15 @@ and fully automatic whammy).
 
 ### Results
 
-`SingleWhammyTests` (56 tests, 133 in all; the earlier 77 unedited) on the four whammy fixtures:
+`SingleWhammyTests` (72 tests, 149 in all; the earlier 77 unedited) on the four whammy fixtures:
 
 - **Exact gain.** A bot that whammies once per run 0, 1 or 3 passes in, at 1/30, 1/120 and
   1/240 s, earns exactly the model's `WhammyTotal` with Star Power never activated.
+- **Keys.** The five-lane keys subclass, which holds sustains differently, earns the same exact
+  total at each delay.
 - **Control.** The same whammies on the stock engine earn less.
+- **Stock engine on encoded parameters.** It runs every fixture without throwing and earns
+  whammy, never more than full whammy (within 14 ticks of it on `drawntotheflame` guitar).
 - **Meter and path.** A whammy on each run's first pass matches the full-whammy meter on arriving
   at every note, and the full-whammy path reproduces its projected score on all three grids.
 - **Parameter copy.** It keeps every public field but the buffer (checked by reflection, to catch
