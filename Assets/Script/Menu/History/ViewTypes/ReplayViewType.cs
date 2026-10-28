@@ -157,16 +157,20 @@ namespace YARG.Menu.History
             }
 
             var results = ReplayAnalyzer.AnalyzeReplay(chart, _entry, data);
+
+            // The analyzer runs YARG.Core's stock engines, which cannot reproduce single whammy,
+            // and runs the band together, so one single-whammy player makes the whole replay
+            // unverifiable. See docs/sp-path-design.md, "Single whammy".
+            bool singleWhammy = data.Frames.Any(frame =>
+                SingleWhammyParameters.IsEnabled(frame.EngineParameters));
             for (int i = 0; i < results.Length; i++)
             {
                 var analysisResult = results[i];
 
                 var profile = data.Frames[i].Profile;
-                if (SingleWhammyParameters.IsEnabled(data.Frames[i].EngineParameters))
+                if (singleWhammy)
                 {
-                    // The analyzer runs YARG.Core's stock engines, which cannot reproduce single
-                    // whammy. See docs/sp-path-design.md, "Single whammy".
-                    YargLogger.LogFormatInfo("({0}, {1}/{2}) NOT VERIFIABLE: single whammy is on",
+                    YargLogger.LogFormatInfo("({0}, {1}/{2}) NOT VERIFIABLE: single whammy is on in this replay",
                         profile.Name, profile.CurrentInstrument, profile.CurrentDifficulty);
                 }
                 else if (analysisResult.Passed)
@@ -220,12 +224,13 @@ namespace YARG.Menu.History
 
             var results = ReplayAnalyzer.AnalyzeReplay(chart, _entry, data);
 
-            // A single-whammy player can't be re-simulated on the stock engines the analyzer
-            // uses, so their card shows the stats recorded during play and they are left out of
-            // the consistency check. See docs/sp-path-design.md, "Single whammy".
-            bool IsSingleWhammy(int frame) =>
-                SingleWhammyParameters.IsEnabled(data.Frames[frame].EngineParameters);
-            bool replayConsistent = results.Where((r, i) => !IsSingleWhammy(i)).All(r => r.Passed);
+            // The analyzer re-simulates on YARG.Core's stock engines, which cannot reproduce
+            // single whammy, and runs the band together, so if anyone played with it every card
+            // shows the stats recorded during play and the replay is not checked. See
+            // docs/sp-path-design.md, "Single whammy".
+            bool singleWhammy = data.Frames.Any(frame =>
+                SingleWhammyParameters.IsEnabled(frame.EngineParameters));
+            bool replayConsistent = singleWhammy || results.All(r => r.Passed);
             if (!replayConsistent)
             {
                 YargLogger.LogInfo("Replay did not pass verification!");
@@ -257,7 +262,7 @@ namespace YARG.Menu.History
                     // This compares ids, so imported replays should never be the high score.
                     IsHighScore = isHighScore,
                     Player = new YargPlayer(playerResult.Frame, data),
-                    Stats = IsSingleWhammy(i) ? data.Frames[i].Stats : playerResult.ResultStats,
+                    Stats = singleWhammy ? data.Frames[i].Stats : playerResult.ResultStats,
                     IsReplay = playerEntry.IsReplayPlayer
                 };
             }

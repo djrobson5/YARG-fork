@@ -7,6 +7,7 @@ using YARG.Core.Engine;
 using YARG.Core.Engine.Guitar;
 using YARG.Core.Engine.Guitar.Engines;
 using YARG.Core.Engine.Keys;
+using YARG.Core.Game;
 using YARG.Gameplay.SingleWhammy;
 using YARG.Gameplay.SpPath;
 
@@ -70,11 +71,39 @@ public class SingleWhammyTests
     {
         private readonly WhammyOncePerRun _whammy;
 
-        public OneWhammyStockBot(SpWhammyTests.Fixture f, int whammyDelay)
-            : base(f.Notes, f.Sync, f.Params, isBot: true)
+        public OneWhammyStockBot(SpWhammyTests.Fixture f, int whammyDelay,
+            GuitarEngineParameters parameters = null)
+            : base(f.Notes, f.Sync, parameters ?? f.Params, isBot: true)
         {
             _whammy = new WhammyOncePerRun(whammyDelay);
         }
+
+        protected override void UpdateStarPower()
+        {
+            IsStarPowerInputActive = false;
+            if (_whammy.ShouldWhammy(IsStarPowerSustainActive()))
+            {
+                StartWhammyTimer(CurrentTime);
+            }
+
+            base.UpdateStarPower();
+        }
+    }
+
+    /// <summary>The single-whammy five-lane keys engine, driven like <see cref="OneWhammyBot"/>.</summary>
+    private sealed class OneWhammyKeysBot : SingleWhammyFiveLaneKeysEngine
+    {
+        private readonly WhammyOncePerRun _whammy;
+
+        public OneWhammyKeysBot(SpWhammyTests.Fixture f, int whammyDelay)
+            : base(f.Notes, f.Sync, SingleWhammyParameters.WithSingleWhammy(
+                new EnginePreset.ProKeysPreset().Create(ChartFixtures.StarMultiplierThresholds,
+                    ChartFixtures.SoloBonusStarMultiplierThresholds, isBass: false)), isBot: true)
+        {
+            _whammy = new WhammyOncePerRun(whammyDelay);
+        }
+
+        public int Whammies => _whammy.Count;
 
         protected override void UpdateStarPower()
         {
@@ -164,6 +193,50 @@ public class SingleWhammyTests
 
         Assert.That(engine.EngineStats.StarPowerWhammyTicks,
             Is.LessThan(f.Whammy.WhammyTotal(uint.MaxValue)));
+    }
+
+    /// <summary>
+    /// The keys engines override sustain holding (<c>FiveLaneKeysEngine.CanSustainHold</c>), so
+    /// the five-lane keys subclass is checked on its own, on the same guitar fixtures.
+    /// </summary>
+    [Test]
+    public void FiveLaneKeys_OneWhammyPerSustain_EarnsTheFullWhammyTotal(
+        [ValueSource(typeof(SpWhammyTests), nameof(SpWhammyTests.Fixtures))] string name,
+        [ValueSource(nameof(WhammyDelays))] int delay)
+    {
+        var f = SpWhammyTests.Load(name);
+        var engine = new OneWhammyKeysBot(f, delay);
+        double end = BotRunner.ChartEndTime(f.Notes);
+        for (double t = 0.0; t < end; t += BotRunner.StepSeconds)
+        {
+            engine.Update(t);
+        }
+
+        engine.Update(end);
+
+        Assert.That(engine.Whammies, Is.GreaterThan(0));
+        Assert.That(engine.EngineStats.StarPowerWhammyTicks,
+            Is.EqualTo(f.Whammy.WhammyTotal(uint.MaxValue)));
+    }
+
+    /// <summary>
+    /// YARG.Core's replay analyzer runs the <em>stock</em> engine on a single-whammy replay, so
+    /// the stock engine has to get through the encoded whammy buffer, whammies included, without
+    /// throwing. It reads the buffer as a whammy that never lapses, so it earns whammy, though
+    /// never more than full whammy.
+    /// </summary>
+    [TestCaseSource(typeof(SpWhammyTests), nameof(SpWhammyTests.Fixtures))]
+    public void StockEngine_SurvivesTheEncodedParameters(string name)
+    {
+        var f = SpWhammyTests.Load(name);
+        var engine = new OneWhammyStockBot(f, 1, SingleWhammyParameters.WithSingleWhammy(f.Params));
+
+        Assert.DoesNotThrow(() => BotRunner.RunToEnd(engine, f.Notes));
+        TestContext.Out.WriteLine($"{name}: stock engine earned " +
+            $"{engine.EngineStats.StarPowerWhammyTicks} whammy tick(s), model " +
+            $"{f.Whammy.WhammyTotal(uint.MaxValue)}");
+        Assert.That(engine.EngineStats.StarPowerWhammyTicks,
+            Is.GreaterThan(0u).And.LessThanOrEqualTo(f.Whammy.WhammyTotal(uint.MaxValue)));
     }
 
     /// <summary>

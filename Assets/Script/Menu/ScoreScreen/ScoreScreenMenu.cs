@@ -408,6 +408,13 @@ namespace YARG.Menu.ScoreScreen
             var results = ReplayAnalyzer.AnalyzeReplay(chart, replayEntry, data);
             bool allPass = true;
 
+            // The analyzer re-runs the replay on YARG.Core's stock engines, which cannot
+            // reproduce single whammy, and it runs the band together (shared Star Power, band
+            // bonus), so one single-whammy player makes the whole replay unverifiable. See
+            // docs/sp-path-design.md, "Single whammy".
+            bool singleWhammy = data.Frames.Any(frame =>
+                SingleWhammyParameters.IsEnabled(frame.EngineParameters));
+
             for (int i = 0; i < results.Length; i++)
             {
                 var analysisResult = results[i];
@@ -420,12 +427,9 @@ namespace YARG.Menu.ScoreScreen
                     item5: analysisResult.StatLog);
 #endif
 
-                // The analyzer re-runs the replay on YARG.Core's stock engines, which cannot
-                // reproduce single whammy, so such a player cannot be verified. See
-                // docs/sp-path-design.md, "Single whammy".
-                if (SingleWhammyParameters.IsEnabled(data.Frames[i].EngineParameters))
+                if (singleWhammy)
                 {
-                    YargLogger.LogFormatInfo("({0}, {1}/{2}) Not verified: single whammy is on",
+                    YargLogger.LogFormatInfo("({0}, {1}/{2}) Not verified: single whammy is on in this replay",
                         data.Frames[i].Profile.Name, data.Frames[i].Profile.CurrentInstrument,
                         data.Frames[i].Profile.CurrentDifficulty);
                     continue;

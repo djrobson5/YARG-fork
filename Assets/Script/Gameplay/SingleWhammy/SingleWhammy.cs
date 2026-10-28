@@ -15,25 +15,29 @@ namespace YARG.Gameplay.SingleWhammy
     /// <para/>
     /// <b>How a replay knows.</b> The replay format belongs to YARG.Core, which the fork never
     /// modifies, so the option rides in an engine parameter replays already store:
-    /// <see cref="BaseEngineParameters.StarPowerWhammyBuffer"/> holds <c>-1 - buffer</c>. A real
-    /// buffer is never negative, so the encoding is unambiguous and the real buffer comes back
-    /// exactly. Everything (engine choice, the Star Power path) keys off the parameters rather
+    /// <see cref="BaseEngineParameters.StarPowerWhammyBuffer"/> holds <c>1000 + buffer</c> seconds.
+    /// No real buffer comes near that, so the encoding is unambiguous and the real buffer comes
+    /// back exactly. A stock engine reading it (YARG.Core's replay analyzer, or upstream YARG)
+    /// sees a whammy that never lapses after the first one, which is close to what single whammy
+    /// does, rather than something broken. Everything (engine choice, the Star Power path) keys off the parameters rather
     /// than the setting, so a replay plays back the way it was recorded whatever the setting is
     /// now.
     /// </summary>
     public static class SingleWhammyParameters
     {
+        private const double FLAG_OFFSET = 1000;
+
         public static bool IsEnabled(BaseEngineParameters parameters) =>
-            parameters.StarPowerWhammyBuffer < 0;
+            parameters.StarPowerWhammyBuffer >= FLAG_OFFSET;
 
         /// <summary>The whammy buffer the engine preset actually asked for.</summary>
         public static double RealBuffer(BaseEngineParameters parameters) =>
             IsEnabled(parameters)
-                ? -1 - parameters.StarPowerWhammyBuffer
+                ? parameters.StarPowerWhammyBuffer - FLAG_OFFSET
                 : parameters.StarPowerWhammyBuffer;
 
         private static double Encode(BaseEngineParameters parameters) =>
-            -1 - Math.Max(RealBuffer(parameters), 0);
+            FLAG_OFFSET + Math.Max(RealBuffer(parameters), 0);
 
         // The copies go through the public constructors because the fields are readonly. A
         // field upstream adds later would be dropped silently, so SingleWhammyTests compares
