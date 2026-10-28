@@ -13,7 +13,7 @@ namespace YARG.Song
     /// </summary>
     /// <remarks>
     /// Nothing here downloads or writes anything — it only reports what the newest release is
-    /// and where its Windows asset lives. <see cref="UpdateDownloader"/> does the fetching.
+    /// and where its asset for this platform lives. <see cref="UpdateDownloader"/> does the fetching.
     /// See <c>docs/updater-design.md</c> for the full slice plan.
     /// </remarks>
     public static class UpdateChecker
@@ -50,7 +50,7 @@ namespace YARG.Song
             public readonly string ReleaseUrl;
 
             /// <summary>
-            /// The Windows .zip asset's file name, or null when there is nothing downloadable
+            /// This platform's .zip asset's file name, or null when there is nothing downloadable
             /// (a failed check, or a platform this updater cannot install on).
             /// </summary>
             public readonly string AssetName;
@@ -99,6 +99,14 @@ namespace YARG.Song
         /// </summary>
         private static readonly Regex WindowsAssetPattern =
             new(@"^YARG-SectionFC_.*-Windows-x64\.zip$",
+                RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+        /// <summary>
+        /// The name the release workflow gives the macOS build. Matched exactly, with no lone-zip
+        /// fallback: the only other zip a release carries is the Windows one.
+        /// </summary>
+        private static readonly Regex MacAssetPattern =
+            new(@"^YARG-SectionFC_.*-macOS-arm64\.zip$",
                 RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
         // The check is never retried, and a real answer is reused for the rest of the session.
@@ -233,12 +241,14 @@ namespace YARG.Song
             string assetUrl = null;
             long assetSize = 0;
 #if UNITY_STANDALONE_WIN
-            // Only Windows builds have something this updater could ever install, so only
-            // Windows builds bother reading the asset list. Everywhere else the flow degrades
-            // to the Open Release Page button.
+            // Only Windows and macOS builds have something this updater could ever install, so
+            // only they bother reading the asset list. Everywhere else the flow degrades to the
+            // Open Release Page button.
             TryFindWindowsAsset(latestRelease, out assetName, out assetUrl, out assetSize);
+#elif UNITY_STANDALONE_OSX
+            TryFindMacAsset(latestRelease, out assetName, out assetUrl, out assetSize);
 #else
-            // Nothing reads the release body off Windows, and an assigned-but-unread local is
+            // Nothing reads the release body elsewhere, and an assigned-but-unread local is
             // a CS0219 warning.
             _ = latestRelease;
 #endif
@@ -299,13 +309,45 @@ namespace YARG.Song
                 return false;
             }
 
-            name = chosen["name"]?.ToString();
-            url = chosen["browser_download_url"]?.ToString();
-            size = chosen["size"]?.Value<long>() ?? 0;
+            return TryReadAsset(chosen, out name, out url, out size);
+        }
+
+        /// <summary>
+        /// Picks the macOS .zip out of a release's asset list, by exact name only.
+        /// </summary>
+        private static bool TryFindMacAsset(JToken release, out string name, out string url, out long size)
+        {
+            name = null;
+            url = null;
+            size = 0;
+
+            if (release?["assets"] is not JArray assets)
+            {
+                return false;
+            }
+
+            foreach (var asset in assets)
+            {
+                string assetName = asset["name"]?.ToString();
+                if (!string.IsNullOrEmpty(assetName) && MacAssetPattern.IsMatch(assetName))
+                {
+                    return TryReadAsset(asset, out name, out url, out size);
+                }
+            }
+
+            YargLogger.LogWarning("The latest release has no macOS .zip asset.");
+            return false;
+        }
+
+        private static bool TryReadAsset(JToken asset, out string name, out string url, out long size)
+        {
+            name = asset["name"]?.ToString();
+            url = asset["browser_download_url"]?.ToString();
+            size = asset["size"]?.Value<long>() ?? 0;
 
             if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(url) || size <= 0)
             {
-                YargLogger.LogWarning("The latest release's Windows asset is missing a name, URL or size.");
+                YargLogger.LogWarning("The latest release's asset is missing a name, URL or size.");
                 name = null;
                 url = null;
                 size = 0;

@@ -291,9 +291,9 @@ namespace YARG.Settings
 
                             AddOpenReleasePageButton(dialog, result.ReleaseUrl);
 
-#if UNITY_STANDALONE_WIN
-                            // Only Windows releases ship an asset this can install. Everywhere
-                            // else the dialog is the release-page link and nothing more.
+#if UNITY_STANDALONE_WIN || UNITY_STANDALONE_OSX
+                            // Only Windows and macOS releases ship an asset this can install.
+                            // Everywhere else the dialog is the release-page link and nothing more.
                             if (result.HasDownloadableAsset)
                             {
                                 var downloadable = result;
@@ -364,7 +364,7 @@ namespace YARG.Settings
                     });
             }
 
-#if UNITY_STANDALONE_WIN
+#if UNITY_STANDALONE_WIN || UNITY_STANDALONE_OSX
             /// <summary>
             /// Downloads, verifies and stages the release asset, reporting progress in the
             /// dialog's own message text. Nothing here writes to the install directory.
@@ -473,12 +473,17 @@ namespace YARG.Settings
                 // degrades to the slice 3 wording: here is the staged build, install it yourself.
                 bool canInstall = UpdateInstaller.IsSupported;
 
+#if UNITY_STANDALONE_OSX
+                // The Mac backup is kept in the updates folder, not next to the install.
+                const string readyKey = "Menu.Dialog.Updates.Ready.DescriptionMac";
+#else
+                const string readyKey = "Menu.Dialog.Updates.Ready.Description";
+#endif
+
                 var dialog = DialogManager.Instance.ShowMessage(
                     Localize.Key("Menu.Dialog.Updates.Ready.Title"),
                     Localize.KeyFormat(
-                        canInstall
-                            ? "Menu.Dialog.Updates.Ready.Description"
-                            : "Menu.Dialog.Updates.Ready.DescriptionManual",
+                        canInstall ? readyKey : "Menu.Dialog.Updates.Ready.DescriptionManual",
                         result.LatestTag, stagingPath));
 
                 AddOpenReleasePageButton(dialog, result.ReleaseUrl);
@@ -495,6 +500,15 @@ namespace YARG.Settings
                     () => InstallUpdate(tag, stagingPath));
             }
 
+            // The failure messages that name Windows tools and paths have macOS variants.
+#if UNITY_STANDALONE_OSX
+            private const string NOT_WRITABLE_KEY = "Menu.Dialog.Updates.InstallFailed.NotWritableMac";
+            private const string INSTALL_FAILED_KEY = "Menu.Dialog.Updates.InstallFailed.DescriptionMac";
+#else
+            private const string NOT_WRITABLE_KEY = "Menu.Dialog.Updates.InstallFailed.NotWritable";
+            private const string INSTALL_FAILED_KEY = "Menu.Dialog.Updates.InstallFailed.Description";
+#endif
+
             /// <summary>
             /// Hands the staged build to <see cref="UpdateInstaller"/> and quits so its helper can
             /// replace the install. Nothing here writes to the install directory itself.
@@ -508,11 +522,16 @@ namespace YARG.Settings
                     // appearing after an "Installing…" flash.
                     DialogManager.Instance.ClearDialog();
 
-                    if (!UpdateInstaller.IsInstallWritable())
+                    // A translocated app is not writable either, but the fix is different: it
+                    // was opened where it was unzipped, so it has to be moved, not given rights.
+                    if (UpdateInstaller.IsTranslocated || !UpdateInstaller.IsInstallWritable())
                     {
                         DialogManager.Instance.ShowMessage(
                             Localize.Key("Menu.Dialog.Updates.InstallFailed.Title"),
-                            Localize.KeyFormat("Menu.Dialog.Updates.InstallFailed.NotWritable",
+                            Localize.KeyFormat(
+                                UpdateInstaller.IsTranslocated
+                                    ? "Menu.Dialog.Updates.InstallFailed.Translocated"
+                                    : NOT_WRITABLE_KEY,
                                 UpdateInstaller.InstallDirectory));
                         return;
                     }
@@ -529,9 +548,10 @@ namespace YARG.Settings
                     {
                         string key = status switch
                         {
-                            UpdateInstaller.InstallStatus.NotWritable => "Menu.Dialog.Updates.InstallFailed.NotWritable",
-                            UpdateInstaller.InstallStatus.NotStaged   => "Menu.Dialog.Updates.InstallFailed.NotStaged",
-                            _                                        => "Menu.Dialog.Updates.InstallFailed.Description",
+                            UpdateInstaller.InstallStatus.NotWritable  => NOT_WRITABLE_KEY,
+                            UpdateInstaller.InstallStatus.Translocated => "Menu.Dialog.Updates.InstallFailed.Translocated",
+                            UpdateInstaller.InstallStatus.NotStaged    => "Menu.Dialog.Updates.InstallFailed.NotStaged",
+                            _                                         => INSTALL_FAILED_KEY,
                         };
 
                         DialogManager.Instance.ClearDialog();

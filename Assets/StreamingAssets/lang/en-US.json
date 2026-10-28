@@ -308,22 +308,26 @@
                 "Ready": {
                     "Title": "Update Ready",
                     "Description": "The update has been downloaded and verified.\n\n<b>Install and Restart</b> will close YARG, replace this install with <b>{0}</b> and reopen it. Your current build is kept in a <b>backup</b> folder next to the install until the next update.\n\nStaged  <b>{0}</b>\n<alpha=#80>{1}</alpha>",
+                    "DescriptionMac": "The update has been downloaded and verified.\n\n<b>Install and Restart</b> will close YARG, replace this app with <b>{0}</b> and reopen it. Your current build is kept in YARG's updates folder until the next update.\n\nStaged  <b>{0}</b>\n<alpha=#80>{1}</alpha>",
                     "DescriptionManual": "The update has been downloaded and verified.\n\nThis build cannot replace itself; run tools\\update-yarg.ps1 or open the release page to install it.\n\nStaged  <b>{0}</b>\n<alpha=#80>{1}</alpha>"
                 },
                 "Installing": {
                     "Title": "Installing Update",
-                    "Description": "Installing <b>{0}</b>.\n\nYARG will close now and reopen once the new build is in place. This takes a few seconds; do not close the window that appears."
+                    "Description": "Installing <b>{0}</b>.\n\nYARG will close now and reopen once the new build is in place. This takes a few seconds."
                 },
                 "InstallFailed": {
                     "Title": "Could Not Install",
                     "Description": "The updater could not start. Nothing has been changed.\n\nRun tools\\update-yarg.ps1, or unzip the release over <b>{0}</b> yourself.",
                     "NotWritable": "YARG cannot write to its own install folder, and this updater never asks for administrator rights.\n\nMove the install somewhere under your user profile (for example <b>%LOCALAPPDATA%\\YARG-SectionFC</b>) and try again, or run tools\\update-yarg.ps1 from an account that can write to <b>{0}</b>.",
+                    "DescriptionMac": "The updater could not start. Nothing has been changed.\n\nOpen the release page, download the macOS zip, and replace <b>{0}</b> with the YARG.app inside it.",
+                    "NotWritableMac": "YARG cannot replace its own app at <b>{0}</b>, and this updater never asks for administrator rights.\n\nMove YARG.app into your Applications folder with Finder and try again.",
+                    "Translocated": "macOS is running a temporary read-only copy of YARG, because it was opened from the folder it was unzipped into.\n\nQuit YARG, move YARG.app into your Applications folder with Finder, open it from there and try again.",
                     "NotStaged": "The staged build has gone missing, so there is nothing to install.\n\nCheck for updates and download it again.\n<alpha=#80>{0}</alpha>"
                 },
                 "DownloadFailed": {
                     "Title": "Could Not Download",
                     "Description": "The download of <b>{0}</b> did not finish. Check your internet connection and try again.",
-                    "NoAsset": "Release <b>{0}</b> has no Windows download attached to it. Open the release page to see what it does have.",
+                    "NoAsset": "Release <b>{0}</b> has no download for this platform attached to it. Open the release page to see what it does have.",
                     "SizeMismatch": "The download of <b>{0}</b> is the wrong size, so it is incomplete or corrupt. It has been discarded; try again.",
                     "ExtractFailed": "The download of <b>{0}</b> could not be unzipped, so it is corrupt. It has been discarded; try again.",
                     "StageIoError": "Could not write to the updates folder. Check that there is enough disk space and that nothing is locking <b>{0}</b>.",
