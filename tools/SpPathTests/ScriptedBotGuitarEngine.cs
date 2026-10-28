@@ -36,6 +36,7 @@ public class ScriptedBotGuitarEngine : YargFiveFretGuitarEngine
 {
     private readonly HashSet<int> _activationNoteIndices;
     private readonly bool _useStockPolicy;
+    private readonly bool _fullWhammy;
 
     /// <param name="activationNoteIndices">
     /// Note indices at which the Star Power input should be raised. Empty (or null) means "never
@@ -45,15 +46,23 @@ public class ScriptedBotGuitarEngine : YargFiveFretGuitarEngine
     /// Leave the stock greedy toggle in place and script nothing. Used to get the score trace and
     /// the window log off an otherwise completely unmodified bot run.
     /// </param>
+    /// <param name="fullWhammy">
+    /// Whammy on every engine pass, so the whammy timer never lapses and every Star Power sustain
+    /// earns over its whole span — the assumption <c>SpScoreModel.AssumeWhammy</c> plans for. A
+    /// bot never processes inputs (<c>BaseEngine.cs:199-202</c>), so the timer is started here
+    /// directly, the way a <c>GuitarAction.Whammy</c> input would
+    /// (<c>YargFiveFretGuitarEngine.cs:110-113</c>).
+    /// </param>
     public ScriptedBotGuitarEngine(InstrumentDifficulty<GuitarNote> chart, SyncTrack syncTrack,
         GuitarEngineParameters engineParameters, IEnumerable<int> activationNoteIndices = null,
-        bool useStockPolicy = false)
+        bool useStockPolicy = false, bool fullWhammy = false)
         : base(chart, syncTrack, engineParameters, isBot: true)
     {
         _activationNoteIndices = activationNoteIndices is null
             ? new HashSet<int>()
             : new HashSet<int>(activationNoteIndices);
         _useStockPolicy = useStockPolicy;
+        _fullWhammy = fullWhammy;
 
         OnStarPowerStatus += OnStarPowerStatusChanged;
     }
@@ -66,6 +75,15 @@ public class ScriptedBotGuitarEngine : YargFiveFretGuitarEngine
 
     /// <summary>Every Star Power window the engine actually opened.</summary>
     public List<Window> Windows { get; } = new();
+
+    /// <summary>
+    /// The meter at the end of every <c>UpdateStarPower</c>: after whammy, drain, clamp, release
+    /// and any activation, before that pass's hit logic. On a note's pass that is the meter the
+    /// model calls "on arriving at the note".
+    /// </summary>
+    public List<MeterSample> MeterTrace { get; } = new();
+
+    public readonly record struct MeterSample(uint Tick, uint Amount, bool StarPowerActive);
 
     public readonly record struct ScoreAward(
         int NoteIndex, uint Tick, uint MeasureTick, int Points, int Multiplier,
@@ -100,11 +118,17 @@ public class ScriptedBotGuitarEngine : YargFiveFretGuitarEngine
     /// </summary>
     protected override void UpdateStarPower()
     {
+        if (_fullWhammy)
+        {
+            StartWhammyTimer(CurrentTime);
+        }
+
         if (_useStockPolicy)
         {
             // Leave base.UpdateBot's greedy toggle alone: this instance is the stock bot, kept
             // only for the score trace and the window log.
             base.UpdateStarPower();
+            RecordMeter();
             return;
         }
 
@@ -114,7 +138,12 @@ public class ScriptedBotGuitarEngine : YargFiveFretGuitarEngine
             CurrentTime >= Notes[NoteIndex].Time;
 
         base.UpdateStarPower();
+        RecordMeter();
     }
+
+    private void RecordMeter() =>
+        MeterTrace.Add(new MeterSample(CurrentTick, EngineStats.StarPowerTickAmount,
+            EngineStats.IsStarPowerActive));
 
     protected override void AddScore(GuitarNote note)
     {

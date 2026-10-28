@@ -268,9 +268,15 @@ namespace YARG.Gameplay.Player
                 $"Star Power phrase(s), engine reports {engineTotal}; " +
                 $"{path.UnisonPhraseEndTicks.Count} of them are unisons paying a second quarter " +
                 $"bar (engine container lists {engineUnisons} unison phrase(s)); quarter bar = " +
-                $"{path.TicksPerQuarterSpBar} tick(s). Phrase-end ticks: {listed}. Whammy is not " +
-                $"modelled, so the player's meter can run ahead of the plan's.");
+                $"{path.TicksPerQuarterSpBar} tick(s). Phrase-end ticks: {listed}. " +
+                (path.AssumesWhammy
+                    ? "The plan assumes full whammy on every Star Power sustain, so the player's " +
+                      "meter usually runs a little behind it."
+                    : "Whammy is not modelled, so the player's meter can run ahead of the plan's."));
         }
+
+        private static string DescribeWhammy(StarPowerPath path) =>
+            path.AssumesWhammy ? "full whammy" : "no whammy";
 
         /// <summary>
         /// The player's own Star Power phrases that are part of a unison, in the plain tick-range
@@ -365,28 +371,30 @@ namespace YARG.Gameplay.Player
             {
                 var stopwatch = System.Diagnostics.Stopwatch.StartNew();
                 var path = SpPathOptimizer.Optimize(NoteTrack, SyncTrack, EngineParams,
-                    GetUnisonPhrases());
+                    SettingsManager.Settings.StarPowerPathWhammy.Value, GetUnisonPhrases());
                 stopwatch.Stop();
 
                 if (path.Activations.Count == 0)
                 {
                     YargLogger.LogFormatInfo(
                         "SP path ({0}): no activations — projected {1}, {2} unison phrase(s), " +
-                        "solved in {3:0.0} ms",
+                        "{3}, {4} state(s), solved in {5:0.0} ms",
                         Player.Profile.CurrentInstrument, path.ProjectedScore,
-                        path.UnisonPhraseEndTicks.Count, stopwatch.Elapsed.TotalMilliseconds);
+                        path.UnisonPhraseEndTicks.Count, DescribeWhammy(path), path.StateCount,
+                        stopwatch.Elapsed.TotalMilliseconds);
                 }
                 else
                 {
                     var first = path.Activations[0];
-                    YargLogger.LogFormatInfo(
-                        "SP path ({0}): {1} activation(s), first at tick {2} ({3:0.000}s, note {4}), " +
-                        "projected {5} (+{6} over no Star Power), {7} unison phrase(s), " +
-                        "solved in {8:0.0} ms",
-                        Player.Profile.CurrentInstrument, path.Activations.Count,
-                        first.ActivationTick, first.ActivationTime, first.NoteIndex,
-                        path.ProjectedScore, path.ScoreGainOverNoActivations,
-                        path.UnisonPhraseEndTicks.Count, stopwatch.Elapsed.TotalMilliseconds);
+                    // Interpolated rather than LogFormatInfo, which tops out at ten arguments.
+                    YargLogger.LogInfo(
+                        $"SP path ({Player.Profile.CurrentInstrument}): {path.Activations.Count} " +
+                        $"activation(s), first at tick {first.ActivationTick} " +
+                        $"({first.ActivationTime:0.000}s, note {first.NoteIndex}), projected " +
+                        $"{path.ProjectedScore} (+{path.ScoreGainOverNoActivations} over no Star " +
+                        $"Power), {path.UnisonPhraseEndTicks.Count} unison phrase(s), " +
+                        $"{DescribeWhammy(path)}, {path.StateCount} state(s), solved in " +
+                        $"{stopwatch.Elapsed.TotalMilliseconds:0.0} ms");
                 }
 
                 LogStarPowerPathPhrases(path);

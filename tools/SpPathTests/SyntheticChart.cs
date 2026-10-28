@@ -440,6 +440,123 @@ public static class SyntheticChart
         }
     }
 
+    /// <summary>
+    /// A small chart for the two whammy shapes the other fixtures never produce
+    /// (<c>docs/sp-path-design.md</c>, "Whammy"):
+    /// <list type="bullet">
+    /// <item>A window that <b>releases part way through a Star Power sustain</b>. Only possible
+    /// where the drain outruns whammy's 16/15 per quarter tick, so the whole chart is in 3/4
+    /// (4/3 measure ticks per quarter tick). The first activation spends half a bar on
+    /// <see cref="FirstActivation"/>; the sustain at <see cref="CarrySustainStart"/> starts with
+    /// too little window left to outlast it, so the whammy after the release banks. Its phrase
+    /// ends after the sustain, so nothing inside the window extends it.</item>
+    /// <item>A carried meter that <b>funds the next activation</b>: two more phrases put it over
+    /// half a bar by <see cref="SecondActivation"/>, at a tick count that is not a whole number
+    /// of quarter bars, so the second window's length depends on the carry being exact.</item>
+    /// <item>A Star Power sustain <b>held across an activation</b>: an extended green sustain with
+    /// other frets played over it, and an activation on one of those, so whammy feeds the meter
+    /// before the activation and the window after it.</item>
+    /// </list>
+    /// </summary>
+    public static class Whammy
+    {
+        /// <summary>Quarter ticks per 3/4 measure at <see cref="Resolution"/>.</summary>
+        public const long Measure = 3 * Resolution;
+
+        public const long LeadInEnd = 8 * Measure;
+        public const long PhraseA = 12000;
+        public const long PhraseB = 13440;
+        public const long FirstActivation = 14400;
+        public const long CarrySustainStart = 18720;
+        public const long CarrySustainLength = 10000;
+        public const long CarryPhraseEnd = 29760;
+        public const long PhraseC = 31200;
+        public const long SecondActivation = 31680;
+        public const long PhraseD = 41760;
+        public const long PhraseE = 43200;
+        public const long HeldSustainStart = 44640;
+        public const long HeldSustainLength = 4800;
+        public const long HeldActivation = 46080;
+        public const long End = 56000;
+
+        public static SongChart Load()
+        {
+            var settings = ParseSettings.Default_Midi;
+            settings.SustainCutoffThreshold = SustainCutoff;
+            return SongChart.FromMidi(in settings, BuildMidi());
+        }
+
+        public static InstrumentDifficulty<GuitarNote> GuitarNotes(SongChart chart) =>
+            chart.FiveFretGuitar.GetDifficulty(YARG.Core.Difficulty.Expert);
+
+        private static MidiFile BuildMidi()
+        {
+            var midi = new MidiFile
+            {
+                TimeDivision = new TicksPerQuarterNoteTimeDivision((short) Resolution)
+            };
+
+            var sync = new TrackBuilder("whammy");
+            sync.Add(0, new SetTempoEvent(500_000));
+            sync.Add(0, new TimeSignatureEvent(3, 4));
+            midi.Chunks.Add(sync.Build());
+
+            midi.Chunks.Add(BuildGuitarTrack());
+            return midi;
+        }
+
+        private static TrackChunk BuildGuitarTrack()
+        {
+            var track = new TrackBuilder("PART GUITAR");
+            var frets = new[] { Green, Red, Yellow, Blue, Orange };
+            int f = 0;
+
+            void Fill(long from, long to, long step)
+            {
+                for (long t = from; t < to; t += step)
+                {
+                    track.AddNote(frets[f++ % 5], t, Tap);
+                }
+            }
+
+            // One-note phrases: a range covering exactly one note makes it the phrase end.
+            void OneNotePhrase(long tick)
+            {
+                track.AddNote(frets[f++ % 5], tick, Tap);
+                AddPhrase(track, StarPowerNote, tick, tick + Resolution);
+            }
+
+            // Lead-in to cap the multiplier, then half a bar banked.
+            Fill(0, LeadInEnd, Step);
+            OneNotePhrase(PhraseA);
+            OneNotePhrase(PhraseB);
+
+            // The first window opens on the first of these and runs into the sustain.
+            Fill(FirstActivation, CarrySustainStart, Resolution);
+
+            // The Star Power sustain the window releases inside. Its phrase runs on to a later
+            // note, which carries IsStarPowerEnd and is hit after the window.
+            track.AddNote(Green, CarrySustainStart, CarrySustainLength);
+            track.AddNote(Red, CarryPhraseEnd, Tap);
+            AddPhrase(track, StarPowerNote, CarrySustainStart, CarryPhraseEnd + Resolution);
+
+            OneNotePhrase(PhraseC);
+            Fill(SecondActivation, PhraseD - Resolution, Resolution);
+
+            // Half a bar again, then a green Star Power sustain with other frets played over it.
+            OneNotePhrase(PhraseD);
+            OneNotePhrase(PhraseE);
+            track.AddNote(Green, HeldSustainStart, HeldSustainLength);
+            AddPhrase(track, StarPowerNote, HeldSustainStart, HeldSustainStart + Resolution);
+            for (long t = HeldSustainStart + Resolution; t < End; t += Resolution)
+            {
+                track.AddNote(frets[1 + f++ % 4], t, Tap);
+            }
+
+            return track.Build();
+        }
+    }
+
     private static void AddPhrase(TrackBuilder track, byte note, long start, long end)
     {
         track.Add(start, Note.On(note));

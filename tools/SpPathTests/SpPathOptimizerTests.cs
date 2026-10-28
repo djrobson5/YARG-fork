@@ -322,18 +322,25 @@ internal static class BruteForce
     public static (long Extra, IReadOnlyList<int> Activations) Best(SpScoreModel sp)
     {
         // Upper bound on the number of activations any legal path can have, so the enumeration
-        // terminates. It is exact, not a guess: meter comes only from phrases, one quarter bar
-        // each (AwardStarPower, BaseEngine.Generic.cs:1158-1163); every activation spends at
-        // least MinQuarterBarsToActivate of them (BaseEngine.cs:44); and a phrase collected while
+        // terminates. It is exact, not a guess: meter comes only from phrases (a quarter bar
+        // each, two for a unison: AwardStarPower, BaseEngine.Generic.cs:1158-1163) and, with
+        // whammy, from Star Power sustains (at most the whole song's WhammyTotal); every
+        // activation spends at least half a bar (BaseEngine.cs:44); and anything gained while
         // Star Power is active extends the window instead of banking, so it can never fund a
-        // later activation. Hence activations <= floor(phrases / 2).
-        int phrases = 0;
+        // later activation. Hence activations <= floor(total gain / half a bar), which without
+        // whammy or unisons is floor(phrases / 2).
+        long gain = 0;
         for (int i = 0; i < sp.NoteCount; i++)
         {
-            if (sp.Model.ScoringNotes[i].IsPhraseEnd) phrases++;
+            gain += (long) sp.QuarterBarsGainedAt(i) * sp.TicksPerQuarterSpBar;
         }
 
-        int maxActivations = phrases / SpScoreModel.MinQuarterBarsToActivate;
+        if (sp.NoteCount > 0)
+        {
+            gain += sp.WhammyTotal(uint.MaxValue);
+        }
+
+        int maxActivations = (int) (gain / sp.TicksPerHalfSpBar);
 
         long best = 0;
         IReadOnlyList<int> bestSet = Array.Empty<int>();

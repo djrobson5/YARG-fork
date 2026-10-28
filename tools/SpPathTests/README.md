@@ -51,11 +51,17 @@ bootstrap — just the .NET SDK. CI runs the same command from
 | Star Power suppressed | **317,774** (289,774 committed + 28,000 solo) | **389,279** (no solo on this chart's bass) |
 | Stock greedy bot policy | **376,558** | **465,083** |
 | Optimizer (`SpPathOptimizer`) | **392,750** | **484,979** |
+| Optimizer, full whammy (`AssumeWhammy`) | **415,078** | **518,771** |
 
 `MaxMultiplier` is 4 for guitar and 6 for bass (`EnginePreset.Instruments.cs:17-18`).
 
 The synthetic fixture (`SyntheticChart.cs`, built as a MIDI in memory) scores **30,692** with no
-Star Power, **53,327** under the stock bot and **55,204** under the optimizer, on Expert guitar.
+Star Power, **53,327** under the stock bot and **55,204** under the optimizer, on Expert guitar
+(**58,479** with full whammy). `SyntheticChart.Whammy` scores **33,718** under the full-whammy
+optimizer.
+
+The whammy numbers are reproduced by a bot that whammies on every pass
+(`ScriptedBotGuitarEngine(fullWhammy: true)`), at 1/30, 1/120 and 1/240 s steps alike.
 
 ## What the two fixtures cover
 
@@ -68,3 +74,8 @@ a disjoint chord with unequal sustains, a sub-burst-threshold sustain, extended 
 note, a BRE with and without a coda, and Star Power phrases spread across the meter change.
 `SyntheticChartTests.Fixture_CoversTheBranchesTheRealChartDoesNot` asserts the coverage itself, so a
 parser change that silently drops one of them fails loudly instead of quietly testing nothing.
+
+`SyntheticChart.Whammy` covers the two whammy shapes neither of those produces: a window that
+releases part way through a whammied Star Power sustain (possible only where the drain outruns the
+gain, so the chart is all 3/4), whose leftover whammy then funds the next activation, and a Star
+Power sustain held across an activation. `SpWhammyTests` asserts both happen.

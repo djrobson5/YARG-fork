@@ -1459,3 +1459,119 @@ Details worth keeping straight:
   bool and the colour a `Color` — exactly what `GraphicalSongProgressTint` already stores. A
   settings file written before these existed simply lacks the keys, and the property initialisers
   supply the defaults.
+
+## Whammy (locked 2026-10-27)
+
+The locked SP model (top of this document) is "phrases only, no whammy". The user asked for a
+second model alongside it: a toggle between planning **with** full whammy and planning
+**without** it, the latter being exactly today's behaviour. This section supersedes the
+"No whammy gain" half of that row only for the new mode; with the toggle off nothing changes,
+and every existing test and golden must pass unedited.
+
+### What the engine does
+
+Line numbers are against `YARG.Core` at `9dafd346`.
+
+- **Where gain comes from.** `UpdateStarPower` (`BaseEngine.Generic.cs:1034-1058`) adds
+  `CalculateStarPowerGain(CurrentTick, max(LastTick, FirstWhammyTick))` whenever
+  `IsStarPowerSustainActive()` (a sustain whose note carries `NoteFlags.StarPower` is in
+  `ActiveSustains`) **and** `StarPowerWhammyTimer.IsActive`. Holding a sustain without whammying
+  earns nothing; whammying a sustain outside a Star Power phrase earns nothing.
+- **Over which ticks.** A sustain enters `ActiveSustains` in the hit logic of its note's update,
+  which runs *after* `UpdateStarPower`, so gain starts at `note.Tick`. It leaves in
+  `UpdateSustains` at the update with `CurrentTick >= note.TickEnd` (`:1003-1007`) — the
+  *end*, not the burst — and the engine queues an update exactly at that end time
+  (`:221-226`). So each Star Power sustain earns over exactly `[Tick, TickEnd]`, overlapping
+  sustains count once (the test is a boolean), and the span is step-size independent.
+- **How much.** `GAIN_FACTOR = 32/30` per **quarter** tick (`:1124-1135`): 30 beats of whammy fill
+  a bar. The amount is in Star Power ticks, which drain 1:1 with **measure** ticks, so in 4/4 a
+  whammied Star Power sustain under active Star Power gains 16/15 and drains 1 per tick — the
+  window grows — while in 3/4 (drain 4/3 per quarter tick) it still shrinks.
+- **Rounding.** Each update rounds `delta × 32/30 + remainder` and carries the remainder in
+  `WhammyTicksRemainder`, which only resets when the whammy timer restarts from inactive
+  (`StartWhammyTimer`, `:409-418`). Under continuous whammy it never restarts, so the cumulative
+  gain after any update is `Σ delta × 16/15 − remainder` with `|remainder| ≤ ½` — an integer
+  within ½ of `16·S/15`, where `S` is the Star Power sustain ticks so far. `16·S/15` is never a
+  half-integer, so **the cumulative gain is exactly `round(16·S/15)`, for any update grid.**
+- **Order within one update** (`RunEngineLoop`, `BaseEngine.cs:400-405`, then
+  `UpdateStarPower`): whammy gain → drain → clamp to a full bar → release at amount 0 →
+  activation → hit logic (phrase gain, then sustain start). So the meter an activation on note
+  `a` spends includes whammy up to `a.Tick` but not a phrase ending on `a`; at one tick, whammy
+  meets the full-bar clamp before the phrase does; and a window can release on the very update
+  that would otherwise have doubled a note.
+- **Clamp while active.** Gain is added uncapped, drain is taken, then the amount is capped at a
+  full bar (`:1081-1090`) — so with a positive net rate the amount reaches a full bar and stays
+  there, and the window end is `position + full`.
+
+### Decisions
+
+| Question | Decision |
+|---|---|
+| The setting | `StarPowerPathWhammy`, a `ToggleSetting`, **default off** (today's path). Settings → Graphics → HUD, directly after `ShowStarPowerPath`, `EditableWhen = () => ShowStarPowerPath.Value` like its siblings, read once per path like them, so a change takes effect on the next song. Global, not per-instrument. |
+| What "with whammy" assumes | Every Star Power sustain is whammied over its whole `[Tick, TickEnd]`, and the whammy timer never lapses. A full combo, no squeezes and activation on a note are still assumed, as before. |
+| Meter | Tracked in **Star Power ticks** in both modes, not quarter bars. With whammy off the reachable values are exactly 0, ¼, ½, ¾ and a full bar, so the DP is the same one. |
+| Whammy gain | `C(q) = round(16·S(q)/15)`, `S(q)` the Star Power sustain ticks in `[0, q]`, from a precomputed union of `[Tick, TickEnd]` spans (parent and sustained children whose note carries `IsStarPower`) with prefix sums. Gain between two ticks is `C(b) − C(a)`: a binary search, never a rescan. |
+| Passing a note | `m' = min(full, m + phrase(i) + C(next.Tick) − C(i.Tick))`. All gains are positive while inactive, so one clamp is exact. |
+| A window | Walks from the activation note through the breakpoints (Star Power sustain span edges, time signature changes, phrase-end notes), with `amount = m + gains − drain` in integer engine terms at each one, the full-bar clamp applied where the net rate is positive, and the release at the first tick the amount reaches 0. An award is doubled iff its tick is before the release tick (the measure-tick test `[m, E)` with `E` the release's measure tick, as today). |
+| After a window | Release can happen mid-sustain (a meter shorter than 4/4, or a phrase too short to keep up), and the whammy after it banks. So an activation leads to `(next note, carried gain)`, not meter 0. Every place that hardcodes 0 after a window takes the carry. |
+| DP shape | A forward pass enumerates the reachable meter set at each note; the existing backward evaluation then runs over those sets with the same `>=` activate-here rule, so the earliest-activation tie-break is unchanged. Not top-down (stack depth), not a forward max-relax (different tie resolution). State count and solve time are logged with the path and measured on both fixtures below. |
+| Activation output | `Activation` gains `MeterTicksAtActivation`; `MeterAtActivation` stays as whole quarter bars for the logs. The log-only meter divergence check compares ticks. In whammy mode it is expected to fire on most human runs, since a person starts whammying a moment late and a lapse resets the remainder; it changes nothing on screen. |
+| API | The existing constructors and `Optimize`/`FromParameters` overloads keep meaning "no whammy", so the existing tests compile and pass untouched. New overloads take `assumeWhammy` with **no default**, and the game calls those. |
+| `NoStarPowerOverlap` | Out of scope here, and already wrong (see the open item recorded 2026-10-27: the engine strips a whole phrase when any note of it is hit during Star Power, which the model does not reproduce). Whammy mode does not model stripping either; a stripped phrase's sustains would stop earning, and the model counts them. |
+| Known limitation | An exact plan can activate on the note where whammy has only just crossed half a bar. A player slightly short of full whammy cannot activate there, and the marker cannot know. |
+
+### Verification
+
+- `ScriptedBotGuitarEngine` gains a full-whammy option: it calls `StartWhammyTimer(CurrentTime)` at
+  the top of its `UpdateStarPower` override, before `base`, on every pass. The 1/120 s step is
+  well inside the 0.25 s `DEFAULT_WHAMMY_BUFFER`.
+- With Star Power suppressed, the engine's `StarPowerWhammyTicks` equals the model's `C(end)` on
+  both fixtures, exactly.
+- The whammy optimizer's projection reproduces exactly on the engine with full whammy, on
+  `drawntotheflame` guitar and bass and the synthetic chart, at 1/30, 1/120 and 1/240 s steps,
+  before any whammy golden is recorded.
+- The fixtures must exercise a release mid-sustain (a Star Power sustain under a 3/4 window) and
+  a sustain held across an activation; the test asserts that, and a separate whammy fixture is
+  built if the synthetic chart does not, so its existing goldens stay put.
+- The whammy optimum is never below the no-whammy optimum, and on a small fixture it equals a
+  brute force over every legal activation set.
+- All 49 existing tests pass unedited.
+
+### Implemented (2026-10-27)
+
+Branch `feature/sp-whammy`. The model, optimizer and harness changes are as locked above; nothing
+under `YARG.Core/` is touched.
+
+- `ScoreModel.StarPowerSustains` records each Star Power sustain's `[Tick, TickEnd]`.
+  `SpScoreModel` keeps the meter in ticks (`MeterTicksAfter`, `SimulateWindowTicks`,
+  `WhammyTotal`), and `SpWindow` carries `MeterTicks`, `ReleaseTick` and `CarriedMeterTicks`.
+  The doubled range is now found by quarter tick (`PointsInTicks`, `[activation, release)`), which
+  without whammy picks exactly the events the measure-tick range did and is the faithful one where
+  several quarter ticks share a measure tick. `SimulateWindow(int, int)` and `MeterAfter` remain
+  as the quarter-bar API.
+- `SpPathOptimizer` runs the forward reachable-set pass and the unchanged backward evaluation;
+  `StarPowerPath` gained `AssumesWhammy` and `StateCount`, `Activation` gained
+  `MeterTicksAtActivation`.
+- Game side: the `StarPowerPathWhammy` setting and its string, the `ShowStarPowerPath`
+  description, the call in `FiveFretGuitarPlayer` (which now logs the mode and state count), and
+  the tick-based meter check in `TrackPlayer`.
+
+Results, all exact against the engine with a bot that whammies on every pass, at 1/30, 1/120 and
+1/240 s:
+
+| Fixture | No whammy | Full whammy | States (whammy / none) | Solve, Release build |
+|---|---|---|---|---|
+| `drawntotheflame` guitar | 392,750 (7 windows) | **415,078** (8 windows) | 4,845 / 5,381 | 7.5 ms / 1.8 ms |
+| `drawntotheflame` bass | 484,979 | **518,771** | 4,333 / 5,049 | 1.6 ms / 1.7 ms |
+| `SyntheticChart` | 55,204 | **58,479** | 149 / 243 | 0.4 ms / 0.3 ms |
+| `SyntheticChart.Whammy` | 30,834 | **33,718** | 204 / 177 | 0.2 ms / 0.1 ms |
+
+The whammy model has *fewer* states than the plain one on the real chart: the plain DP counts
+every one of the five meter values at every note, while the forward pass only visits the ones a
+legal path can reach. The engine's meter on every note's pass matched the model's on all four
+fixtures with Star Power never activated, as did its raw whammy total; the whammy DP agrees with
+the brute force on the 300-note prefix. The existing 49 tests pass unedited (76 in all now).
+
+Not yet checked in the game: the settings row (it appears after "Show Star Power Path" and greys
+out with it) and a song played with the toggle on.
+

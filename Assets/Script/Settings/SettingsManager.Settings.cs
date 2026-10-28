@@ -891,8 +891,9 @@ namespace YARG.Settings
                 PlaybackBufferLength.EditableWhen = () => !AutomaticPlaybackBuffer.Value;
                 MuteOnlyWhenAllPlayersMiss.EditableWhen = () => MuteOnMiss.Value != AudioFxMode.Off;
 
-                // The four Star Power path customisations only mean anything while the path is
-                // being drawn at all, so they grey out with the master toggle.
+                // The Star Power path customisations only mean anything while the path is being
+                // drawn at all, so they grey out with the master toggle.
+                StarPowerPathWhammy.EditableWhen = () => ShowStarPowerPath.Value;
                 StarPowerPathColor.EditableWhen = () => ShowStarPowerPath.Value;
                 StarPowerPathChipLeadIn.EditableWhen = () => ShowStarPowerPath.Value;
                 StarPowerPathChipHold.EditableWhen = () => ShowStarPowerPath.Value;
@@ -1105,11 +1106,22 @@ namespace YARG.Settings
             /// </summary>
             /// <remarks>
             /// 5-fret guitar and bass only, single player only (band Star Power is coupled across
-            /// players, so a per-player path would be wrong). The path assumes a full combo and no
-            /// whammy; the markers dim for the rest of the run once the player leaves it.
-            /// Read at song start, so flipping it mid-song does nothing until the next run.
+            /// players, so a per-player path would be wrong). The path assumes a full combo, and
+            /// either no whammy or full whammy per <see cref="StarPowerPathWhammy"/>. Read at song
+            /// start, so flipping it mid-song does nothing until the next run.
             /// </remarks>
             public ToggleSetting ShowStarPowerPath { get; } = new(false);
+
+            /// <summary>
+            /// Plans the Star Power path as if every Star Power sustain is whammied from start to
+            /// end, instead of not whammied at all.
+            /// </summary>
+            /// <remarks>
+            /// Whammying a sustain inside a Star Power phrase earns meter, and while Star Power is
+            /// active it stretches the window, so the two plans can activate in different places.
+            /// See <c>docs/sp-path-design.md</c>, "Whammy". Read at song start.
+            /// </remarks>
+            public ToggleSetting StarPowerPathWhammy { get; } = new(false);
 
             /// <summary>
             /// The colour the whole Star Power path cue is drawn in: the recoloured activation
