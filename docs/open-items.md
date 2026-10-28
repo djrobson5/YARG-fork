@@ -9,9 +9,9 @@ Feature research lives in `docs/roadmap.md`; the state of each feature is in
 
 ## Branch state and next steps
 
-`feature/section-fc` was renamed to `main` (the default branch) on 2026-10-17, when the Section FC work was declared done; new work goes on `feature/<name>` branches off `main`. It is pushed through `ea19f534`, which is tagged `v0.15.0-sectionfc.13` (2026-10-27), with a Windows x64 zip and a macOS arm64 zip (release run 40614755615). `.13` merges `feature/mac-updater` (in-game download and install on macOS) and `feature/single-whammy`, which brings `feature/sp-whammy` with it (the "Star Power Path Assumes Whammy" toggle, the path's `NoStarPowerOverlap` gate, and the Single Whammy setting). None of those features has been played in-game yet, and neither has the 2026-10-27 upstream merge. The previous release, `v0.15.0-sectionfc.12` (`a1a5e3ca`, run 40592537175), brought that merge. Next steps in order:
-(1) play `.13` on the Mac and Windows through the "Needs verification" entries (single whammy,
-the whammy path toggle, the Windows update path, the 2026-10-27 merge checks), (2) install
+`feature/section-fc` was renamed to `main` (the default branch) on 2026-10-17, when the Section FC work was declared done; new work goes on `feature/<name>` branches off `main`. It is pushed through `ea19f534`, which is tagged `v0.15.0-sectionfc.13` (2026-10-27), with a Windows x64 zip and a macOS arm64 zip (release run 40614755615). `.13` merges `feature/mac-updater` (in-game download and install on macOS) and `feature/single-whammy`, which brings `feature/sp-whammy` with it (the "Star Power Path Assumes Whammy" toggle, the path's `NoStarPowerOverlap` gate, and the Single Whammy setting). The previous release, `v0.15.0-sectionfc.12` (`a1a5e3ca`, run 40592537175), brought the 2026-10-27 upstream merge. Next steps in order:
+(1) check the Windows in-game update path on the first Windows update to `.13` (single whammy,
+the whammy path toggle and the 2026-10-27 merge were verified in-game on `.13`), (2) install
 `v0.15.0-sectionfc.4` or later on the user's other (nightly) machine and confirm scores appear,
 (3) periodic merge of upstream `dev`, (4) optional updater slice 5.
 
@@ -32,33 +32,10 @@ the whammy path toggle, the Windows update path, the 2026-10-27 merge checks), (
 
 ## Needs verification
 
-- **Single whammy (`feature/single-whammy`) — not yet seen in the game.** Check the "Single
-  Whammy" row under General → Gameplay (after No Fail). Then, with it on, play a song with Star
-  Power sustains on guitar and on keys: whammy once partway into a Star Power sustain, and the meter
-  should jump to what a full whammy would have given. Also check that no "Inconsistent Replay
-  Results" dialog appears after the song, that the replay plays back with the same Star Power, and
-  that the 5-fret `SP path (...)` log line says `full whammy` with the path toggle off. The engine
-  side is verified headlessly (`docs/sp-path-design.md` → "Single whammy").
-- **Star Power path whammy toggle (`feature/sp-whammy`) — not yet seen in the game.** Check the
-  "Star Power Path Assumes Whammy" row under Graphics → HUD (after "Show Star Power Path", greyed
-  out with it) and play a sustain-heavy song with it on: the log line `SP path (...)` should say
-  `full whammy`. The model itself is verified against the engine (`docs/sp-path-design.md` →
-  "Whammy").
 - **Windows in-game update after the macOS updater change (`feature/mac-updater`).** The Windows
   path's code was only refactored (`TryReadAsset`, `CanWriteTo`) and two strings reworded
   (Installing, NoAsset); it compiles with the Windows defines but has not been run. Check it on
   the first Windows update to a release that contains it.
-- **Upstream merge 2026-10-27 (upstream `dev` at `696e149f`, YARG.Core `9dafd346`) — compiles and
-  SpPathTests pass, not yet played.** Brings section preview audio in practice mode, Career tier
-  changes, the 5-lane-keys lift option and a list-menu/slider refactor. Two conflicts:
-  `SliderSetting` now carries both the fork's `step` and upstream's `wholeNumbers`/`clampMax`/
-  `inputMax` (step snaps first, `step` is the last parameter); and upstream moved library previews
-  into `PreviewPlayer`, so `MusicLibraryMenu.StopPreviewForFileOperationAsync` now stops the player
-  and awaits the preserved start task, which disposes any context a cancelled start produced.
-  Check in-game: Delete Song on the song whose preview is playing and on one selected a moment
-  earlier (no sharing-violation toast on Windows), the three stepped sliders (Rewind lead-in, SP
-  path chip lead-in and hold), and a practice-mode run with Rewind to Section now that practice has
-  no `CrowdEventHandler`.
 - **`tools/update-yarg.ps1`'s own copy-over-and-relaunch step is still untested against a real
   install**, if that remains true per `docs/updater-design.md`. The in-game helper path is verified
   (see "Done, lightly verified" below).
@@ -68,6 +45,10 @@ the whammy path toggle, the Windows update path, the 2026-10-27 merge checks), (
 
 ## Done, lightly verified
 
+- **Single whammy, the Star Power path whammy toggle, and the 2026-10-27 upstream merge
+  (upstream `dev` at `696e149f`, YARG.Core `9dafd346`) — verified in-game 2026-10-27** by the
+  user on the `v0.15.0-sectionfc.13` release ("everything works well on the new release").
+  Designs and headless results: `docs/sp-path-design.md` → "Whammy" and "Single whammy".
 - **macOS in-game updater — verified end to end 2026-10-27** on a local packaged build updating
   itself to `v0.15.0-sectionfc.12` (`docs/updater-design.md` → "macOS"). It ships in the first
   release cut after `feature/mac-updater` merges; Mac installs older than that have to be updated

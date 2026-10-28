@@ -1570,8 +1570,8 @@ Both modes count only the `(note, meter)` states some legal path reaches. The en
 fixtures with Star Power never activated, as did its raw whammy total; the whammy DP agrees with
 the brute force on the 300-note prefix. The existing 49 tests pass unedited (77 in all now). On `SyntheticChart.Whammy` the brute force agrees with the DP (11,884), though the optimum there uses no carry, so the carry-funded activation is pinned by the engine-backed hand-picked test instead.
 
-Not yet checked in the game: the settings row (it appears after "Show Star Power Path" and greys
-out with it) and a song played with the toggle on. Not covered by an engine-backed test: unisons
+Verified in-game by the user on `v0.15.0-sectionfc.13` (2026-10-27), along with single whammy.
+Not covered by an engine-backed test: unisons
 and whammy together. The two compose in the model (a unison's second quarter is applied in the
 same window walk whammy drifts through), but no fixture has both.
 
