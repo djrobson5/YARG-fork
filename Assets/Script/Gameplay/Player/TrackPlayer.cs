@@ -1377,6 +1377,10 @@ namespace YARG.Gameplay.Player
             _breIndex = 0;
             _unisonStartIndex = 0;
             _unisonEndIndex = 0;
+            // Upstream's solo-under-unison latch: left set, it stops the box hiding for a unison
+            // that the restarted run replays.
+            _soloHiddenForUnison = false;
+            _currentUnisonEndTime = double.NaN;
 
             ResetLastHitTimes();
 
@@ -2070,6 +2074,10 @@ namespace YARG.Gameplay.Player
             _breIndex = 0;
             _unisonStartIndex = 0;
             _unisonEndIndex = 0;
+            // Upstream's solo-under-unison latch: left set, it stops the box hiding for a unison
+            // that the restarted run replays.
+            _soloHiddenForUnison = false;
+            _currentUnisonEndTime = double.NaN;
 
             ResetLastHitTimes();
 
