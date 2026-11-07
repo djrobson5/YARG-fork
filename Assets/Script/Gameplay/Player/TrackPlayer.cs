@@ -1098,6 +1098,9 @@ namespace YARG.Gameplay.Player
         private bool _wasStarPowerActive;
         private bool _didLowerTrack;
 
+        private double _currentUnisonEndTime = double.NaN;
+        private bool _soloHiddenForUnison;
+
         private Queue<TrackEffect> _upcomingEffects = new();
         private List<TrackEffectElement> _currentEffects = new();
         protected List<TrackEffect> _trackEffects = new();
@@ -1374,6 +1377,10 @@ namespace YARG.Gameplay.Player
             _breIndex = 0;
             _unisonStartIndex = 0;
             _unisonEndIndex = 0;
+            // Upstream's solo-under-unison latch: left set, it stops the box hiding for a unison
+            // that the restarted run replays.
+            _soloHiddenForUnison = false;
+            _currentUnisonEndTime = double.NaN;
 
             ResetLastHitTimes();
 
@@ -1586,6 +1593,21 @@ namespace YARG.Gameplay.Player
 
         private void UpdateUnisonEvents(double time)
         {
+            var unisonDisplay = GameManager.UnisonDisplay;
+
+            if (unisonDisplay != null && unisonDisplay.CurrentPhraseIndex >= unisonDisplay.Phrases.Count)
+            {
+                // We may still need to unhide the solo box
+                if (_soloHiddenForUnison)
+                {
+                    ShowSoloAfterUnison(time);
+                }
+
+                return;
+            }
+
+            HideSoloForUnison(time);
+
             if (_unisonStartIndex < _unisonPhrases.Count && _unisonPhrases[_unisonStartIndex].Time <= time)
             {
                 OnUnisonStart();
@@ -1594,9 +1616,44 @@ namespace YARG.Gameplay.Player
 
             if (_unisonEndIndex < _unisonPhrases.Count && _unisonPhrases[_unisonEndIndex].TimeEnd <= time)
             {
+
                 OnUnisonEnd();
                 _unisonEndIndex++;
             }
+
+            ShowSoloAfterUnison(time);
+        }
+
+        private void HideSoloForUnison(double time)
+        {
+            var hideTime = GameManager.UnisonDisplay.Phrases[GameManager.UnisonDisplay.CurrentPhraseIndex].TransitionIn.Time;
+            if (Engine.IsSoloActive && !_soloHiddenForUnison && _unisonStartIndex < _unisonPhrases.Count && hideTime <= time)
+            {
+                var unisonAndSoloOverlap = UnisonAndSoloOverlap();
+
+                if (unisonAndSoloOverlap)
+                {
+                    _currentUnisonEndTime = GameManager.UnisonDisplay.Phrases[GameManager.UnisonDisplay.CurrentPhraseIndex].TransitionOut.Time;
+                    _soloHiddenForUnison = true;
+                    TrackView.HideSoloForUnison();
+                }
+            }
+        }
+
+        private void ShowSoloAfterUnison(double time)
+        {
+            if (_soloHiddenForUnison && Engine.IsSoloActive && !double.IsNaN(_currentUnisonEndTime) && _currentUnisonEndTime <= time)
+            {
+                _soloHiddenForUnison = false;
+                _currentUnisonEndTime = double.NaN;
+                TrackView.ShowSoloAfterUnison();
+            }
+        }
+
+        private bool UnisonAndSoloOverlap()
+        {
+            var unisonRect = GameManager.UnisonDisplay.gameObject.transform as RectTransform;
+            return TrackView.GetUnisonAndSoloOverlap(unisonRect);
         }
 
         private void UpdateTrackEffects(double time)
@@ -2017,6 +2074,10 @@ namespace YARG.Gameplay.Player
             _breIndex = 0;
             _unisonStartIndex = 0;
             _unisonEndIndex = 0;
+            // Upstream's solo-under-unison latch: left set, it stops the box hiding for a unison
+            // that the restarted run replays.
+            _soloHiddenForUnison = false;
+            _currentUnisonEndTime = double.NaN;
 
             ResetLastHitTimes();
 

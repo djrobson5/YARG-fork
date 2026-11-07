@@ -26,12 +26,14 @@ namespace YARG.Gameplay.HUD
 
     public class UnisonDisplay : GameplayBehaviour
     {
-        private const double TRANSITION_DURATION               = 0.2;
-        private const double DISPLAY_HOLD_TIME                 = 1.5;
-        private const double DISPLAY_PRE_TIME                  = 0.2;
+        public const double TRANSITION_DURATION               = 0.2;
+        public const double DISPLAY_HOLD_TIME                 = 1.5;
+        public const double DISPLAY_PRE_TIME                  = 0.2;
         private const int    MAX_PARTICIPANTS_FOR_ICON_DISPLAY = 8;
 
         private readonly List<UnisonPhraseData> _phrases = new();
+
+        public List<UnisonPhraseData> Phrases => _phrases;
 
         private readonly Dictionary<int, EngineUnisonState> _unisonState        = new();
         private readonly List<Action>                       _unsubscribeActions = new();
@@ -44,6 +46,8 @@ namespace YARG.Gameplay.HUD
         /// The participant floor the display was built with, kept so a rewind can rebuild the
         /// phrase list on the same terms.
         private          int                                _minPlayers = 1;
+
+        public int CurrentPhraseIndex => _currentPhraseIndex;
 
         [SerializeField]
         private Image _backgroundImage;
@@ -712,7 +716,7 @@ namespace YARG.Gameplay.HUD
             _unsubscribeActions.Clear();
         }
 
-        private readonly struct TransitionTiming
+        public readonly struct TransitionTiming
         {
             public readonly double Time;
             public readonly double TimeEnd;
@@ -735,7 +739,7 @@ namespace YARG.Gameplay.HUD
             }
         }
 
-        private class UnisonPhraseData
+        public class UnisonPhraseData
         {
             public EngineManager.UnisonEvent Event;
             public TransitionTiming          TransitionIn;
@@ -748,4 +752,5 @@ namespace YARG.Gameplay.HUD
             public int  NotesHitInCurrentPhrase;
         }
     }
+
 }

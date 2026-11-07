@@ -14,6 +14,22 @@ Feature research lives in `docs/roadmap.md`; the state of each feature is in
 the whammy path toggle and the 2026-10-27 merge were verified in-game on `.13`), (2) periodic
 merge of upstream `dev`, (3) optional updater slice 5.
 
+**Upstream merge 2026-11-06, unmerged and not yet played**, on `feature/upstream-2026-11-06`
+(upstream `dev` at `3e229311`, nightly b4161; YARG.Core `2f3900cf`). Brings upstream's `Setlist`
+owner (#1758, replaces `PersistentState.PlayingAShow`/`ShowSongs`/`ShowIndex`), notification
+history, editable vocal colors, the solo/unison box fix (#1760), opt-in native audio rebuilds and
+a VLC plugin update. Five conflicts: four adjacent additions, and `StartSetlist`, where upstream's
+`Setlist.TryStart` replaces the fork's empty-setlist guard. Follow-up commit `c826466a` clears
+#1760's `_soloHiddenForUnison` latch on practice and rewind resets. Headless gates green (Unity
+compile, dotnet check, 241 prefabs with no missing scripts, SpPathTests 149/149). Also checked
+headlessly through editor `eval`: `Setlist` start/advance/end against 113 real cache entries,
+including deleted-song hashes (skipped, and a fully deleted setlist refuses to start) and the
+delete prune through `ShowPlaylist` (which is now `Setlist.Playlist`); and the Toast History tab's
+wiring (entry prefab refs, `History` tab icon, strings, `ToastManager` refs in `PersistentScene`).
+In-game check before merging to `main`: start a setlist from the menu, rewind to a section that
+precedes a unison under a solo on a multi-player chart, and look at the Toast History tab's
+layout.
+
 ## Parked
 
 - **Feature 1, score import.** The user's other machine runs the official nightly, and the fork's
