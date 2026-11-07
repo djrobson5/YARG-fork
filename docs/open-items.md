@@ -21,10 +21,14 @@ history, editable vocal colors, the solo/unison box fix (#1760), opt-in native a
 a VLC plugin update. Five conflicts: four adjacent additions, and `StartSetlist`, where upstream's
 `Setlist.TryStart` replaces the fork's empty-setlist guard. Follow-up commit `c826466a` clears
 #1760's `_soloHiddenForUnison` latch on practice and rewind resets. Headless gates green (Unity
-compile, dotnet check, 241 prefabs with no missing scripts, SpPathTests 149/149). In-game check before
-merging to `main`: start a setlist (the song-deleted case included), rewind to a section that
-precedes a unison under a solo on a multi-player chart, and look at the new Toast History tab
-next to the Score Sync and Updates tabs.
+compile, dotnet check, 241 prefabs with no missing scripts, SpPathTests 149/149). Also checked
+headlessly through editor `eval`: `Setlist` start/advance/end against 113 real cache entries,
+including deleted-song hashes (skipped, and a fully deleted setlist refuses to start) and the
+delete prune through `ShowPlaylist` (which is now `Setlist.Playlist`); and the Toast History tab's
+wiring (entry prefab refs, `History` tab icon, strings, `ToastManager` refs in `PersistentScene`).
+In-game check before merging to `main`: start a setlist from the menu, rewind to a section that
+precedes a unison under a solo on a multi-player chart, and look at the Toast History tab's
+layout.
 
 ## Parked
 
