@@ -34,9 +34,8 @@ copies of both profile folders are kept as `*.pre-profiles-rework.bak`. **No dow
 `main` and `.14` throw on the v4 `bindings.json` this writes ("Unhandled bindings version") and
 come up with no bindings, so going back means restoring the `.bak` files. The same applies to the
 Windows machine's shared `nightly` folder once anything with the rework (this branch, or official
-nightly b4380+) has run there. Still to check in-game:
-CRKD over Bluetooth and over USB/receiver (an existing profile and a newly added controller),
-rewind with an early strum at the marker, single whammy, and the new bindings menu.
+nightly b4380+) has run there. CRKD guitar verified working in the GUI editor by the user 2026-11-22
+(connection type not recorded). Still to check in-game: rewind with an early strum at the marker, single whammy, and the new bindings menu.
 
 **Upstream merge 2026-11-06, released in `.14`, not yet played** (upstream `dev` at `3e229311`,
 nightly b4161; YARG.Core `2f3900cf`; merged to `main` from `feature/upstream-2026-11-06`). Brings
