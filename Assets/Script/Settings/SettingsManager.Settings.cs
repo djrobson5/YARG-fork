@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Threading;
@@ -674,7 +674,6 @@ namespace YARG.Settings
             public ToggleSetting ShowActiveBots { get; } = new(false, ShowActiveBotsCallback);
 
             public ToggleSetting ReconnectProfiles  { get; } = new(true);
-            public ToggleSetting AutoCreateProfiles { get; } = new(true);
 
             public ToggleSetting ReduceNoteSpeedByDifficulty { get; } = new(true);
 
@@ -1694,7 +1693,7 @@ namespace YARG.Settings
             {
                 foreach (var player in PlayerContainer.Players)
                 {
-                    foreach (var mic in player.Bindings.Microphones)
+                    foreach (var mic in player.DeviceInfo.Microphones)
                     {
                         mic.SetMonitoringLevel(volume);
                     }
@@ -1705,7 +1704,7 @@ namespace YARG.Settings
             {
                 foreach (var player in PlayerContainer.Players)
                 {
-                    foreach (var mic in player.Bindings.Microphones)
+                    foreach (var mic in player.DeviceInfo.Microphones)
                     {
                         mic.SetReverbLevel(wet);
                     }

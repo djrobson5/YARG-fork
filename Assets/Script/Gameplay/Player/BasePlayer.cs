@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using PlasticBand.Haptics;
 using UnityEngine;
@@ -242,13 +242,14 @@ namespace YARG.Gameplay.Player
 
         protected void Start()
         {
-            if (Player.Bindings is not null)
+            if (Player.DeviceInfo is not null)
             {
-                SantrollerHaptics = Player.Bindings.GetDevicesByType<ISantrollerHaptics>();
+                SantrollerHaptics = Player.DeviceInfo.GetDevicesByType<ISantrollerHaptics>();
             }
 
             if (!Player.IsReplay)
             {
+                Player.DeviceInfo?.ActivateGameplayBindings();
                 SubscribeToInputEvents();
             }
         }
@@ -842,18 +843,18 @@ namespace YARG.Gameplay.Player
 
         private void SubscribeToInputEvents()
         {
-            Player.Bindings.SubscribeToGameplayInputs(Player.Profile.GameMode, OnGameInput);
+            Player.DeviceInfo.SubscribeToGameplayInputs(OnGameInput);
 
-            Player.Bindings.DeviceAdded += OnDeviceAdded;
-            Player.Bindings.DeviceRemoved += OnDeviceRemoved;
+            Player.DeviceInfo.ControllerAdded += OnDeviceAdded;
+            Player.DeviceInfo.ControllerRemoved += OnDeviceRemoved;
         }
 
         private void UnsubscribeFromInputEvents()
         {
-            Player.Bindings.UnsubscribeFromGameplayInputs(Player.Profile.GameMode, OnGameInput);
+            Player.DeviceInfo.UnsubscribeFromGameplayInputs(OnGameInput);
 
-            Player.Bindings.DeviceAdded -= OnDeviceAdded;
-            Player.Bindings.DeviceRemoved -= OnDeviceRemoved;
+            Player.DeviceInfo.ControllerAdded -= OnDeviceAdded;
+            Player.DeviceInfo.ControllerRemoved -= OnDeviceRemoved;
         }
 
         private void OnDeviceAdded(InputDevice device)

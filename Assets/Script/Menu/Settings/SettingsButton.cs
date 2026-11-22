@@ -36,7 +36,8 @@ namespace YARG.Menu.Settings
             }
         }
 
-        public void SetCustomButtons(IEnumerable<CustomButton> buttons, bool localize = false, string localizationKey = "Settings.Button")
+        public void SetCustomButtons(IEnumerable<CustomButton> buttons, bool localize = false,
+            string localizationKey = "Settings.Button", Color? backgroundColor = null)
         {
             foreach (var buttonInfo in buttons)
             {
@@ -51,6 +52,12 @@ namespace YARG.Menu.Settings
                 var capture = buttonInfo.Action;
                 button.GetComponentInChildren<Button>()
                     .onClick.AddListener(() => InvokeFocusedAction(capture));
+
+                if (backgroundColor.HasValue &&
+                    button.TryGetComponent<ColoredButton>(out var coloredButton))
+                {
+                    coloredButton.SetBackgroundAndTextColor(backgroundColor.Value);
+                }
 
                 _navGroup.AddNavigatable(button.GetComponentInChildren<NavigatableUnityButton>());
             }

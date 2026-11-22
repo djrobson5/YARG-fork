@@ -14,6 +14,29 @@ Feature research lives in `docs/roadmap.md`; the state of each feature is in
 the first Windows update since `.13`, (3) periodic merge of upstream `dev`, (4) optional updater
 slice 5.
 
+**Upstream merge 2026-11-22, on `feature/upstream-2026-11-22`, not merged to `main`** (upstream
+`dev` at `e6e28a76`, whose #1778 is the only commit dated after nightly b4380 was published; YARG.Core `1541466f`, "The Profile Rework
+(#456)"). 220 upstream commits, almost all the Profiles Rework: controller configs become
+profiles plus reusable binding sets, with a new bindings menu and migration of v0-v3
+`bindings.json`. Also career-menu fixes, the 5000% pitch-shift DSP (#1773), drum velocity fixes
+and a `testing` build type. Two conflicts: a `BasePlayer` using, and the fork's macOS CRKD
+defaults, whose file (`BindingCollection.Defaults.cs`) upstream deleted. The CRKD hook moved to
+`PlayerDeviceInfo.GetBindingSetForController`, where `CrkdBluetoothGuitar`/`CrkdUsbGuitar` now
+default to `DefaultCrkdMode1Menu` / `DefaultCrkdMode1Gameplay` (macOS only). Headless gates
+green: Unity batchmode compile, dotnet glob check with both macOS and Windows defines, 250
+prefabs with no missing scripts, SpPathTests 149/149. Also checked headlessly: both CRKD
+layouts resolve to `ControllerFamily.Gamepad`, and upstream's migration run on copies of the
+real `dev` and `nightly` `bindings.json` turns the saved CRKD bindings into Gamepad-family sets
+(Green `buttonSouth` and so on) set as the profile's Five-Fret and Menu preferences. Rewind's
+lead-in drop still sees InputSystem event time: button inputs keep `InputManager`'s clamped
+event time through the new aggregator, and bindings still update in EarlyUpdate. Pre-migration
+copies of both profile folders are kept as `*.pre-profiles-rework.bak`. **No downgrade path:**
+`main` and `.14` throw on the v4 `bindings.json` this writes ("Unhandled bindings version") and
+come up with no bindings, so going back means restoring the `.bak` files. The same applies to the
+Windows machine's shared `nightly` folder once anything with the rework (this branch, or official
+nightly b4380+) has run there. CRKD guitar verified working in the GUI editor by the user 2026-11-22
+(connection type not recorded). Still to check in-game: rewind with an early strum at the marker, single whammy, and the new bindings menu.
+
 **Upstream merge 2026-11-06, released in `.14`, not yet played** (upstream `dev` at `3e229311`,
 nightly b4161; YARG.Core `2f3900cf`; merged to `main` from `feature/upstream-2026-11-06`). Brings
 upstream's `Setlist` owner (#1758, replaces `PersistentState.PlayingAShow`/`ShowSongs`/`ShowIndex`),
