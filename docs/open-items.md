@@ -1,6 +1,6 @@
 # Open Items
 
-Running list of known issues and possible follow-ups for the fork. Last updated 2026-10-27. Remove items when done; note the commit.
+Running list of known issues and possible follow-ups for the fork. Last updated 2026-11-22. Remove items when done; note the commit.
 
 Feature research lives in `docs/roadmap.md`; the state of each feature is in
 `docs/section-fc-handoff.md` → "Roadmap work, 2026-09-03". Rewind to section is in
@@ -9,12 +9,12 @@ Feature research lives in `docs/roadmap.md`; the state of each feature is in
 
 ## Branch state and next steps
 
-`feature/section-fc` was renamed to `main` (the default branch) on 2026-10-17, when the Section FC work was declared done; new work goes on `feature/<name>` branches off `main`. It is pushed through `e72fe250`, which is tagged `v0.15.0-sectionfc.14` (2026-11-06), with a Windows x64 zip and a macOS arm64 zip (release run 42316399576, 35 minutes). `.14` brings the 2026-11-06 upstream merge (below). The previous release, `v0.15.0-sectionfc.13` (`ea19f534`, run 40614755615), merged `feature/mac-updater` (in-game download and install on macOS) and `feature/single-whammy`, which brings `feature/sp-whammy` with it (the "Star Power Path Assumes Whammy" toggle, the path's `NoStarPowerOverlap` gate, and the Single Whammy setting); single whammy, the whammy path toggle and the 2026-10-27 merge were verified in-game on `.13`. Next steps in order:
-(1) play `.14` for the in-game checks listed below, (2) check the Windows in-game update path on
-the first Windows update since `.13`, (3) periodic merge of upstream `dev`, (4) optional updater
+`feature/section-fc` was renamed to `main` (the default branch) on 2026-10-17, when the Section FC work was declared done; new work goes on `feature/<name>` branches off `main`. It is pushed through `20852984`, which is tagged `v0.15.0-sectionfc.15` (2026-11-22), with a Windows x64 zip and a macOS arm64 zip (release run 45083360070, 34 minutes). `.15` brings the 2026-11-22 upstream merge (the Profiles Rework, below). `.14` (`e72fe250`, run 42316399576) brought the 2026-11-06 merge. The release before that, `v0.15.0-sectionfc.13` (`ea19f534`, run 40614755615), merged `feature/mac-updater` (in-game download and install on macOS) and `feature/single-whammy`, which brings `feature/sp-whammy` with it (the "Star Power Path Assumes Whammy" toggle, the path's `NoStarPowerOverlap` gate, and the Single Whammy setting); single whammy, the whammy path toggle and the 2026-10-27 merge were verified in-game on `.13`. Next steps in order:
+(1) play `.15` for the in-game checks listed below (both merges), (2) check the Windows in-game
+update path on the first Windows update since `.13`, (3) periodic merge of upstream `dev`, (4) optional updater
 slice 5.
 
-**Upstream merge 2026-11-22, on `feature/upstream-2026-11-22`, not merged to `main`** (upstream
+**Upstream merge 2026-11-22, released in `.15`** (merged to `main` from `feature/upstream-2026-11-22`) (upstream
 `dev` at `e6e28a76`, whose #1778 is the only commit dated after nightly b4380 was published; YARG.Core `1541466f`, "The Profile Rework
 (#456)"). 220 upstream commits, almost all the Profiles Rework: controller configs become
 profiles plus reusable binding sets, with a new bindings menu and migration of v0-v3
@@ -37,7 +37,7 @@ Windows machine's shared `nightly` folder once anything with the rework (this br
 nightly b4380+) has run there. CRKD guitar verified working in the GUI editor by the user 2026-11-22
 (connection type not recorded). Still to check in-game: rewind with an early strum at the marker, single whammy, and the new bindings menu.
 
-**Upstream merge 2026-11-06, released in `.14`, not yet played** (upstream `dev` at `3e229311`,
+**Upstream merge 2026-11-06, released in `.14`, not yet played (now in `.15` too)** (upstream `dev` at `3e229311`,
 nightly b4161; YARG.Core `2f3900cf`; merged to `main` from `feature/upstream-2026-11-06`). Brings
 upstream's `Setlist` owner (#1758, replaces `PersistentState.PlayingAShow`/`ShowSongs`/`ShowIndex`),
 notification history, editable vocal colors, the solo/unison box fix (#1760), opt-in native audio
